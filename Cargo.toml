@@ -1,0 +1,15 @@
+[package]
+name = "novum"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustyline = "18.0.1"
+
+[lib]
+name = "novum"
+path = "src/lib.rs"
+
+[[bin]]
+name = "novum"
+path = "src/main.rs"
