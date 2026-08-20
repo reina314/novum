@@ -51,27 +51,6 @@ impl Series {
         self.data
     }
 
-    fn numeric_values(&self) -> Vec<f64> {
-        self.data
-            .iter()
-            .filter_map(|value| {
-                match value {
-                    Value::Int(v) =>
-                        Some(*v as f64),
-
-                    Value::Float(v) =>
-                        Some(*v),
-
-                    Value::Null =>
-                        None,
-
-                    _ =>
-                        None,
-                }
-            })
-            .collect()
-    }
-
     fn ensure_numeric(
         &self,
     ) -> Result<Vec<f64>, String> {

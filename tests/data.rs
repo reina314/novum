@@ -145,13 +145,14 @@ fn dataframe_series_statistics() {
         run(
             r#"
             import csv
+            import stats
 
             let df =
                 csv.read(
                     "tests/data/experiment.csv"
                 )
 
-            mean(
+            stats.mean(
                 df.column("score")
             )
             "#

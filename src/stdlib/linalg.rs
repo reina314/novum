@@ -63,22 +63,6 @@ fn value_to_matrix_rows(
     Ok(rows)
 }
 
-fn matrix_from_value(
-    value: &Value,
-) -> Result<std::rc::Rc<std::cell::RefCell<crate::runtime::Matrix>>, String> {
-    match value {
-        Value::Matrix(matrix) =>
-            Ok(matrix.clone()),
-
-        other => {
-            Err(format!(
-                "expected Matrix, got {}",
-                other.type_name()
-            ))
-        }
-    }
-}
-
 pub fn matrix(
     args: Vec<Value>,
 ) -> Result<Value, String> {
