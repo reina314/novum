@@ -1,15 +1,35 @@
 use crate::{
-    Lexer, Parser, error::{
+    stdlib,
+    interpreter::operator, 
+    Lexer, 
+    Parser, 
+    error::{
         Error, 
         ErrorKind, 
         Result, 
         StackFrame
-    }, interpreter::operator, runtime::{
-        ControlFlow, Env, Function, IteratorObj, Module, ModuleContext, ModulePath, ModuleRef,StructDefinition, SeriesRef, DataFrameRef, Value,
-    }, stdlib::{
-        self, 
-        general
-    }, syntax::{
+    }, 
+    runtime::{
+        Env, 
+        Value,
+        Function, 
+        ControlFlow, 
+        IteratorObj,
+        List,
+        Module, 
+        ModuleContext, 
+        ModulePath, 
+        ModuleRef,
+        ObjectRef,
+        StructDefinition, 
+        SeriesRef, 
+        DataFrameRef,
+        GroupedDataFrame,
+        GroupedDataFrameRef,
+        BoundMethod,
+        MethodReceiver,
+    }, 
+    syntax::{
         BinOp, 
         Expr, 
         ExprKind, 
@@ -19,7 +39,10 @@ use crate::{
     },
 };
 use std::{
-    cell::RefCell, path::PathBuf, rc::Rc,
+    cell::RefCell, 
+    path::PathBuf, 
+    rc::Rc,
+    collections::HashMap,
 };
 
 pub struct Interpreter {
@@ -2010,8 +2033,9 @@ impl Interpreter {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        whole: &Expr
+        whole: &Expr,
     ) -> Result<ControlFlow> {
+        
         let callable = self.eval_value(callee)?;
 
         let values =
@@ -2020,53 +2044,30 @@ impl Interpreter {
             .collect::<Result<Vec<_>>>()?;
 
         match callable {
-            Value::Func(func) => self.call_function(func, values, whole),
+            Value::Func(func) => self.call_function(
+                func, 
+                values, 
+                whole
+            ),
 
-            Value::Builtin(f) => match f(values) {
-                Ok(v) => Ok(ControlFlow::Value(v)),
-                Err(msg) => Err(self.attach(Error::new(ErrorKind::Runtime,msg,None),whole)),
-            }
-            
-            Value::ListMethod(list,name) => match general::call_list_method(list,&name,values) {
-                Ok(v)=>Ok(ControlFlow::Value(v)),
-                Err((kind,msg))=>Err(self.attach(Error::new(kind,msg,None),whole)),
-            }
-            
-            Value::ObjectMethod(method) => {
-                let mut all_args = Vec::with_capacity(values.len() + 1);
-
-                all_args.push(
-                    Value::Object(method.object.clone())
-                );
-
-                all_args.extend(values);
-
-                self.call_function(
-                    method.function.clone(),
-                    all_args,
-                    whole,
-                )
-            }
-            
-            Value::SeriesMethod(
-                series,
-                name,
-            ) => {
-                self.call_series_method(
-                    series,
-                    &name,
-                    values,
-                    whole,
-                )
+            Value::Builtin(function) => {
+                function(values)
+                    .map(ControlFlow::Value)
+                    .map_err(|message| {
+                        self.attach(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                message,
+                                None,
+                            ),
+                            whole,
+                        )
+                    })
             }
 
-            Value::DataFrameMethod(
-                df,
-                name,
-            ) => {
-                self.call_dataframe_method(
-                    df,
-                    &name,
+            Value::BoundMethod(method) => {
+                self.call_bound_method(
+                    method,
                     values,
                     whole,
                 )
@@ -2103,41 +2104,48 @@ impl Interpreter {
         match value {
             Value::List(list) => {
                 Ok(ControlFlow::Value(
-                    Value::ListMethod(
-                        list,
-                        name.to_owned(),
+                    Value::BoundMethod(
+                        BoundMethod::new(
+                            MethodReceiver::List(
+                                list.clone()
+                            ),
+                            name,
+                        )
                     )
                 ))
             }
 
             Value::Object(object) => {
-                let object_ref = object.clone();
-
-                let object = object.borrow();
-
-                if let Some(field) = object.get_field(name) {
-                    return Ok(ControlFlow::Value(field));
-                }
-
-                if let Some(function) = object.get_method(name) {
-                    return Ok(ControlFlow::Value(
-                        Value::ObjectMethod(
-                            crate::runtime::ObjectMethod {
-                                object: object_ref,
-                                name: name.to_owned(),
-                                function,
-                            }
+                if object.borrow()
+                    .get_method(name)
+                    .is_some() 
+                {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    MethodReceiver::Object(
+                                        object.clone()
+                                    ),
+                                    name,
+                                )
+                            )
                         )
-                    ));
+                    );
                 }
 
-                let object_type = object.type_name().to_owned();
+                if let Some(value) =
+                    object.borrow().get_field(name)
+                {
+                    return Ok(
+                        ControlFlow::Value(value)
+                    );
+                }
 
                 Err(self.error(
                     ErrorKind::Runtime,
                     format!(
-                        "{} has no field or method '{}'",
-                        object_type,
+                        "object has no field or method '{}'",
                         name
                     ),
                     whole,
@@ -2193,9 +2201,13 @@ impl Interpreter {
                     | "to_matrix" => {
                         Ok(
                             ControlFlow::Value(
-                                Value::SeriesMethod(
-                                    series.clone(),
-                                    name.to_owned(),
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::Series(
+                                            series.clone()
+                                        ),
+                                        name,
+                                    )
                                 )
                             )
                         )
@@ -2262,12 +2274,23 @@ impl Interpreter {
 
                     "column"
                     | "select"
+                    | "filter"
+                    | "head"
+                    | "drop"
+                    | "rename"
+                    | "group_by"
+                    | "sort"
+                    | "describe"
                     | "to_matrix" => {
                         Ok(
                             ControlFlow::Value(
-                                Value::DataFrameMethod(
-                                    df.clone(),
-                                    name.to_owned(),
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::DataFrame(
+                                            df.clone()
+                                        ),
+                                        name,
+                                    )
                                 )
                             )
                         )
@@ -2279,6 +2302,55 @@ impl Interpreter {
                                 ErrorKind::Runtime,
                                 format!(
                                     "DataFrame has no field or method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            Value::GroupedDataFrame(grouped) => {
+                match name {
+                    "count"
+                    | "mean"
+                    | "sum"
+                    | "aggregate" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::GroupedDataFrame(
+                                            grouped.clone()
+                                        ),
+                                        name,
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    "group_column" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Str(
+                                    Rc::new(
+                                        grouped
+                                            .group_column()
+                                            .to_owned()
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "GroupedDataFrame has no field or method '{}'",
                                     name
                                 ),
                                 whole,
@@ -2300,7 +2372,76 @@ impl Interpreter {
         }
     }
 
-    fn call_function(&mut self, func: crate::runtime::FuncRef, args: Vec<Value>, call_site: &Expr) -> Result<ControlFlow> {
+    fn call_predicate(
+        &mut self,
+        predicate: &Value,
+        argument: Value,
+        whole: &Expr,
+    ) -> Result<Value> {
+        let result =
+            match predicate {
+                Value::Func(function) => {
+                    self.call_function(
+                        function.clone(),
+                        vec![argument],
+                        whole,
+                    )?
+                }
+
+                Value::Builtin(function) => {
+                    function(vec![argument])
+                        .map(ControlFlow::Value)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?
+                }
+
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "filter predicate must be callable, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        match result {
+            ControlFlow::Value(value) =>
+                Ok(value),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "filter predicate did not return a value: {:?}",
+                            other
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_function(
+        &mut self,
+        func: crate::runtime::FuncRef,
+        args: Vec<Value>,
+        call_site: &Expr
+    ) -> Result<ControlFlow> {
         if func.params.len() != args.len() {
             return Err(self.error(ErrorKind::Arity, format!("function expects {} arguments, got {}", func.params.len(), args.len()), call_site));
         }
@@ -2318,6 +2459,279 @@ impl Interpreter {
             ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(ControlFlow::Value(v)),
             ControlFlow::Break => Err(self.error(ErrorKind::Control,"break outside loop",call_site)),
         }
+    }
+
+    fn call_bound_method(
+        &mut self,
+        method: BoundMethod,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match method.receiver() {
+            MethodReceiver::List(list) => {
+                self.call_list_method(
+                    list.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Object(object) => {
+                self.call_object_method(
+                    object.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Series(series) => {
+                self.call_series_method(
+                    series.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::DataFrame(dataframe) => {
+                self.call_dataframe_method(
+                    dataframe.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::GroupedDataFrame(grouped) => {
+                self.call_grouped_dataframe_method(
+                    grouped.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+        }
+    }
+
+    fn call_list_method(
+        &mut self,
+        list: List,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            // =====================================================
+            // push(value)
+            // =====================================================
+
+            "push" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "push() takes exactly 1 argument",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    args.pop().unwrap();
+
+                list.borrow_mut().push(value);
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // pop()
+            // =====================================================
+
+            "pop" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "pop() takes no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    list.borrow_mut()
+                        .pop()
+                        .unwrap_or(Value::Unit);
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            // =====================================================
+            // remove(index)
+            // =====================================================
+
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "remove() takes exactly 1 argument",
+                        whole,
+                    ));
+                }
+
+                let index =
+                    match args.pop().unwrap() {
+                        Value::Int(index)
+                            if index >= 0 =>
+                        {
+                            index as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(self.error(
+                                ErrorKind::Index,
+                                "remove() does not accept negative indices",
+                                whole,
+                            ));
+                        }
+
+                        other => {
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "remove() expects Int, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
+                        }
+                    };
+
+                let mut list =
+                    list.borrow_mut();
+
+                if index >= list.len() {
+                    return Err(self.error(
+                        ErrorKind::Index,
+                        format!(
+                            "index out of range: {}",
+                            index
+                        ),
+                        whole,
+                    ));
+                }
+
+                let value =
+                    list.remove(index);
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            // =====================================================
+            // len()
+            // =====================================================
+
+            "len" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "len() takes no arguments",
+                        whole,
+                    ));
+                }
+
+                let len =
+                    list.borrow().len();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            len as i64
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // Unknown method
+            // =====================================================
+
+            _ => {
+                Err(self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "unknown list method '{}'",
+                        name
+                    ),
+                    whole,
+                ))
+            }
+        }
+    }
+
+    fn call_object_method(
+        &mut self,
+        object: ObjectRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        // ---------------------------------------------------------
+        // Find the method definition.
+        // ---------------------------------------------------------
+
+        let function = {
+            let object_ref = object.borrow();
+
+            object_ref
+                .get_method(name)
+                .ok_or_else(|| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "object has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                })?
+        };
+
+        // ---------------------------------------------------------
+        // Bind implicit self.
+        // ---------------------------------------------------------
+
+        let mut call_args =
+            Vec::with_capacity(
+                args.len() + 1
+            );
+
+        call_args.push(
+            Value::Object(
+                object.clone()
+            )
+        );
+
+        call_args.append(
+            &mut args
+        );
+
+        // ---------------------------------------------------------
+        // Invoke the actual function.
+        // ---------------------------------------------------------
+
+        self.call_function(
+            function,
+            call_args,
+            whole,
+        )
     }
 
     fn call_series_method(
@@ -2404,15 +2818,16 @@ impl Interpreter {
         whole: &Expr,
     ) -> Result<ControlFlow> {
         match name {
+            // =====================================================
+            // column()
+            // =====================================================
             "column" => {
                 if args.len() != 1 {
-                    return Err(
-                        self.error(
-                            ErrorKind::Arity,
-                            "column() expects exactly 1 argument",
-                            whole,
-                        )
-                    );
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "column() expects exactly 1 argument",
+                        whole,
+                    ));
                 }
 
                 let column_name =
@@ -2421,16 +2836,14 @@ impl Interpreter {
                             name.as_ref(),
 
                         other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "column() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "column() expects Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
                         }
                     };
 
@@ -2448,22 +2861,21 @@ impl Interpreter {
                             )
                         })?;
 
-                Ok(
-                    ControlFlow::Value(
-                        Value::Series(series)
-                    )
-                )
+                Ok(ControlFlow::Value(
+                    Value::Series(series)
+                ))
             }
 
+            // =====================================================
+            // select()
+            // =====================================================
             "select" => {
                 if args.len() != 1 {
-                    return Err(
-                        self.error(
-                            ErrorKind::Arity,
-                            "select() expects exactly 1 argument",
-                            whole,
-                        )
-                    );
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "select() expects exactly 1 argument",
+                        whole,
+                    ));
                 }
 
                 let names =
@@ -2486,24 +2898,23 @@ impl Interpreter {
                             )
                         })?;
 
-                Ok(
-                    ControlFlow::Value(
-                        Value::DataFrame(
-                            Rc::new(selected)
-                        )
+                Ok(ControlFlow::Value(
+                    Value::DataFrame(
+                        Rc::new(selected)
                     )
-                )
+                ))
             }
 
+            // =====================================================
+            // to_matrix()
+            // =====================================================
             "to_matrix" => {
                 if !args.is_empty() {
-                    return Err(
-                        self.error(
-                            ErrorKind::Arity,
-                            "to_matrix() expects no arguments",
-                            whole,
-                        )
-                    );
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "to_matrix() expects no arguments",
+                        whole,
+                    ));
                 }
 
                 let matrix =
@@ -2520,28 +2931,421 @@ impl Interpreter {
                             )
                         })?;
 
+                Ok(ControlFlow::Value(
+                    Value::Matrix(
+                        Rc::new(
+                            RefCell::new(matrix)
+                        )
+                    )
+                ))
+            }
+
+            // =====================================================
+            // head()
+            // =====================================================
+            "head" => {
+                let n =
+                    match args.as_slice() {
+                        [] => 5,
+
+                        [Value::Int(n)]
+                            if *n >= 0 =>
+                        {
+                            *n as usize
+                        }
+
+                        [other] => {
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "head() expects non-negative Int, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
+                        }
+
+                        _ => {
+                            return Err(self.error(
+                                ErrorKind::Arity,
+                                "head() expects 0 or 1 argument",
+                                whole,
+                            ));
+                        }
+                    };
+
+                let result =
+                    dataframe
+                        .head(n)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(ControlFlow::Value(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                ))
+            }
+
+            // =====================================================
+            // filter()
+            // =====================================================
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "filter() expects exactly 1 argument",
+                        whole,
+                    ));
+                }
+
+                let predicate =
+                    args.into_iter()
+                        .next()
+                        .unwrap();
+
+                let mut keep =
+                    Vec::with_capacity(
+                        dataframe.nrows()
+                    );
+
+                for index in 0..dataframe.nrows() {
+                    let row =
+                        dataframe
+                            .row(index)
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Index,
+                                    format!(
+                                        "row index out of bounds: {}",
+                                        index
+                                    ),
+                                    whole,
+                                )
+                            })?;
+
+                    let result =
+                        self.call_predicate(
+                            &predicate,
+                            Value::Object(row),
+                            whole,
+                        )?;
+
+                    match result {
+                        Value::Bool(true) =>
+                            keep.push(true),
+
+                        Value::Bool(false) =>
+                            keep.push(false),
+
+                        other => {
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "DataFrame filter predicate must return Bool, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
+                        }
+                    }
+                }
+
+                let result =
+                    dataframe
+                        .filter_rows(&keep)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(ControlFlow::Value(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                ))
+            }
+
+            // =====================================================
+            // group_by()
+            // =====================================================
+            "group_by" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "group_by() expects exactly 1 argument",
+                        whole,
+                    ));
+                }
+
+                let column_name =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "group_by() expects Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
+                        }
+                    };
+
+                let grouped =
+                    GroupedDataFrame::from_column(
+                        dataframe.clone(),
+                        column_name,
+                    )
+                    .map_err(|message| {
+                        self.attach(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                message,
+                                None,
+                            ),
+                            whole,
+                        )
+                    })?;
+
+                Ok(ControlFlow::Value(
+                    Value::GroupedDataFrame(
+                        Rc::new(grouped)
+                    )
+                ))
+            }
+
+            // =====================================================
+            // drop()
+            // =====================================================
+            "drop" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "drop() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let names =
+                    self.value_to_string_list(
+                        &args[0],
+                        whole,
+                    )?;
+
+                let result =
+                    dataframe
+                        .drop_columns(&names)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
                 Ok(
                     ControlFlow::Value(
-                        Value::Matrix(
-                            Rc::new(
-                                RefCell::new(matrix)
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // rename()
+            // =====================================================
+            "rename" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "rename() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let mapping =
+                    self.value_to_string_dict(
+                        &args[0],
+                        whole,
+                    )?;
+
+                let result =
+                    dataframe
+                        .rename(&mapping)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
                             )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // sort()
+            // =====================================================
+            "sort" => {
+                if args.is_empty()
+                    || args.len() > 2
+                {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "sort() expects 1 or 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "sort() expects column name as Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let ascending =
+                    match args.get(1) {
+                        None => true,
+
+                        Some(Value::Bool(value)) =>
+                            *value,
+
+                        Some(other) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "sort() second argument must be Bool, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    dataframe
+                        .sort_by_column(
+                            column,
+                            ascending,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // describe()
+            // =====================================================
+            "describe" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "describe() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    dataframe
+                        .describe()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
                         )
                     )
                 )
             }
 
             _ => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "DataFrame has no method '{}'",
-                            name
-                        ),
-                        whole,
-                    )
-                )
+                Err(self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "DataFrame has no method '{}'",
+                        name
+                    ),
+                    whole,
+                ))
             }
         }
     }
@@ -2600,6 +3404,235 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    fn value_to_string_dict(
+        &self,
+        value: &Value,
+        whole: &Expr,
+    ) -> Result<HashMap<String, String>> {
+        let dict =
+            match value {
+                Value::Dict(dict) =>
+                    dict.borrow(),
+
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "expected Dict, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        let mut result =
+            HashMap::new();
+
+        for (key, value) in dict.iter() {
+            let value =
+                match value {
+                    Value::Str(value) =>
+                        value.as_ref().clone(),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "rename mapping value must be Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                };
+
+            result.insert(
+                key.clone(),
+                value,
+            );
+        }
+
+        Ok(result)
+    }
+
+    fn call_grouped_dataframe_method(
+        &mut self,
+        grouped: GroupedDataFrameRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "count" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "count() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let result =
+                    grouped
+                        .count()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(ControlFlow::Value(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                ))
+            }
+
+            "mean"
+            | "sum" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "{}() expects exactly 1 argument",
+                            name
+                        ),
+                        whole,
+                    ));
+                }
+
+                let column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "{}() expects Str, got {}",
+                                    name,
+                                    other.type_name()
+                                ),
+                                whole,
+                            ));
+                        }
+                    };
+
+                let result =
+                    match name {
+                        "mean" =>
+                            grouped.mean(column),
+
+                        "sum" =>
+                            grouped.sum(column),
+
+                        _ =>
+                            unreachable!(),
+                    }
+                    .map_err(|message| {
+                        self.attach(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                message,
+                                None,
+                            ),
+                            whole,
+                        )
+                    })?;
+
+                Ok(ControlFlow::Value(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                ))
+            }
+
+            "aggregate" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "aggregate() expects 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "aggregate() first argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let functions =
+                    self.value_to_string_list(
+                        &args[1],
+                        whole,
+                    )?;
+
+                let result =
+                    grouped
+                        .aggregate(
+                            column,
+                            &functions,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "GroupedDataFrame has no method '{}'",
+                        name
+                    ),
+                    whole,
+                ))
+            }
+        }
     }
 
     fn error(&self, kind: ErrorKind, message: impl Into<String>, expr: &Expr) -> Error {

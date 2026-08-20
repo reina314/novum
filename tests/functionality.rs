@@ -5,7 +5,7 @@ use common::{
     assert_float_close,
 };
 use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Matrix};
+use novum::runtime::{Value};
 
 #[test]
 fn import_stats_module() {

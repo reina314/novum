@@ -1,19 +1,20 @@
 use super::{
     FuncRef,
     IteratorObj,
-    ObjectMethod,
     ObjectRef,
     StructRef,
     MatrixRef,
     SeriesRef,
     DataFrameRef,
+    GroupedDataFrameRef,
     ModuleRef,
+    BoundMethod,
 };
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt,
-    rc::Rc
+    fmt, 
+    rc::Rc,
+    cell::RefCell, 
+    collections::HashMap, 
 };
 
 pub type List = Rc<RefCell<Vec<Value>>>;
@@ -32,6 +33,7 @@ pub enum Value {
     Matrix(MatrixRef),
     Series(SeriesRef),
     DataFrame(DataFrameRef),
+    GroupedDataFrame(GroupedDataFrameRef),
 
     Object(ObjectRef),
     Struct(StructRef),
@@ -43,11 +45,8 @@ pub enum Value {
     Func(FuncRef),
     Iterator(IteratorObj),
     Builtin(BuiltinFn),
-    
-    ListMethod(List, String),
-    ObjectMethod(ObjectMethod),
-    SeriesMethod(SeriesRef, String),
-    DataFrameMethod(DataFrameRef, String),
+
+    BoundMethod(BoundMethod),
     
     Unit,
     Null,
@@ -66,6 +65,7 @@ impl Value {
             Self::Matrix(_) => "Matrix",
             Self::Series(_) => "Series",
             Self::DataFrame(_) => "DataFrame",
+            Self::GroupedDataFrame(_) => "GroupedDataFrame",
 
             Self::Object(_) => "Object",
             Self::Struct(_) => "Struct",
@@ -78,10 +78,7 @@ impl Value {
             Self::Iterator(_) => "Iterator",
             Self::Builtin(_) => "Builtin",
 
-            Self::ListMethod(..) => "Method",
-            Self::ObjectMethod(_) => "Method",
-            Self::SeriesMethod(..) => "Method",
-            Self::DataFrameMethod(..) => "Method",
+            Self::BoundMethod(_) => "Method",
 
             Self::Unit => "Unit",
             Self::Null => "Null",
@@ -125,8 +122,8 @@ impl Value {
 
             (Self::Builtin(a), Self::Builtin(b)) => *a as usize == *b as usize,
             
-            (Self::ListMethod(_, a), Self::ListMethod(_, b)) => a == b,
-            
+            (Self::BoundMethod(_), Self::BoundMethod(_),) => false,
+
             (Self::Range(a1,b1,c1), Self::Range(a2,b2,c2)) => (a1,b1,c1)==(a2,b2,c2),
 
             (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
@@ -152,6 +149,7 @@ impl fmt::Debug for Value {
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
             Self::Series(v) => write!(f, "{:?}", v),
             Self::DataFrame(df) => write!(f, "{:?}", df),
+            Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
@@ -164,10 +162,7 @@ impl fmt::Debug for Value {
             Self::Iterator(_) => write!(f, "<iterator>"),
             Self::Builtin(_) => write!(f, "<builtin>"),
 
-            Self::ListMethod(_, name) => write!(f, "<list_method> {name}"),
-            Self::ObjectMethod(method) => write!(f, "<object_method> {}", method.name),
-            Self::SeriesMethod(_, name) => write!(f, "<series_method> {name}"),
-            Self::DataFrameMethod(_, name) => write!(f, "<dataframe_method> {name}"),
+            Self::BoundMethod(method) => write!(f, "{:?}", method),
 
             Self::Unit => write!(f, "<unit>"),
             Self::Null => write!(f, "<null>"),
@@ -294,17 +289,8 @@ impl fmt::Display for Value {
             Self::Iterator(_) =>
                 write!(f, "<iterator>"),
 
-            Self::ListMethod(_, name) =>
-                write!(f, "<list method {}>", name),
-
-            Self::ObjectMethod(method) =>
-                write!(f, "<method {}>", method.name),
-
-            Self::SeriesMethod(_, name) =>
-                write!(f, "<series method {}>", name),
-
-            Self::DataFrameMethod(_, name) =>
-                write!(f, "<dataframe method {}>", name),
+            Self::BoundMethod(method) =>
+                write!(f, "{}", method),
 
             _ => write!(f, "{:?}", self),
         }

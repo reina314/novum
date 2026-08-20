@@ -1,0 +1,50 @@
+import csv
+import stats
+
+let df = csv.read(
+            "tests/data/experiment.csv"
+        )
+
+print(df.describe())
+
+let filtered =
+    df.filter(
+        |row|
+            row.age >= 20
+                and 
+            row.age <= 30
+    )
+
+let summary =
+    filtered
+        .group_by("condition")
+        .aggregate(
+            "score",
+            [
+                "count",
+                "mean",
+                "std"
+            ]
+        )
+
+print(summary)
+
+let a =
+    filtered
+        .filter(
+            |row|
+                row.condition == "A"
+        )
+        .column("score")
+
+let b =
+    filtered
+        .filter(
+            |row|
+                row.condition == "B"
+        )
+        .column("score")
+
+let result = stats.welch_t(a, b)
+
+print(result)

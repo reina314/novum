@@ -1,13 +1,18 @@
 use super::{
     Matrix,
+    Series,
     SeriesRef,
+    Object,
+    ObjectRef,
     Value,
 };
 
 use std::{
-    collections::HashMap,
     fmt,
     rc::Rc,
+    cell::RefCell,
+    cmp::Ordering,
+    collections::HashMap,
 };
 
 pub type DataFrameRef = Rc<DataFrame>;
@@ -71,6 +76,27 @@ impl DataFrame {
         })
     }
 
+    pub fn numeric_columns(
+        &self,
+    ) -> Vec<SeriesRef> {
+        self.columns
+            .iter()
+            .filter(|column| {
+                column.data()
+                    .iter()
+                    .all(|value| {
+                        matches!(
+                            value,
+                            Value::Int(_)
+                            | Value::Float(_)
+                            | Value::Null
+                        )
+                    })
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn nrows(&self) -> usize {
         self.nrows
     }
@@ -97,6 +123,149 @@ impl DataFrame {
             .map(|&index| {
                 self.columns[index].clone()
             })
+    }
+
+    pub fn row(
+        &self,
+        index: usize,
+    ) -> Option<ObjectRef> {
+        if index >= self.nrows {
+            return None;
+        }
+
+        let mut object =
+            Object::new();
+
+        for column in &self.columns {
+            let value =
+                column.get(index)?;
+
+            object.set_field(
+                column.name().to_owned(),
+                value,
+            );
+        }
+
+        Some(
+            Rc::new(
+                RefCell::new(object)
+            )
+        )
+    }
+
+    pub fn take_rows(
+        &self,
+        indices: &[usize],
+    ) -> Result<Self, String> {
+        let mut columns =
+            Vec::with_capacity(
+                self.columns.len()
+            );
+
+        for column in &self.columns {
+            let mut values =
+                Vec::with_capacity(
+                    indices.len()
+                );
+
+            for &index in indices {
+                let value =
+                    column
+                        .get(index)
+                        .ok_or_else(|| {
+                            format!(
+                                "row index out of bounds: {}",
+                                index
+                            )
+                        })?;
+
+                values.push(value);
+            }
+
+            columns.push(
+                Rc::new(
+                    crate::runtime::Series::new(
+                        column.name().to_owned(),
+                        values,
+                    )
+                )
+            );
+        }
+
+        Self::from_series(columns)
+    }
+
+    pub fn filter_rows(
+        &self,
+        keep: &[bool],
+    ) -> Result<Self, String> {
+        if keep.len() != self.nrows {
+            return Err(
+                "filter mask length must equal DataFrame row count"
+                    .into()
+            );
+        }
+
+        let indices =
+            keep.iter()
+                .enumerate()
+                .filter_map(
+                    |(index, keep)| {
+                        if *keep {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    }
+                )
+                .collect::<Vec<_>>();
+
+        self.take_rows(&indices)
+    }
+
+    pub fn sort_by_column(
+        &self,
+        column_name: &str,
+        ascending: bool,
+    ) -> Result<Self, String> {
+        let column =
+            self.column(column_name)
+                .ok_or_else(|| {
+                    format!(
+                        "unknown DataFrame column '{}'",
+                        column_name
+                    )
+                })?;
+
+        let mut indices =
+            (0..self.nrows)
+                .collect::<Vec<_>>();
+
+        indices.sort_by(|&a, &b| {
+            let va =
+                column
+                    .get(a)
+                    .unwrap_or(Value::Null);
+
+            let vb =
+                column
+                    .get(b)
+                    .unwrap_or(Value::Null);
+
+            let ordering =
+                compare_values_for_sort(
+                    &va,
+                    &vb,
+                );
+
+            if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            }
+        });
+
+        self.take_rows(&indices)
     }
 
     pub fn select(
@@ -129,6 +298,278 @@ impl DataFrame {
         }
 
         Self::from_series(columns)
+    }
+
+    pub fn rename(
+        &self,
+        mapping: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, String> {
+        let mut columns =
+            Vec::with_capacity(
+                self.columns.len()
+            );
+
+        for column in &self.columns {
+            let new_name =
+                mapping
+                    .get(column.name())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        column.name().to_owned()
+                    });
+
+            columns.push(
+                Rc::new(
+                    Series::new(
+                        new_name,
+                        column.data().to_vec(),
+                    )
+                )
+            );
+        }
+
+        Self::from_series(columns)
+    }
+
+    pub fn drop_columns(
+        &self,
+        names: &[String],
+    ) -> Result<Self, String> {
+        if names.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let columns = self
+            .columns
+            .iter()
+            .filter(|column| {
+                !names.iter().any(|name| {
+                    name == column.name()
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if columns.is_empty() {
+            return Err(
+                "drop() cannot remove all DataFrame columns"
+                    .into()
+            );
+        }
+
+        Self::from_series(columns)
+    }
+
+    pub fn describe(
+        &self,
+    ) -> Result<Self, String> {
+        let numeric_columns = self
+            .columns
+            .iter()
+            .filter(|column| {
+                is_numeric_column(column)
+            })
+            .collect::<Vec<_>>();
+
+        if numeric_columns.is_empty() {
+            return Err(
+                "describe() found no numeric columns"
+                    .into()
+            );
+        }
+
+        let mut column_names =
+            Vec::<Value>::new();
+
+        let mut counts =
+            Vec::<Value>::new();
+
+        let mut means =
+            Vec::<Value>::new();
+
+        let mut stds =
+            Vec::<Value>::new();
+
+        let mut mins =
+            Vec::<Value>::new();
+
+        let mut medians =
+            Vec::<Value>::new();
+
+        let mut maxs =
+            Vec::<Value>::new();
+
+        for column in numeric_columns {
+            let values =
+                numeric_values(column);
+
+            column_names.push(
+                Value::Str(
+                    Rc::new(
+                        column.name().to_owned()
+                    )
+                )
+            );
+
+            counts.push(
+                Value::Int(
+                    values.len() as i64
+                )
+            );
+
+            if values.is_empty() {
+                means.push(Value::Null);
+                stds.push(Value::Null);
+                mins.push(Value::Null);
+                medians.push(Value::Null);
+                maxs.push(Value::Null);
+
+                continue;
+            }
+
+            // -----------------------------------------------------
+            // Mean
+            // -----------------------------------------------------
+
+            let mean =
+                values.iter().sum::<f64>()
+                / values.len() as f64;
+
+            means.push(
+                Value::Float(mean)
+            );
+
+            // -----------------------------------------------------
+            // Standard deviation
+            // -----------------------------------------------------
+
+            if values.len() >= 2 {
+                let sum_squared =
+                    values
+                        .iter()
+                        .map(|value| {
+                            let diff =
+                                *value - mean;
+
+                            diff * diff
+                        })
+                        .sum::<f64>();
+
+                let variance =
+                    sum_squared
+                        / (values.len() - 1) as f64;
+
+                stds.push(
+                    Value::Float(
+                        variance.sqrt()
+                    )
+                );
+            } else {
+                stds.push(Value::Null);
+            }
+
+            // -----------------------------------------------------
+            // Sorted values
+            // -----------------------------------------------------
+
+            let mut sorted =
+                values.clone();
+
+            sorted.sort_by(
+                |a, b| a.total_cmp(b)
+            );
+
+            // -----------------------------------------------------
+            // Min / Max
+            // -----------------------------------------------------
+
+            mins.push(
+                Value::Float(
+                    sorted[0]
+                )
+            );
+
+            maxs.push(
+                Value::Float(
+                    sorted[sorted.len() - 1]
+                )
+            );
+
+            // -----------------------------------------------------
+            // Median
+            // -----------------------------------------------------
+
+            let n =
+                sorted.len();
+
+            let median =
+                if n % 2 == 1 {
+                    sorted[n / 2]
+                } else {
+                    let upper =
+                        n / 2;
+
+                    (
+                        sorted[upper - 1]
+                        + sorted[upper]
+                    ) / 2.0
+                };
+
+            medians.push(
+                Value::Float(median)
+            );
+        }
+
+        Self::from_series(vec![
+            Rc::new(
+                Series::new(
+                    "column",
+                    column_names,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "count",
+                    counts,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "mean",
+                    means,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "std",
+                    stds,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "min",
+                    mins,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "median",
+                    medians,
+                )
+            ),
+
+            Rc::new(
+                Series::new(
+                    "max",
+                    maxs,
+                )
+            ),
+        ])
     }
 
     pub fn to_matrix(
@@ -199,6 +640,20 @@ impl DataFrame {
         }
 
         Matrix::from_rows(rows)
+    }
+
+    pub fn head(
+        &self,
+        n: usize,
+    ) -> Result<Self, String> {
+        let end =
+            n.min(self.nrows);
+
+        let indices =
+            (0..end)
+                .collect::<Vec<_>>();
+
+        self.take_rows(&indices)
     }
 
     pub fn fmt_display(
@@ -428,3 +883,87 @@ impl fmt::Debug for DataFrame {
             .finish()
     }
 }
+
+/// Helper for `describe()`
+fn numeric_values(
+    column: &Series,
+) -> Vec<f64> {
+    column
+        .data()
+        .iter()
+        .filter_map(|value| {
+            match value {
+                Value::Int(v) =>
+                    Some(*v as f64),
+
+                Value::Float(v) =>
+                    Some(*v),
+
+                Value::Null =>
+                    None,
+
+                _ =>
+                    None,
+            }
+        })
+        .collect()
+}
+
+/// Helper for `describe()`
+fn is_numeric_column(
+    column: &Series,
+) -> bool {
+    column
+        .data()
+        .iter()
+        .all(|value| {
+            matches!(
+                value,
+                Value::Int(_)
+                    | Value::Float(_)
+                    | Value::Null
+            )
+        })
+}
+
+fn compare_values_for_sort(
+    a: &Value,
+    b: &Value,
+) -> Ordering {
+    match (a, b) {
+        (Value::Null, Value::Null) =>
+            Ordering::Equal,
+
+        // Put Null at the end.
+        (Value::Null, _) =>
+            Ordering::Greater,
+
+        (_, Value::Null) =>
+            Ordering::Less,
+
+        (Value::Int(a), Value::Int(b)) =>
+            a.cmp(b),
+
+        (Value::Float(a), Value::Float(b)) =>
+            a.total_cmp(b),
+
+        (Value::Int(a), Value::Float(b)) =>
+            (*a as f64).total_cmp(b),
+
+        (Value::Float(a), Value::Int(b)) =>
+            a.total_cmp(&(*b as f64)),
+
+        (Value::Str(a), Value::Str(b)) =>
+            a.cmp(b),
+
+        (Value::Bool(a), Value::Bool(b)) =>
+            a.cmp(b),
+
+        // Different types:
+        // deterministic ordering by type name.
+        (a, b) =>
+            a.type_name()
+                .cmp(b.type_name()),
+    }
+}
+

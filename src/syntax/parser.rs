@@ -33,6 +33,60 @@ impl Parser {
         t
     }
 
+    fn at_ident(
+        &self,
+        expected: &str,
+    ) -> bool {
+        self.peek()
+            .kind
+            .is_ident(expected)
+    }
+
+    fn eat_ident(
+        &mut self,
+        expected: &str,
+    ) -> Result<Span> {
+        let token =
+            self.peek().clone();
+
+        if !token.kind.is_ident(expected) {
+            return Err(
+                Error::parse(
+                    format!(
+                        "expected '{}'",
+                        expected
+                    ),
+                    token.span,
+                )
+            );
+        }
+
+        self.eat();
+
+        Ok(token.span)
+    }
+
+    fn eat_ident_name(&mut self) -> Result<(String, Span)> {
+        let token = self.peek().clone();
+
+        match token.kind {
+            TokenKind::Ident(name) => {
+                self.eat();
+
+                Ok((name, token.span))
+            }
+
+            _ => {
+                Err(
+                    Error::parse(
+                        "expected identifier",
+                        token.span,
+                    )
+                )
+            }
+        }
+    }
+
     /// DEPRECATED
     /// 
     /// Kept only for backward compatibility.
@@ -120,7 +174,20 @@ impl Parser {
         Ok(left)
     }
 
+    /// Helper for `parse_control()`
+    fn is_drop_statement(&self) -> bool {
+        self.at_ident("drop")
+            && matches!(
+                self.peek_n(1).kind,
+                TokenKind::Ident(_)
+            )
+    }
+
     fn parse_control(&mut self) -> Result<Expr> {
+        if self.is_drop_statement() {
+            return self.parse_drop();
+        }
+
         match self.peek().kind {
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
@@ -132,7 +199,6 @@ impl Parser {
             }
 
             TokenKind::Return => self.parse_return(),
-            TokenKind::Drop => self.parse_drop(),
             TokenKind::Let => self.parse_let(),
             TokenKind::Struct => self.parse_struct(), 
             TokenKind::Import => self.parse_import(),
@@ -150,14 +216,21 @@ impl Parser {
         Ok(Expr::new(ExprKind::Return(value), span))
     }
 
-    fn parse_drop(&mut self) -> Result<Expr> {
-        let start = self.expect(TokenKind::Drop)?.span;
-        let tok = self.peek().clone();
-        let name = match tok.kind {
-            TokenKind::Ident(name) => { self.eat(); name }
-            _ => return Err(Error::parse("drop expects an identifier", tok.span)),
-        };
-        Ok(Expr::new(ExprKind::Drop(name), start.join(tok.span)))
+    fn parse_drop(
+        &mut self,
+    ) -> Result<Expr> {
+        let start =
+            self.eat_ident("drop")?;
+
+        let (name, end) =
+            self.eat_ident_name()?;
+
+        Ok(
+            Expr::new(
+                ExprKind::Drop(name),
+                start.join(end),
+            )
+        )
     }
 
     fn parse_let(&mut self) -> Result<Expr> {

@@ -224,7 +224,6 @@ impl<'a> Lexer<'a> {
             "return" => TokenKind::Return,
             "for" => TokenKind::For,
             "in" => TokenKind::In,
-            "drop" => TokenKind::Drop,
             "let" => TokenKind::Let,
 
             "import" => TokenKind::Import,

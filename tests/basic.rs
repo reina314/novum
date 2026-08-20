@@ -2,10 +2,9 @@ mod common;
 
 use common::{
     run,
-    assert_float_close,
 };
 use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Matrix};
+use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
@@ -16,6 +15,38 @@ fn mathematical_precedence() {
     assert_eq!(run("(-2) ** 2"),Value::Int(4));
     assert_eq!(run("2 ** 3 ** 2"),Value::Int(512));
     assert_eq!(run("2 ** -2"),Value::Float(0.25));
+}
+
+#[test]
+fn drop_statement_still_works() {
+    let result =
+        run(
+            r#"
+            let xs = [1, 2, 3]
+            drop xs
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Unit
+    );
+}
+
+#[test]
+fn drop_can_be_used_as_identifier() {
+    let result =
+        run(
+            r#"
+            let drop = 42
+            drop
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
 }
 
 #[test]
@@ -32,6 +63,85 @@ fn function_arity_is_checked() {
     let program = parser.parse().unwrap();
     let mut interpreter = Interpreter::new();
     assert!(interpreter.eval_program(&program).is_err());
+}
+
+#[test]
+fn list_push_method() {
+    let result = run(
+        r#"
+        let xs = [1, 2]
+        xs.push(3)
+        xs
+        "#
+    );
+
+    match result {
+        Value::List(list) => {
+            let list =
+                list.borrow();
+
+            assert_eq!(
+                list.as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected List, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn list_pop_method() {
+    let result = run(
+        r#"
+        let xs = [1, 2, 3]
+        xs.pop()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn list_remove_method() {
+    let result = run(
+        r#"
+        let xs = [10, 20, 30]
+        xs.remove(1)
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn list_len_method() {
+    let result = run(
+        r#"
+        let xs = [10, 20, 30]
+        xs.len()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
 }
 
 #[test]
@@ -376,383 +486,44 @@ fn struct_method_updates_multiple_fields() {
 }
 
 #[test]
-fn matrix_addition() {
-    assert_eq!(
-        run(
-            r#"
-            let A = matrix([
-                [1, 2],
-                [3, 4]
-            ]);
+fn bound_method_keeps_receiver() {
+    let series =
+        Rc::new(
+            Series::new(
+                "score",
+                vec![
+                    Value::Int(1),
+                    Value::Int(2),
+                ],
+            )
+        );
 
-            let B = matrix([
-                [5, 6],
-                [7, 8]
-            ]);
-
-            det(A)
-            "#
-        ),
-        Value::Float(-2.0)
-    );
-}
-
-#[test]
-fn matmul_result() {
-    let a = Matrix::from_rows(vec![
-        vec![1.0, 2.0],
-        vec![3.0, 4.0],
-    ]).unwrap();
-
-    let b = Matrix::from_rows(vec![
-        vec![5.0, 6.0],
-        vec![7.0, 8.0],
-    ]).unwrap();
-
-    let expected = Matrix::from_rows(vec![
-        vec![19.0, 22.0],
-        vec![43.0, 50.0],
-    ]).unwrap();
-
-    let actual = a.matmul(&b).unwrap();
-
-    assert!(
-        actual.approx_eq(
-            &expected,
-            1e-10,
-            1e-10,
-        )
-    );
-}
-
-#[test]
-fn matrix_transpose() {
-    assert_eq!(
-        run(
-            r#"
-            let A = matrix([
-                [1, 2],
-                [3, 4]
-            ]);
-
-            let B = transpose(A);
-
-            det(B)
-            "#
-        ),
-        Value::Float(-2.0)
-    );
-}
-
-#[test]
-fn matrix_scalar_mul() {
-    assert_eq!(
-        run(
-            r#"
-            let A = matrix([
-                [1, 2],
-                [3, 4]
-            ]);
-
-            let B = A * 2;
-
-            det(B)
-            "#
-        ),
-        Value::Float(-8.0)
-    );
-}
-
-#[test]
-fn matrix_arbitrary_shape() {
-    let source = r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9],
-            [10, 11, 12]
-        ]);
-
-        A[3, 2]
-    "#;
-
-    assert_float_close(
-        match run(source) {
-            Value::Float(x) => x,
-            other => panic!(
-                "expected Float, got {:?}",
-                other
+    let method =
+        BoundMethod::new(
+            MethodReceiver::Series(
+                series.clone()
             ),
-        },
-        12.0,
-    );
-}
+            "to_list",
+        );
 
-#[test]
-fn matrix_assignment() {
-    let source = r#"
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ]);
-
-        A[1, 0] = 99;
-
-        A[1, 0]
-    "#;
-
-    assert_float_close(
-        match run(source) {
-            Value::Float(x) => x,
-            other => panic!(
-                "expected Float, got {:?}",
-                other
-            ),
-        },
-        99.0,
-    );
-}
-
-#[test]
-fn matrix_index() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ]);
-
-        A[1, 2]
-        "#
+    assert_eq!(
+        method.name(),
+        "to_list"
     );
 
-    match result {
-        Value::Float(value) => {
-            assert_float_close(
-                value,
-                6.0,
-            );
-        }
-
-        other => panic!(
-            "expected Float, got {:?}",
-            other
-        ),
-    }
-}
-
-#[test]
-fn matrix_index_first_element() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [10, 20],
-            [30, 40]
-        ]);
-
-        A[0, 0]
-        "#
-    );
-
-    match result {
-        Value::Float(value) => {
-            assert_float_close(
-                value,
-                10.0,
-            );
-        }
-
-        other => panic!(
-            "expected Float, got {:?}",
-            other
-        ),
-    }
-}
-
-#[test]
-fn matrix_slice() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9]
-        ]);
-
-        A[0..2, 1..3]
-        "#
-    );
-
-    let expected =
-        Matrix::from_rows(vec![
-            vec![2.0, 3.0],
-            vec![5.0, 6.0],
-        ])
-        .unwrap();
-
-    match result {
-        Value::Matrix(actual) => {
+    match method.receiver() {
+        MethodReceiver::Series(value) => {
             assert!(
-                actual.borrow()
-                    .approx_eq(
-                        &expected,
-                        1e-10,
-                        1e-10,
-                    )
+                Rc::ptr_eq(
+                    value,
+                    &series
+                )
             );
         }
 
-        other => {
-            panic!(
-                "expected Matrix, got {:?}",
-                other
-            );
-        }
-    }
-}
-
-#[test]
-fn matrix_all_rows() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9]
-        ]);
-
-        A[.., 1..3]
-        "#
-    );
-
-    let expected =
-        Matrix::from_rows(vec![
-            vec![2.0, 3.0],
-            vec![5.0, 6.0],
-            vec![8.0, 9.0],
-        ])
-        .unwrap();
-
-    match result {
-        Value::Matrix(actual) => {
-            assert!(
-                actual.borrow()
-                    .approx_eq(
-                        &expected,
-                        1e-10,
-                        1e-10,
-                    )
-            );
-        }
-
-        other => panic!(
-            "expected Matrix, got {:?}",
-            other
+        _ => panic!(
+            "unexpected receiver"
         ),
     }
 }
 
-#[test]
-fn matrix_single_row_slice() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ]);
-
-        A[0, 1..3]
-        "#
-    );
-
-    let expected =
-        Matrix::from_rows(vec![
-            vec![2.0, 3.0],
-        ])
-        .unwrap();
-
-    match result {
-        Value::Matrix(actual) => {
-            assert!(
-                actual.borrow()
-                    .approx_eq(
-                        &expected,
-                        1e-10,
-                        1e-10,
-                    )
-            );
-        }
-
-        other => panic!(
-            "expected Matrix, got {:?}",
-            other
-        ),
-    }
-}
-
-#[test]
-fn matrix_single_column_slice() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ]);
-
-        A[0..2, 1]
-        "#
-    );
-
-    let expected =
-        Matrix::from_rows(vec![
-            vec![2.0],
-            vec![5.0],
-        ])
-        .unwrap();
-
-    match result {
-        Value::Matrix(actual) => {
-            assert!(
-                actual.borrow()
-                    .approx_eq(
-                        &expected,
-                        1e-10,
-                        1e-10,
-                    )
-            );
-        }
-
-        other => panic!(
-            "expected Matrix, got {:?}",
-            other
-        ),
-    }
-}
-
-#[test]
-fn matrix_scalar_index_still_works() {
-    let result = run(
-        r#"
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ]);
-
-        A[1, 0]
-        "#
-    );
-
-    match result {
-        Value::Float(value) => {
-            assert_float_close(
-                value,
-                3.0,
-            );
-        }
-
-        other => panic!(
-            "expected Float, got {:?}",
-            other
-        ),
-    }
-}

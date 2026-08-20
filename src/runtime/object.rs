@@ -9,13 +9,6 @@ use std::{
 pub type ObjectRef = Rc<RefCell<Object>>;
 
 #[derive(Clone)]
-pub struct ObjectMethod {
-    pub object: ObjectRef,
-    pub name: String,
-    pub function: FuncRef,
-}
-
-#[derive(Clone)]
 pub struct Object {
     type_name: String,
     fields: HashMap<String, Value>,
