@@ -91,9 +91,20 @@ impl Value {
 
     pub fn negate(self) -> Result<Self, String> {
         match self {
-            Self::Int(n) => n.checked_neg().map(Self::Int).ok_or_else(|| "integer overflow in negation".into()),
-            Self::Float(n) => Ok(Self::Float(-n)),
-            other => Err(format!("unary '-' is not defined for {}", other.type_name())),
+            Self::Int(n) => 
+                n
+                    .checked_neg()
+                    .map(Self::Int)
+                    .ok_or_else(
+                        || "integer overflow in negation".into()
+                    ),
+            Self::Float(n) => 
+                Ok(Self::Float(-n)),
+
+            other => 
+                Err(format!(
+                    "unary '-' is not defined for {}", other.type_name()
+                )),
         }
     }
 

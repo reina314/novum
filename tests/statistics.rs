@@ -455,4 +455,3 @@ fn linear_regression() {
         ),
     }
 }
-
