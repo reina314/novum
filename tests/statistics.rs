@@ -337,6 +337,83 @@ fn anova_identical_groups() {
 }
 
 #[test]
+fn chi_square_test() {
+    let result =
+        run(
+            r#"
+            import csv
+            import stats
+
+            let df =
+                csv.read(
+                    "tests/data/categorical.csv"
+                )
+
+            let table =
+                df.crosstab(
+                    "condition",
+                    "outcome"
+                )
+
+            stats.chi_square(table)
+            "#
+        );
+
+    match result {
+        Value::Object(object) => {
+            let object =
+                object.borrow();
+
+            let statistic =
+                match object
+                    .get_field("statistic")
+                    .unwrap()
+                {
+                    Value::Float(v) => v,
+                    other => panic!(
+                        "unexpected statistic: {:?}",
+                        other
+                    ),
+                };
+
+            assert_float_close(
+                statistic,
+                2.0 / 3.0,
+            );
+
+            assert_eq!(
+                object
+                    .get_field(
+                        "degrees_of_freedom"
+                    ),
+                Some(
+                    Value::Int(1)
+                )
+            );
+
+            assert!(
+                object
+                    .get_field("expected")
+                    .is_some()
+            );
+
+            assert!(
+                object
+                    .get_field("residuals")
+                    .is_some()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Object, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
 fn chi_square_identical_distribution() {
     let result = run(
         r#"

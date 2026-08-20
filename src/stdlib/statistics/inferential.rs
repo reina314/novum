@@ -1,6 +1,7 @@
 use crate::runtime::{
     Object,
     Value,
+    Matrix,
 };
 
 use std::{
@@ -891,6 +892,295 @@ pub fn chi_square_independence(
     }
 
     Ok(result)
+}
+
+pub fn chi_square(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "chi_square() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let table =
+        match &args[0] {
+            Value::DataFrame(df) =>
+                df.clone(),
+
+            other => {
+                return Err(format!(
+                    "chi_square() expects DataFrame, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    // Extract numeric columns except first
+    let columns =
+        table
+            .columns()
+            .into_iter()
+            .skip(1)
+            .collect::<Vec<_>>();
+
+    if columns.is_empty() {
+        return Err(
+            "chi_square() requires at least one count column"
+                .into()
+        );
+    }
+
+    let mut observed =
+        Vec::new();
+
+    for row in 0..table.nrows() {
+        let mut values =
+            Vec::new();
+
+        for column_name in &columns {
+            let column =
+                table
+                    .column(column_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "missing column '{}'",
+                            column_name
+                        )
+                    })?;
+
+            let value =
+                column
+                    .get(row)
+                    .ok_or_else(|| {
+                        format!(
+                            "missing value at row {}",
+                            row
+                        )
+                    })?;
+
+            let value =
+                match value {
+                    Value::Int(v) =>
+                        v as f64,
+
+                    Value::Float(v) =>
+                        v,
+
+                    other => {
+                        return Err(format!(
+                            "chi_square() expects numeric counts, got {}",
+                            other.type_name()
+                        ));
+                    }
+                };
+
+            if value < 0.0 {
+                return Err(
+                    "chi_square() cannot use negative counts"
+                        .into()
+                );
+            }
+
+            values.push(value);
+        }
+
+        observed.push(values);
+    }
+
+    let (
+        statistic,
+        degrees_of_freedom,
+        expected,
+        residuals,
+    ) =
+        chi_square_statistic(
+            &observed
+        )?;
+
+    let p_value =
+        1.0
+        - chi_square_cdf(
+            statistic,
+            degrees_of_freedom as f64,
+        );
+
+    let mut object = Object::new();
+
+    object.set_field(
+        "statistic",
+        Value::Float(statistic),
+    );
+
+    object.set_field(
+        "p_value",
+        Value::Float(p_value),
+    );
+
+    object.set_field(
+        "degrees_of_freedom",
+        Value::Int(
+            degrees_of_freedom as i64
+        ),
+    );
+
+    let expected_matrix =
+        Matrix::from_rows(
+            expected
+        )?;
+
+    object.set_field(
+        "expected",
+        Value::Matrix(
+            Rc::new(
+                RefCell::new(
+                    expected_matrix
+                )
+            )
+        ),
+    );
+
+    let residual_matrix =
+        Matrix::from_rows(
+            residuals
+        )?;
+
+    object.set_field(
+        "residuals",
+        Value::Matrix(
+            Rc::new(
+                RefCell::new(
+                    residual_matrix
+                )
+            )
+        ),
+    );
+
+    Ok(Value::Object(
+        Rc::new(RefCell::new(object))
+    ))
+}
+
+/// Helper for `chi_square()`
+fn chi_square_statistic(
+    observed: &[Vec<f64>],
+) -> Result<(f64, usize, Vec<Vec<f64>>, Vec<Vec<f64>>), String> {
+    let rows =
+        observed.len();
+
+    if rows == 0 {
+        return Err(
+            "chi_square() requires at least one row"
+                .into()
+        );
+    }
+
+    let cols =
+        observed[0].len();
+
+    if cols == 0 {
+        return Err(
+            "chi_square() requires at least one column"
+                .into()
+        );
+    }
+
+    if observed
+        .iter()
+        .any(|row| row.len() != cols)
+    {
+        return Err(
+            "chi_square() requires a rectangular table"
+                .into()
+        );
+    }
+
+    let row_totals =
+        observed
+            .iter()
+            .map(|row| {
+                row.iter().sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+
+    let mut column_totals =
+        vec![0.0; cols];
+
+    for row in observed {
+        for (j, value) in
+            row.iter().enumerate()
+        {
+            column_totals[j] += value;
+        }
+    }
+
+    let total =
+        row_totals
+            .iter()
+            .sum::<f64>();
+
+    if total <= 0.0 {
+        return Err(
+            "chi_square() requires a positive total count"
+                .into()
+        );
+    }
+
+    let mut expected =
+        vec![
+            vec![0.0; cols];
+            rows
+        ];
+
+    let mut statistic =
+        0.0;
+
+    let mut residuals =
+        vec![
+            vec![0.0; cols];
+            rows
+        ];
+
+    for i in 0..rows {
+        for j in 0..cols {
+            let expected_value =
+                row_totals[i]
+                * column_totals[j]
+                / total;
+
+            expected[i][j] =
+                expected_value;
+
+            let observed_value =
+                observed[i][j];
+
+            if expected_value > 0.0 {
+                let diff =
+                    observed_value
+                    - expected_value;
+
+                statistic +=
+                    diff * diff
+                    / expected_value;
+
+                residuals[i][j] =
+                    diff
+                    / expected_value.sqrt();
+            }
+        }
+    }
+
+    let degrees_of_freedom =
+        (rows - 1)
+        * (cols - 1);
+
+    Ok((
+        statistic,
+        degrees_of_freedom,
+        expected,
+        residuals,
+    ))
 }
 
 pub fn anova(

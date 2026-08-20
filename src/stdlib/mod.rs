@@ -146,6 +146,13 @@ fn stats_module() -> ModuleRef {
     );
 
     module.set(
+        "chi_square",
+        Value::Builtin(
+            statistics::inferential::chi_square
+        ),
+    );
+
+    module.set(
         "chi_square_gof",
         Value::Builtin(
             statistics::inferential::chi_square_gof

@@ -1345,3 +1345,78 @@ fn series_value_counts() {
     }
 }
 
+#[test]
+fn dataframe_crosstab() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/categorical.csv"
+                )
+
+            df.crosstab(
+                "condition",
+                "outcome"
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.nrows(),
+                2
+            );
+
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "condition",
+                    "yes",
+                    "no",
+                ]
+            );
+
+            let yes =
+                df.column("yes")
+                    .unwrap();
+
+            let no =
+                df.column("no")
+                    .unwrap();
+
+            assert_eq!(
+                yes.get(0),
+                Some(Value::Int(2))
+            );
+
+            assert_eq!(
+                no.get(0),
+                Some(Value::Int(1))
+            );
+
+            assert_eq!(
+                yes.get(1),
+                Some(Value::Int(1))
+            );
+
+            assert_eq!(
+                no.get(1),
+                Some(Value::Int(2))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+
+

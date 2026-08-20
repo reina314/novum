@@ -2567,7 +2567,8 @@ impl Interpreter {
                     | "group_by"
                     | "sort"
                     | "describe"
-                    | "to_matrix" => {
+                    | "to_matrix"
+                    | "crosstab" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -4059,6 +4060,85 @@ impl Interpreter {
                     )
                 )
             }
+
+            // =====================================================
+            // crosstab()
+            // =====================================================
+            "crosstab" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "crosstab() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let row_column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "crosstab() first argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let column_column =
+                    match &args[1] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "crosstab() second argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    dataframe
+                        .crosstab(
+                            row_column,
+                            column_column,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
 
             _ => {
                 Err(self.error(
