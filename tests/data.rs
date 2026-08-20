@@ -577,5 +577,297 @@ fn dataframe_head() {
     }
 }
 
+#[test]
+fn dataframe_describe() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.describe()
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "column",
+                    "count",
+                    "mean",
+                    "std",
+                    "min",
+                    "median",
+                    "max",
+                ]
+            );
+
+            assert_eq!(
+                df.nrows(),
+                3
+            );
+
+            let mean =
+                df.column("mean")
+                    .unwrap();
+
+            match mean.get(0) {
+                Some(Value::Float(value)) => {
+                    // age:
+                    // (20 + 21 + 22 + 20 + 23 + 21) / 6
+                    assert_float_close(
+                        value,
+                        127.0 / 6.0,
+                    );
+                }
+
+                other => {
+                    panic!(
+                        "unexpected value: {:?}",
+                        other
+                    );
+                }
+            }
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_drop() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.drop([
+                "reaction_time"
+            ])
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "condition",
+                    "age",
+                    "score",
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_rename() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.rename({
+                "reaction_time": "rt",
+                "score": "result"
+            })
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "condition",
+                    "age",
+                    "rt",
+                    "result",
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_sort() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.sort(
+                "score"
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            let score =
+                df.column("score")
+                    .unwrap();
+
+            assert_eq!(
+                score.get(0),
+                Some(Value::Float(74.5))
+            );
+
+            assert_eq!(
+                score.get(5),
+                Some(Value::Float(88.0))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_sort_descending() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.sort(
+                "score",
+                false
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            let score =
+                df.column("score")
+                    .unwrap();
+
+            assert_eq!(
+                score.get(0),
+                Some(Value::Float(88.0))
+            );
+
+            assert_eq!(
+                score.get(5),
+                Some(Value::Float(74.5))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn grouped_dataframe_aggregate() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.group_by(
+                "condition"
+            ).aggregate(
+                "score",
+                [
+                    "count",
+                    "mean",
+                    "std",
+                    "min",
+                    "max"
+                ]
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.nrows(),
+                2
+            );
+
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "condition",
+                    "score_count",
+                    "score_mean",
+                    "score_std",
+                    "score_min",
+                    "score_max",
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
 
 

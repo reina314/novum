@@ -18,6 +18,38 @@ fn mathematical_precedence() {
 }
 
 #[test]
+fn drop_statement_still_works() {
+    let result =
+        run(
+            r#"
+            let xs = [1, 2, 3]
+            drop xs
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Unit
+    );
+}
+
+#[test]
+fn drop_can_be_used_as_identifier() {
+    let result =
+        run(
+            r#"
+            let drop = 42
+            drop
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
 fn short_circuit() {
     assert_eq!(run("false and missing"), Value::Bool(false));
     assert_eq!(run("true or missing"), Value::Bool(true));

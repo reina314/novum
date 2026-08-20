@@ -10,7 +10,6 @@ pub enum TokenKind {
     Ident(String),
 
     Equals,
-    Drop,
 
     Plus,
     Minus,
@@ -61,6 +60,19 @@ pub enum TokenKind {
 
     Null,
     Eof,
+}
+
+impl TokenKind {
+    pub fn is_ident(
+        &self,
+        expected: &str,
+    ) -> bool {
+        matches!(
+            self,
+            TokenKind::Ident(name)
+                if name == expected
+        )
+    }
 }
 
 #[derive(Clone, PartialEq)]

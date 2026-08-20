@@ -1,5 +1,6 @@
 use super::{
     Series,
+    SeriesRef,
     DataFrame,
     DataFrameRef,
     Value,
@@ -316,6 +317,221 @@ impl GroupedDataFrame {
         )
     }
 
+    pub fn aggregate(
+        &self,
+        column_name: &str,
+        functions: &[String],
+    ) -> Result<DataFrame, String> {
+        let column =
+            self.dataframe
+                .column(column_name)
+                .ok_or_else(|| {
+                    format!(
+                        "unknown DataFrame column '{}'",
+                        column_name
+                    )
+                })?;
+
+        let mut output_columns =
+            Vec::<SeriesRef>::new();
+
+        // Group key column
+        let keys =
+            self.groups
+                .iter()
+                .map(|group| group.key.clone())
+                .collect::<Vec<_>>();
+
+        output_columns.push(
+            Rc::new(
+                Series::new(
+                    self.group_column.clone(),
+                    keys,
+                )
+            )
+        );
+
+        for function in functions {
+            match function.as_str() {
+                "count" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                let count =
+                                    group.rows
+                                        .iter()
+                                        .filter(|&&row| {
+                                            !matches!(
+                                                column.get(row),
+                                                Some(Value::Null)
+                                            )
+                                        })
+                                        .count();
+
+                                Value::Int(
+                                    count as i64
+                                )
+                            })
+                            .collect();
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_count",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                "mean" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                numeric_aggregate(
+                                    &column,
+                                    &group.rows,
+                                    NumericAggregate::Mean,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_mean",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                "sum" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                numeric_aggregate(
+                                    &column,
+                                    &group.rows,
+                                    NumericAggregate::Sum,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_sum",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                "min" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                numeric_aggregate(
+                                    &column,
+                                    &group.rows,
+                                    NumericAggregate::Min,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_min",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                "max" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                numeric_aggregate(
+                                    &column,
+                                    &group.rows,
+                                    NumericAggregate::Max,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_max",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                "std" => {
+                    let values =
+                        self.groups
+                            .iter()
+                            .map(|group| {
+                                numeric_aggregate(
+                                    &column,
+                                    &group.rows,
+                                    NumericAggregate::Std,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                    output_columns.push(
+                        Rc::new(
+                            Series::new(
+                                format!(
+                                    "{}_std",
+                                    column_name
+                                ),
+                                values,
+                            )
+                        )
+                    );
+                }
+
+                other => {
+                    return Err(format!(
+                        "unknown aggregation '{}'",
+                        other
+                    ));
+                }
+            }
+        }
+
+        DataFrame::from_series(
+            output_columns
+        )
+    }
+
     pub fn group_column(
         &self,
     ) -> &str {
@@ -326,6 +542,108 @@ impl GroupedDataFrame {
         &self,
     ) -> usize {
         self.groups.len()
+    }
+}
+
+enum NumericAggregate {
+    Mean,
+    Sum,
+    Min,
+    Max,
+    Std,
+}
+
+fn numeric_aggregate(
+    column: &SeriesRef,
+    rows: &[usize],
+    aggregate: NumericAggregate,
+) -> Result<Value, String> {
+    let values =
+        rows.iter()
+            .filter_map(|&row| {
+                match column.get(row) {
+                    Some(Value::Int(v)) =>
+                        Some(v as f64),
+
+                    Some(Value::Float(v)) =>
+                        Some(v),
+
+                    Some(Value::Null) =>
+                        None,
+
+                    Some(_) =>
+                        None,
+
+                    None =>
+                        None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+    if values.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    match aggregate {
+        NumericAggregate::Mean => {
+            Ok(Value::Float(
+                values.iter().sum::<f64>()
+                    / values.len() as f64
+            ))
+        }
+
+        NumericAggregate::Sum => {
+            Ok(Value::Float(
+                values.iter().sum()
+            ))
+        }
+
+        NumericAggregate::Min => {
+            Ok(Value::Float(
+                values
+                    .into_iter()
+                    .fold(
+                        f64::INFINITY,
+                        f64::min
+                    )
+            ))
+        }
+
+        NumericAggregate::Max => {
+            Ok(Value::Float(
+                values
+                    .into_iter()
+                    .fold(
+                        f64::NEG_INFINITY,
+                        f64::max
+                    )
+            ))
+        }
+
+        NumericAggregate::Std => {
+            if values.len() < 2 {
+                return Ok(Value::Null);
+            }
+
+            let mean =
+                values.iter().sum::<f64>()
+                    / values.len() as f64;
+
+            let variance =
+                values
+                    .iter()
+                    .map(|x| {
+                        (x - mean).powi(2)
+                    })
+                    .sum::<f64>()
+                    / (values.len() - 1) as f64;
+
+            Ok(
+                Value::Float(
+                    variance.sqrt()
+                )
+            )
+        }
     }
 }
 

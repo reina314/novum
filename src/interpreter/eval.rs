@@ -39,7 +39,10 @@ use crate::{
     },
 };
 use std::{
-    cell::RefCell, path::PathBuf, rc::Rc,
+    cell::RefCell, 
+    path::PathBuf, 
+    rc::Rc,
+    collections::HashMap,
 };
 
 pub struct Interpreter {
@@ -2273,7 +2276,11 @@ impl Interpreter {
                     | "select"
                     | "filter"
                     | "head"
+                    | "drop"
+                    | "rename"
                     | "group_by"
+                    | "sort"
+                    | "describe"
                     | "to_matrix" => {
                         Ok(
                             ControlFlow::Value(
@@ -2308,7 +2315,8 @@ impl Interpreter {
                 match name {
                     "count"
                     | "mean"
-                    | "sum" => {
+                    | "sum"
+                    | "aggregate" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -3124,6 +3132,211 @@ impl Interpreter {
                 ))
             }
 
+            // =====================================================
+            // drop()
+            // =====================================================
+            "drop" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "drop() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let names =
+                    self.value_to_string_list(
+                        &args[0],
+                        whole,
+                    )?;
+
+                let result =
+                    dataframe
+                        .drop_columns(&names)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // rename()
+            // =====================================================
+            "rename" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "rename() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let mapping =
+                    self.value_to_string_dict(
+                        &args[0],
+                        whole,
+                    )?;
+
+                let result =
+                    dataframe
+                        .rename(&mapping)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // sort()
+            // =====================================================
+            "sort" => {
+                if args.is_empty()
+                    || args.len() > 2
+                {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "sort() expects 1 or 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "sort() expects column name as Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let ascending =
+                    match args.get(1) {
+                        None => true,
+
+                        Some(Value::Bool(value)) =>
+                            *value,
+
+                        Some(other) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "sort() second argument must be Bool, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    dataframe
+                        .sort_by_column(
+                            column,
+                            ascending,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // describe()
+            // =====================================================
+            "describe" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "describe() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    dataframe
+                        .describe()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
             _ => {
                 Err(self.error(
                     ErrorKind::Runtime,
@@ -3188,6 +3401,62 @@ impl Interpreter {
                     );
                 }
             }
+        }
+
+        Ok(result)
+    }
+
+    fn value_to_string_dict(
+        &self,
+        value: &Value,
+        whole: &Expr,
+    ) -> Result<HashMap<String, String>> {
+        let dict =
+            match value {
+                Value::Dict(dict) =>
+                    dict.borrow(),
+
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "expected Dict, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        let mut result =
+            HashMap::new();
+
+        for (key, value) in dict.iter() {
+            let value =
+                match value {
+                    Value::Str(value) =>
+                        value.as_ref().clone(),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "rename mapping value must be Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                };
+
+            result.insert(
+                key.clone(),
+                value,
+            );
         }
 
         Ok(result)
@@ -3289,6 +3558,68 @@ impl Interpreter {
                         Rc::new(result)
                     )
                 ))
+            }
+
+            "aggregate" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "aggregate() expects 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "aggregate() first argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let functions =
+                    self.value_to_string_list(
+                        &args[1],
+                        whole,
+                    )?;
+
+                let result =
+                    grouped
+                        .aggregate(
+                            column,
+                            &functions,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
             }
 
             _ => {
