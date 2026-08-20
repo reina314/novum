@@ -41,6 +41,8 @@ pub enum TokenKind {
 
     Struct,
 
+    Import,
+
     LParen,
     LBrace,
     LBracket,

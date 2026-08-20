@@ -74,6 +74,8 @@ impl Interpreter {
                 )
             }
 
+            Import(name) => self.eval_import(name, expr),
+
             Let(name, rhs) => {
                 if self.env.contains_local(name) {
                     return Err(self.error(
@@ -304,6 +306,47 @@ impl Interpreter {
         );
 
         Ok(ControlFlow::Value(Value::Unit))
+    }
+
+    fn eval_import(
+        &mut self,
+        name: &str,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        if self.env.contains_local(name) {
+            return Err(
+                self.error(
+                    ErrorKind::Name,
+                    format!(
+                        "name '{}' is already defined in this scope",
+                        name
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        let module =
+            crate::stdlib::load_module(name)
+                .ok_or_else(|| {
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "module '{}' not found",
+                            name
+                        ),
+                        whole,
+                    )
+                })?;
+
+        self.env.define(
+            name.to_owned(),
+            Value::Module(module),
+        );
+
+        Ok(ControlFlow::Value(
+            Value::Unit
+        ))
     }
 
     fn eval_assign_index(
@@ -610,6 +653,18 @@ impl Interpreter {
                 );
 
                 Ok(ControlFlow::Value(value))
+            }
+
+            // Deny module modification
+            Value::Module(module) => {
+                Err(self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "cannot modify module '{}'",
+                        module.borrow().name()
+                    ),
+                    whole,
+                ))
             }
 
             other => Err(self.error(
@@ -1646,6 +1701,26 @@ impl Interpreter {
                     ),
                     whole,
                 ))
+            }
+
+            Value::Module(module) => {
+                let module =
+                    module.borrow();
+
+                module
+                    .get(name)
+                    .map(ControlFlow::Value)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            format!(
+                                "module '{}' has no member '{}'",
+                                module.name(),
+                                name
+                            ),
+                            whole,
+                        )
+                    })
             }
 
             other => Err(self.error(

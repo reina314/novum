@@ -3,6 +3,7 @@ pub mod env;
 pub mod function;
 pub mod iterator;
 pub mod matrix;
+pub mod module;
 pub mod object;
 pub mod r#struct;
 pub mod value;
@@ -17,6 +18,10 @@ pub use iterator::IteratorObj;
 pub use matrix::{
     Matrix,
     MatrixRef
+};
+pub use module::{
+    Module,
+    ModuleRef,
 };
 pub use object::{
     Object,

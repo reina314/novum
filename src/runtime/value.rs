@@ -5,6 +5,7 @@ use super::{
     ObjectRef,
     StructRef,
     MatrixRef,
+    ModuleRef,
 };
 use std::{
     cell::RefCell,
@@ -29,6 +30,8 @@ pub enum Value {
     Matrix(MatrixRef),
     Object(ObjectRef),
     Struct(StructRef),
+
+    Module(ModuleRef),
 
     Range(i64, i64, bool),
     
@@ -55,6 +58,8 @@ impl Value {
             Self::Matrix(_) => "Matrix",
             Self::Object(_) => "Object",
             Self::Struct(_) => "Struct",
+
+            Self::Module(_) => "Module",
 
             Self::Range(..) => "Range",
 
@@ -108,6 +113,8 @@ impl Value {
             (Self::ListMethod(_, a), Self::ListMethod(_, b)) => a == b,
             
             (Self::Range(a1,b1,c1), Self::Range(a2,b2,c2)) => (a1,b1,c1)==(a2,b2,c2),
+
+            (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
             
             _ => return Err(format!("comparison not defined between {} and {}", a.type_name(), b.type_name())),
         })
@@ -127,6 +134,8 @@ impl fmt::Debug for Value {
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
+
+            Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             

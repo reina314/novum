@@ -135,6 +135,7 @@ impl Parser {
             TokenKind::Drop => self.parse_drop(),
             TokenKind::Let => self.parse_let(),
             TokenKind::Struct => self.parse_struct(), 
+            TokenKind::Import => self.parse_import(),
 
             _ => self.parse_or(),
         }
@@ -300,6 +301,36 @@ impl Parser {
                 methods,
             },
             start.join(close),
+        ))
+    }
+
+    fn parse_import(&mut self) -> Result<Expr> {
+        let start =
+            self.expect(TokenKind::Import)?.span;
+
+        let token =
+            self.peek().clone();
+
+        let module_name =
+            match token.kind {
+                TokenKind::Ident(name) => {
+                    self.eat();
+                    name
+                }
+
+                _ => {
+                    return Err(
+                        Error::parse(
+                            "import expects a module name",
+                            token.span,
+                        )
+                    );
+                }
+            };
+
+        Ok(Expr::new(
+            ExprKind::Import(module_name),
+            start.join(token.span),
         ))
     }
 

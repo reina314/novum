@@ -227,6 +227,8 @@ impl<'a> Lexer<'a> {
             "drop" => TokenKind::Drop,
             "let" => TokenKind::Let,
 
+            "import" => TokenKind::Import,
+
             "struct" => TokenKind::Struct,
 
             _ => TokenKind::Ident(s),

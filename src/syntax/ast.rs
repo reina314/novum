@@ -35,6 +35,8 @@ pub enum ExprKind {
         methods: Vec<(String, Box<Expr>)>,
     },
 
+    Import(String),
+
     // Assignment & Deassignment
     Let(String, Box<Expr>),
     Assign(String, Box<Expr>),
