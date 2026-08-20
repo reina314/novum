@@ -11,6 +11,8 @@ fn matrix_addition() {
     assert_eq!(
         run(
             r#"
+            import linalg
+
             let A = matrix([
                 [1, 2],
                 [3, 4]
@@ -21,7 +23,7 @@ fn matrix_addition() {
                 [7, 8]
             ]);
 
-            det(A)
+            linalg.det(A)
             "#
         ),
         Value::Float(-2.0)
@@ -61,14 +63,16 @@ fn matrix_transpose() {
     assert_eq!(
         run(
             r#"
+            import linalg
+
             let A = matrix([
                 [1, 2],
                 [3, 4]
             ]);
 
-            let B = transpose(A);
+            let B = linalg.transpose(A);
 
-            det(B)
+            linalg.det(B)
             "#
         ),
         Value::Float(-2.0)
@@ -80,6 +84,8 @@ fn matrix_scalar_mul() {
     assert_eq!(
         run(
             r#"
+            import linalg
+
             let A = matrix([
                 [1, 2],
                 [3, 4]
@@ -87,7 +93,7 @@ fn matrix_scalar_mul() {
 
             let B = A * 2;
 
-            det(B)
+            linalg.det(B)
             "#
         ),
         Value::Float(-8.0)
@@ -387,3 +393,75 @@ fn matrix_scalar_index_still_works() {
         ),
     }
 }
+
+#[test]
+fn linear_regression() {
+    let result =
+        run(
+            r#"
+            import linalg
+
+            let X = matrix([
+                [1, 1],
+                [1, 2],
+                [1, 3],
+                [1, 4]
+            ]);
+
+            let y = matrix([
+                [2],
+                [4],
+                [6],
+                [8]
+            ]);
+
+            linalg.linear_regression(X, y)
+            "#
+        );
+
+    match result {
+        Value::Object(object) => {
+            let object =
+                object.borrow();
+
+            let coefficients =
+                match object
+                    .get_field("coefficients")
+                    .unwrap()
+                {
+                    Value::Matrix(matrix) => matrix,
+                    _ => panic!("invalid coefficients"),
+                };
+
+            let matrix =
+                coefficients.borrow();
+
+            assert_float_close(
+                matrix.get(0, 0).unwrap(),
+                0.0,
+            );
+
+            assert_float_close(
+                matrix.get(1, 0).unwrap(),
+                2.0,
+            );
+
+            assert_float_close(
+                match object
+                    .get_field("r_squared")
+                    .unwrap()
+                {
+                    Value::Float(v) => v,
+                    _ => panic!("invalid R²"),
+                },
+                1.0,
+            );
+        }
+
+        other => panic!(
+            "expected Object, got {:?}",
+            other
+        ),
+    }
+}
+

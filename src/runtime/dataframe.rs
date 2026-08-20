@@ -656,6 +656,156 @@ impl DataFrame {
         self.take_rows(&indices)
     }
 
+    pub fn crosstab(
+        &self,
+        row_column: &str,
+        column_column: &str,
+    ) -> Result<Self, String> {
+        let row_series =
+            self.column(row_column)
+                .ok_or_else(|| {
+                    format!(
+                        "unknown DataFrame column '{}'",
+                        row_column
+                    )
+                })?;
+
+        let col_series =
+            self.column(column_column)
+                .ok_or_else(|| {
+                    format!(
+                        "unknown DataFrame column '{}'",
+                        column_column
+                    )
+                })?;
+
+        if row_series.len() != col_series.len() {
+            return Err(
+                "crosstab columns have different lengths"
+                    .into()
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Discover unique row/column categories.
+        //
+        // Preserve first-seen order rather than sorting them.
+        // ---------------------------------------------------------
+
+        let mut row_values =
+            Vec::<Value>::new();
+
+        let mut column_values =
+            Vec::<Value>::new();
+
+        for i in 0..self.nrows {
+            let row_value =
+                row_series.get(i).unwrap();
+
+            let column_value =
+                col_series.get(i).unwrap();
+
+            if !contains_value(
+                &row_values,
+                &row_value,
+            )? {
+                row_values.push(
+                    row_value.clone()
+                );
+            }
+
+            if !contains_value(
+                &column_values,
+                &column_value,
+            )? {
+                column_values.push(
+                    column_value.clone()
+                );
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Count matrix
+        // ---------------------------------------------------------
+
+        let mut counts =
+            vec![
+                vec![0i64; column_values.len()];
+                row_values.len()
+            ];
+
+        for i in 0..self.nrows {
+            let row_value =
+                row_series.get(i).unwrap();
+
+            let column_value =
+                col_series.get(i).unwrap();
+
+            let row_index =
+                find_value(
+                    &row_values,
+                    &row_value,
+                )?;
+
+            let column_index =
+                find_value(
+                    &column_values,
+                    &column_value,
+                )?;
+
+            counts[row_index][column_index] += 1;
+        }
+
+        // ---------------------------------------------------------
+        // Build DataFrame
+        //
+        // First column = row category.
+        // Other columns = column categories.
+        // ---------------------------------------------------------
+
+        let mut output =
+            Vec::<SeriesRef>::new();
+
+        output.push(
+            Rc::new(
+                Series::new(
+                    row_column,
+                    row_values.clone(),
+                )
+            )
+        );
+
+        for (column_index, column_value)
+            in column_values.iter().enumerate()
+        {
+            let name =
+                value_to_column_name(
+                    column_value
+                )?;
+
+            let data =
+                counts
+                    .iter()
+                    .map(|row| {
+                        Value::Int(
+                            row[column_index]
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+            output.push(
+                Rc::new(
+                    Series::new(
+                        name,
+                        data,
+                    )
+                )
+            );
+        }
+
+        Self::from_series(output)
+    }
+
     pub fn fmt_display(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -924,6 +1074,74 @@ fn is_numeric_column(
                     | Value::Null
             )
         })
+}
+
+/// Helper for `crosstab()`
+fn contains_value(
+    values: &[Value],
+    target: &Value,
+) -> Result<bool, String> {
+    for value in values {
+        if Value::eq_values(
+            value,
+            target,
+        )? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Helper for `crosstab()`
+fn find_value(
+    values: &[Value],
+    target: &Value,
+) -> Result<usize, String> {
+    for (index, value) in
+        values.iter().enumerate()
+    {
+        if Value::eq_values(
+            value,
+            target,
+        )? {
+            return Ok(index);
+        }
+    }
+
+    Err(
+        "internal crosstab category lookup failure"
+            .into()
+    )
+}
+
+/// Helper for `crosstab()`
+fn value_to_column_name(
+    value: &Value,
+) -> Result<String, String> {
+    match value {
+        Value::Str(value) =>
+            Ok(value.as_ref().clone()),
+
+        Value::Int(value) =>
+            Ok(value.to_string()),
+
+        Value::Float(value) =>
+            Ok(value.to_string()),
+
+        Value::Bool(value) =>
+            Ok(value.to_string()),
+
+        Value::Null =>
+            Ok("null".into()),
+
+        other => {
+            Err(format!(
+                "crosstab category cannot be used as column name: {}",
+                other.type_name()
+            ))
+        }
+    }
 }
 
 fn compare_values_for_sort(

@@ -153,15 +153,4 @@ fn cyclic_import_is_error() {
     );
 }
 
-#[test]
-fn nested_module_namespace() {
-    let source = r#"
-        import tests.modules.a
-
-        tests.modules.a.get_b(5)
-    "#;
-
-    // run...
-}
-
 

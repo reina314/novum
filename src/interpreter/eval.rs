@@ -1,8 +1,8 @@
 use crate::{
     stdlib,
-    interpreter::operator, 
     Lexer, 
     Parser, 
+    interpreter::operator,
     error::{
         Error, 
         ErrorKind, 
@@ -21,7 +21,8 @@ use crate::{
         ModulePath, 
         ModuleRef,
         ObjectRef,
-        StructDefinition, 
+        StructDefinition,
+        Series,
         SeriesRef, 
         DataFrameRef,
         GroupedDataFrame,
@@ -194,9 +195,60 @@ impl Interpreter {
             }
 
             Neg(e) => {
-                self.eval_value(e)?.negate()
-                    .map(ControlFlow::Value)
-                    .map_err(|msg| self.attach(Error::new(ErrorKind::Type, msg, Some(expr.span)), expr))
+                let value = self.eval_value(e)?;
+
+                match value {
+                    Value::Series(series) => {
+                        let values: Vec<Value> = series
+                            .data()
+                            .iter()
+                            .cloned()
+                            .map(|value| {
+                                match value {
+                                    Value::Null => Ok(Value::Null),
+
+                                    value => value
+                                        .negate()
+                                        .map_err(|msg| {
+                                            self.attach(
+                                                Error::new(
+                                                    ErrorKind::Type,
+                                                    msg,
+                                                    None,
+                                                ),
+                                                expr,
+                                            )
+                                        }),
+                                }
+                            })
+                            .collect::<Result<_>>()?;
+
+                        Ok(ControlFlow::Value(
+                            Value::Series(Rc::new(
+                                Series::new(
+                                    series.name(),
+                                    values,
+                                )
+                            ))
+                        ))
+                    }
+
+                    value => {
+                        value
+                            .negate()
+                            .map(ControlFlow::Value)
+                            .map_err(|msg| {
+                                self.attach(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        msg,
+                                        None,
+                                    ),
+                                    expr,
+                                )
+                            })
+                    }
+                }
             }
 
             Not(e) => {
@@ -2013,19 +2065,241 @@ impl Interpreter {
         result
     }
 
-    fn eval_and(&mut self, lhs: &Expr, rhs: &Expr, whole: &Expr) -> Result<ControlFlow> {
-        match self.eval_value(lhs)? {
-            Value::Bool(false) => Ok(ControlFlow::Value(Value::Bool(false))),
-            Value::Bool(true) => match self.eval_value(rhs)? { Value::Bool(v)=>Ok(ControlFlow::Value(Value::Bool(v))), other=>Err(self.error(ErrorKind::Type,format!("'and' expects Bool, got {}",other.type_name()),whole)) },
-            other => Err(self.error(ErrorKind::Type,format!("'and' expects Bool, got {}",other.type_name()),whole)),
+    fn eval_and(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let left =
+            self.eval_value(lhs)?;
+
+        match left {
+            // =====================================================
+            // Scalar Bool: preserve short-circuit semantics
+            // =====================================================
+
+            Value::Bool(false) => {
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(false)
+                    )
+                )
+            }
+
+            Value::Bool(true) => {
+                match self.eval_value(rhs)? {
+                    Value::Bool(value) => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Bool(value)
+                            )
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'and' expects Bool, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // Series Bool: element-wise AND
+            // =====================================================
+
+            Value::Series(left_series) => {
+                let right =
+                    self.eval_value(rhs)?;
+
+                match right {
+                    Value::Series(
+                        right_series
+                    ) => {
+                        let result =
+                            operator::apply_series_boolean_op(
+                                left_series,
+                                right_series,
+                                false,
+                            )
+                            .map_err(|message| {
+                                self.attach(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        message,
+                                        None,
+                                    ),
+                                    whole,
+                                )
+                            })?;
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Series(
+                                    Rc::new(result)
+                                )
+                            )
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'and' expects Bool or Series<Bool>, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // Everything else
+            // =====================================================
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "'and' expects Bool or Series<Bool>, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
         }
     }
 
-    fn eval_or(&mut self, lhs: &Expr, rhs: &Expr, whole: &Expr) -> Result<ControlFlow> {
-        match self.eval_value(lhs)? {
-            Value::Bool(true) => Ok(ControlFlow::Value(Value::Bool(true))),
-            Value::Bool(false) => match self.eval_value(rhs)? { Value::Bool(v)=>Ok(ControlFlow::Value(Value::Bool(v))), other=>Err(self.error(ErrorKind::Type,format!("'or' expects Bool, got {}",other.type_name()),whole)) },
-            other => Err(self.error(ErrorKind::Type,format!("'or' expects Bool, got {}",other.type_name()),whole)),
+    fn eval_or(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let left =
+            self.eval_value(lhs)?;
+
+        match left {
+            // =====================================================
+            // Scalar Bool: short-circuit
+            // =====================================================
+
+            Value::Bool(true) => {
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(true)
+                    )
+                )
+            }
+
+            Value::Bool(false) => {
+                match self.eval_value(rhs)? {
+                    Value::Bool(value) => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Bool(value)
+                            )
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'or' expects Bool, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // Series Bool: element-wise OR
+            // =====================================================
+
+            Value::Series(left_series) => {
+                let right =
+                    self.eval_value(rhs)?;
+
+                match right {
+                    Value::Series(
+                        right_series
+                    ) => {
+                        let result =
+                            operator::apply_series_boolean_op(
+                                left_series,
+                                right_series,
+                                true,
+                            )
+                            .map_err(|message| {
+                                self.attach(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        message,
+                                        None,
+                                    ),
+                                    whole,
+                                )
+                            })?;
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Series(
+                                    Rc::new(result)
+                                )
+                            )
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'or' expects Bool or Series<Bool>, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // Everything else
+            // =====================================================
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "'or' expects Bool or Series<Bool>, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
         }
     }
 
@@ -2198,7 +2472,19 @@ impl Interpreter {
                     }
 
                     "to_list"
-                    | "to_matrix" => {
+                    | "to_matrix"
+                    | "is_null"
+                    | "is_not_null"
+                    | "mean"
+                    | "std"
+                    | "median"
+                    | "quantile"
+                    | "sum"
+                    | "min"
+                    | "max"
+                    | "dropna"
+                    | "unique"
+                    | "value_counts" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -2281,7 +2567,8 @@ impl Interpreter {
                     | "group_by"
                     | "sort"
                     | "describe"
-                    | "to_matrix" => {
+                    | "to_matrix"
+                    | "crosstab" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -2741,21 +3028,20 @@ impl Interpreter {
         args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        if !args.is_empty() {
-            return Err(
-                self.error(
-                    ErrorKind::Arity,
-                    format!(
-                        "{}() expects no arguments",
-                        name
-                    ),
-                    whole,
-                )
-            );
-        }
-
         match name {
+            // =====================================================
+            // Existing methods
+            // =====================================================
+
             "to_list" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "to_list() expects no arguments",
+                        whole,
+                    ));
+                }
+
                 Ok(
                     ControlFlow::Value(
                         Value::List(
@@ -2771,8 +3057,17 @@ impl Interpreter {
             }
 
             "to_matrix" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "to_matrix() expects no arguments",
+                        whole,
+                    ));
+                }
+
                 let matrix =
-                    series.to_matrix()
+                    series
+                        .to_matrix()
                         .map_err(|message| {
                             self.attach(
                                 Error::new(
@@ -2790,6 +3085,347 @@ impl Interpreter {
                             Rc::new(
                                 RefCell::new(matrix)
                             )
+                        )
+                    )
+                )
+            }
+
+            "is_null" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "is_null() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Series(
+                            Rc::new(
+                                series.is_null()
+                            )
+                        )
+                    )
+                )
+            }
+
+            "is_not_null" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "is_not_null() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Series(
+                            Rc::new(
+                                series.is_not_null()
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // Descriptive statistics
+            // =====================================================
+
+            "mean" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "mean() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.mean()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "std" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "std() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.std()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "median" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "median() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.median()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "sum" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "sum() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.sum()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "min" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "min() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.min()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "max" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "max() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let value =
+                    series.max()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            "quantile" => {
+                if args.len() != 1 {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "quantile() expects exactly 1 argument",
+                        whole,
+                    ));
+                }
+
+                let q =
+                    match args[0] {
+                        Value::Int(value) =>
+                            value as f64,
+
+                        Value::Float(value) =>
+                            value,
+
+                        ref other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "quantile() expects numeric q, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    series.quantile(q)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Value,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(value)
+                )
+            }
+
+            // =====================================================
+            // Missing values / categorical operations
+            // =====================================================
+
+            "dropna" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "dropna() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Series(
+                            Rc::new(
+                                series.dropna()
+                            )
+                        )
+                    )
+                )
+            }
+
+            "unique" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "unique() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let result =
+                    series.unique()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Series(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            "value_counts" => {
+                if !args.is_empty() {
+                    return Err(self.error(
+                        ErrorKind::Arity,
+                        "value_counts() expects no arguments",
+                        whole,
+                    ));
+                }
+
+                let result =
+                    series.value_counts()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
                         )
                     )
                 )
@@ -3000,11 +3636,13 @@ impl Interpreter {
             // =====================================================
             "filter" => {
                 if args.len() != 1 {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "filter() expects exactly 1 argument",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "filter() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
                 }
 
                 let predicate =
@@ -3012,72 +3650,158 @@ impl Interpreter {
                         .next()
                         .unwrap();
 
-                let mut keep =
-                    Vec::with_capacity(
-                        dataframe.nrows()
-                    );
+                match predicate {
+                    // =================================================
+                    // Boolean Series mask
+                    // =================================================
 
-                for index in 0..dataframe.nrows() {
-                    let row =
-                        dataframe
-                            .row(index)
-                            .ok_or_else(|| {
+                    Value::Series(mask) => {
+                        let mut keep =
+                            Vec::with_capacity(
+                                dataframe.nrows()
+                            );
+
+                        if mask.len()
+                            != dataframe.nrows()
+                        {
+                            return Err(
                                 self.error(
                                     ErrorKind::Index,
                                     format!(
-                                        "row index out of bounds: {}",
-                                        index
+                                        "filter mask length {} does not match DataFrame row count {}",
+                                        mask.len(),
+                                        dataframe.nrows()
                                     ),
                                     whole,
                                 )
-                            })?;
-
-                    let result =
-                        self.call_predicate(
-                            &predicate,
-                            Value::Object(row),
-                            whole,
-                        )?;
-
-                    match result {
-                        Value::Bool(true) =>
-                            keep.push(true),
-
-                        Value::Bool(false) =>
-                            keep.push(false),
-
-                        other => {
-                            return Err(self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "DataFrame filter predicate must return Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            ));
+                            );
                         }
+
+                        for value in mask.data() {
+                            match value {
+                                Value::Bool(value) =>
+                                    keep.push(*value),
+
+                                Value::Null => {
+                                    // Missing boolean is treated as false.
+                                    keep.push(false);
+                                }
+
+                                other => {
+                                    return Err(
+                                        self.error(
+                                            ErrorKind::Type,
+                                            format!(
+                                                "filter mask must contain Bool or Null, got {}",
+                                                other.type_name()
+                                            ),
+                                            whole,
+                                        )
+                                    );
+                                }
+                            }
+                        }
+
+                        let result =
+                            dataframe
+                                .filter_rows(&keep)
+                                .map_err(|message| {
+                                    self.attach(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            message,
+                                            None,
+                                        ),
+                                        whole,
+                                    )
+                                })?;
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::DataFrame(
+                                    Rc::new(result)
+                                )
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Closure predicate
+                    // =================================================
+
+                    predicate => {
+                        let mut keep =
+                            Vec::with_capacity(
+                                dataframe.nrows()
+                            );
+
+                        for index in 0..dataframe.nrows() {
+                            let row =
+                                dataframe
+                                    .row(index)
+                                    .ok_or_else(|| {
+                                        self.error(
+                                            ErrorKind::Index,
+                                            format!(
+                                                "row index out of bounds: {}",
+                                                index
+                                            ),
+                                            whole,
+                                        )
+                                    })?;
+
+                            let result =
+                                self.call_predicate(
+                                    &predicate,
+                                    Value::Object(row),
+                                    whole,
+                                )?;
+
+                            match result {
+                                Value::Bool(value) =>
+                                    keep.push(value),
+
+                                Value::Null =>
+                                    keep.push(false),
+
+                                other => {
+                                    return Err(
+                                        self.error(
+                                            ErrorKind::Type,
+                                            format!(
+                                                "filter predicate must return Bool or Null, got {}",
+                                                other.type_name()
+                                            ),
+                                            whole,
+                                        )
+                                    );
+                                }
+                            }
+                        }
+
+                        let result =
+                            dataframe
+                                .filter_rows(&keep)
+                                .map_err(|message| {
+                                    self.attach(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            message,
+                                            None,
+                                        ),
+                                        whole,
+                                    )
+                                })?;
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::DataFrame(
+                                    Rc::new(result)
+                                )
+                            )
+                        )
                     }
                 }
-
-                let result =
-                    dataframe
-                        .filter_rows(&keep)
-                        .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
-                                whole,
-                            )
-                        })?;
-
-                Ok(ControlFlow::Value(
-                    Value::DataFrame(
-                        Rc::new(result)
-                    )
-                ))
             }
 
             // =====================================================
@@ -3336,6 +4060,85 @@ impl Interpreter {
                     )
                 )
             }
+
+            // =====================================================
+            // crosstab()
+            // =====================================================
+            "crosstab" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "crosstab() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let row_column =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "crosstab() first argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let column_column =
+                    match &args[1] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "crosstab() second argument must be Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    dataframe
+                        .crosstab(
+                            row_column,
+                            column_column,
+                        )
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
 
             _ => {
                 Err(self.error(

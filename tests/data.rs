@@ -145,13 +145,14 @@ fn dataframe_series_statistics() {
         run(
             r#"
             import csv
+            import stats
 
             let df =
                 csv.read(
                     "tests/data/experiment.csv"
                 )
 
-            mean(
+            stats.mean(
                 df.column("score")
             )
             "#
@@ -869,5 +870,554 @@ fn grouped_dataframe_aggregate() {
         }
     }
 }
+
+#[test]
+fn scalar_and_short_circuit_still_works() {
+    let result =
+        run(
+            "false and something"
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn series_scalar_comparison() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.column("age") > 20
+            "#
+        );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.data(),
+                &[
+                    Value::Bool(false),
+                    Value::Bool(true),
+                    Value::Bool(true),
+                    Value::Bool(false),
+                    Value::Bool(true),
+                    Value::Bool(true),
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Series, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn series_scalar_arithmetic() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            csv.read(
+                "tests/data/experiment.csv"
+            )
+            .column("age")
+            + 10
+            "#
+        );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.get(0),
+                Some(Value::Int(30))
+            );
+
+            assert_eq!(
+                series.get(2),
+                Some(Value::Int(32))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Series, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn series_series_arithmetic() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let age =
+                csv.read(
+                    "tests/data/experiment.csv"
+                ).column("age")
+
+            age + age
+            "#
+        );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.get(0),
+                Some(Value::Int(40))
+            );
+
+            assert_eq!(
+                series.get(2),
+                Some(Value::Int(44))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Series, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_filter_boolean_series() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.filter(
+                df.column("age") >= 21
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.nrows(),
+                4
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn dataframe_filter_compound_mask() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/experiment.csv"
+                )
+
+            df.filter(
+                (df.column("age") >= 21)
+                    and
+                (df.column("score") > 80)
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.nrows(),
+                2
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn series_null_propagation() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            csv.read(
+                "tests/data/missing.csv"
+            )
+            .column("score")
+            + 10
+            "#
+        );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.get(0),
+                Some(Value::Int(20))
+            );
+
+            assert_eq!(
+                series.get(1),
+                Some(Value::Null)
+            );
+
+            assert_eq!(
+                series.get(2),
+                Some(Value::Int(40))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Series, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn series_mean_method() {
+    let result = run(
+        r#"
+        import csv
+
+        csv.read(
+            "tests/data/experiment.csv"
+        )
+        .column("score")
+        .mean()
+        "#
+    );
+
+    match result {
+        Value::Float(value) => {
+            assert_float_close(
+                value,
+                (
+                    81.5
+                    + 84.0
+                    + 76.5
+                    + 79.0
+                    + 88.0
+                    + 74.5
+                ) / 6.0,
+            );
+        }
+
+        other => panic!(
+            "expected Float, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn series_median_method() {
+    let result = run(
+        r#"
+        import csv
+
+        csv.read(
+            "tests/data/experiment.csv"
+        )
+        .column("score")
+        .median()
+        "#
+    );
+
+    match result {
+        Value::Float(value) => {
+            assert_float_close(
+                value,
+                (
+                    79.0 + 81.5
+                ) / 2.0,
+            );
+        }
+
+        other => panic!(
+            "expected Float, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn series_quantile_method() {
+    let result = run(
+        r#"
+        import csv
+
+        csv.read(
+            "tests/data/experiment.csv"
+        )
+        .column("score")
+        .quantile(0.5)
+        "#
+    );
+
+    match result {
+        Value::Float(value) => {
+            assert_float_close(
+                value,
+                (
+                    79.0 + 81.5
+                ) / 2.0,
+            );
+        }
+
+        other => panic!(
+            "expected Float, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn series_dropna() {
+    let result = run(
+        r#"
+        import csv
+
+        csv.read(
+            "tests/data/missing.csv"
+        )
+        .column("score")
+        .dropna()
+        "#
+    );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.len(),
+                3
+            );
+
+            assert_eq!(
+                series.get(0),
+                Some(Value::Int(10))
+            );
+
+            assert_eq!(
+                series.get(1),
+                Some(Value::Int(30))
+            );
+
+            assert_eq!(
+                series.get(2),
+                Some(Value::Int(40))
+            );
+        }
+
+        other => panic!(
+            "expected Series, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn series_unique() {
+    let result = run(
+        r#"
+        import csv
+
+        let df =
+            csv.read(
+                "tests/data/experiment.csv"
+            )
+
+        df.column("condition")
+            .unique()
+        "#
+    );
+
+    match result {
+        Value::Series(series) => {
+            assert_eq!(
+                series.data(),
+                &[
+                    Value::Str(
+                        Rc::new("A".into())
+                    ),
+                    Value::Str(
+                        Rc::new("B".into())
+                    ),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected Series, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn series_value_counts() {
+    let result = run(
+        r#"
+        import csv
+
+        let df =
+            csv.read(
+                "tests/data/experiment.csv"
+            )
+
+        df.column("condition")
+            .value_counts()
+        "#
+    );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "value",
+                    "count",
+                ]
+            );
+
+            assert_eq!(
+                df.nrows(),
+                2
+            );
+
+            let count =
+                df.column("count")
+                    .unwrap();
+
+            assert_eq!(
+                count.get(0),
+                Some(Value::Int(3))
+            );
+
+            assert_eq!(
+                count.get(1),
+                Some(Value::Int(3))
+            );
+        }
+
+        other => panic!(
+            "expected DataFrame, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn dataframe_crosstab() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            let df =
+                csv.read(
+                    "tests/data/categorical.csv"
+                )
+
+            df.crosstab(
+                "condition",
+                "outcome"
+            )
+            "#
+        );
+
+    match result {
+        Value::DataFrame(df) => {
+            assert_eq!(
+                df.nrows(),
+                2
+            );
+
+            assert_eq!(
+                df.columns(),
+                vec![
+                    "condition",
+                    "yes",
+                    "no",
+                ]
+            );
+
+            let yes =
+                df.column("yes")
+                    .unwrap();
+
+            let no =
+                df.column("no")
+                    .unwrap();
+
+            assert_eq!(
+                yes.get(0),
+                Some(Value::Int(2))
+            );
+
+            assert_eq!(
+                no.get(0),
+                Some(Value::Int(1))
+            );
+
+            assert_eq!(
+                yes.get(1),
+                Some(Value::Int(1))
+            );
+
+            assert_eq!(
+                no.get(1),
+                Some(Value::Int(2))
+            );
+        }
+
+        other => {
+            panic!(
+                "expected DataFrame, got {:?}",
+                other
+            );
+        }
+    }
+}
+
 
 

@@ -1,5 +1,9 @@
 use crate::{
-    runtime::Value,
+    runtime::{
+        Value,
+        Series,
+        SeriesRef,
+    },
     syntax::BinOp,
 };
 
@@ -8,62 +12,320 @@ use std::{
     rc::Rc,
 };
 
-
-pub fn apply_binop(
+fn apply_scalar_binop(
     op: BinOp,
     lhs: Value,
     rhs: Value,
 ) -> Result<Value, String> {
+    use BinOp::*;
+
     match op {
-        BinOp::Add =>
-            add(lhs, rhs),
+        Add => add(lhs, rhs),
+        Sub => sub(lhs, rhs),
+        Mul => mul(lhs, rhs),
+        Div => divide(lhs, rhs),
 
-        BinOp::Sub =>
-            sub(lhs, rhs),
+        Pow => power(lhs, rhs),
+        Mod => modulo(lhs, rhs),
+        MatMul => matmul(lhs, rhs),
 
-        BinOp::Mul =>
-            mul(lhs, rhs),
-
-        BinOp::Div =>
-            divide(lhs, rhs),
-
-        BinOp::Pow =>
-            power(lhs, rhs),
-
-        BinOp::Mod =>
-            modulo(lhs, rhs),
-
-        BinOp::MatMul =>
-            matmul(lhs, rhs),
-
-        BinOp::Eq =>
-            Ok(Value::Bool(
+        Eq => Ok(
+            Value::Bool(
                 Value::eq_values(
                     &lhs,
                     &rhs,
                 )?
             )),
 
-        BinOp::Neq =>
-            Ok(Value::Bool(
+        Neq => Ok(
+            Value::Bool(
                 !Value::eq_values(
                     &lhs,
                     &rhs,
                 )?
             )),
 
-        BinOp::Lt
-        | BinOp::Leq
-        | BinOp::Gt
-        | BinOp::Geq =>
+        Lt | Leq | Gt | Geq =>
             compare(op, lhs, rhs),
 
-        // NOTE:
-        // And / Or should normally be short-circuited
-        // by eval.rs BEFORE evaluating rhs.
-        BinOp::And
-        | BinOp::Or =>
+        And | Or =>
             bool_binary(op, lhs, rhs),
+    }
+}
+
+fn apply_series_binop(
+    op: BinOp,
+    lhs: Value,
+    rhs: Value,
+) -> Result<Value, String> {
+    match (lhs, rhs) {
+        (
+            Value::Series(lhs),
+            Value::Series(rhs),
+        ) => {
+            if lhs.len() != rhs.len() {
+                return Err(format!(
+                    "Series length mismatch: {} vs {}",
+                    lhs.len(),
+                    rhs.len()
+                ));
+            }
+
+            let mut values =
+                Vec::with_capacity(
+                    lhs.len()
+                );
+
+            for i in 0..lhs.len() {
+                let left =
+                    lhs.get(i).unwrap();
+
+                let right =
+                    rhs.get(i).unwrap();
+
+                values.push(
+                    apply_series_element(
+                        op,
+                        left,
+                        right,
+                    )?
+                );
+            }
+
+            Ok(
+                Value::Series(
+                    Rc::new(
+                        Series::new(
+                            lhs.name(),
+                            values,
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            Value::Series(series),
+            scalar,
+        ) => {
+            let values =
+                series
+                    .data()
+                    .iter()
+                    .cloned()
+                    .map(|value| {
+                        apply_series_element(
+                            op,
+                            value,
+                            scalar.clone(),
+                        )
+                    })
+                    .collect::<Result<
+                        Vec<_>,
+                        _
+                    >>()?;
+
+            Ok(
+                Value::Series(
+                    Rc::new(
+                        Series::new(
+                            series.name(),
+                            values,
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            scalar,
+            Value::Series(series),
+        ) => {
+            let values =
+                series
+                    .data()
+                    .iter()
+                    .cloned()
+                    .map(|value| {
+                        apply_series_element(
+                            op,
+                            scalar.clone(),
+                            value,
+                        )
+                    })
+                    .collect::<Result<
+                        Vec<_>,
+                        _
+                    >>()?;
+
+            Ok(
+                Value::Series(
+                    Rc::new(
+                        Series::new(
+                            series.name(),
+                            values,
+                        )
+                    )
+                )
+            )
+        }
+
+        _ => unreachable!(),
+    }
+}
+
+fn apply_series_element(
+    op: BinOp,
+    lhs: Value,
+    rhs: Value,
+) -> Result<Value, String> {
+    match op {
+        BinOp::Eq => {
+            return Ok(
+                Value::Bool(
+                    Value::eq_values(
+                        &lhs,
+                        &rhs,
+                    )?
+                )
+            );
+        }
+
+        BinOp::Neq => {
+            return Ok(
+                Value::Bool(
+                    !Value::eq_values(
+                        &lhs,
+                        &rhs,
+                    )?
+                )
+            );
+        }
+
+        _ => {}
+    }
+
+    if matches!(lhs, Value::Null)
+        || matches!(rhs, Value::Null)
+    {
+        return Ok(Value::Null);
+    }
+
+    apply_scalar_binop(
+        op,
+        lhs,
+        rhs,
+    )
+}
+
+pub fn apply_series_boolean_op(
+    lhs: SeriesRef,
+    rhs: SeriesRef,
+    is_or: bool,
+) -> Result<Series, String> {
+    if lhs.len() != rhs.len() {
+        return Err(format!(
+            "Series length mismatch: {} vs {}",
+            lhs.len(),
+            rhs.len()
+        ));
+    }
+
+    let mut values =
+        Vec::with_capacity(
+            lhs.len()
+        );
+
+    for i in 0..lhs.len() {
+        let left =
+            lhs.get(i)
+                .expect("Series index in bounds");
+
+        let right =
+            rhs.get(i)
+                .expect("Series index in bounds");
+
+        let value =
+            match (left, right) {
+                // -------------------------------------------------
+                // Bool × Bool
+                // -------------------------------------------------
+
+                (
+                    Value::Bool(a),
+                    Value::Bool(b),
+                ) => {
+                    Value::Bool(
+                        if is_or {
+                            a || b
+                        } else {
+                            a && b
+                        }
+                    )
+                }
+
+                // -------------------------------------------------
+                // Missing value
+                // -------------------------------------------------
+
+                (
+                    Value::Null,
+                    _
+                )
+                |
+                (
+                    _,
+                    Value::Null,
+                ) => {
+                    Value::Null
+                }
+
+                // -------------------------------------------------
+                // Type error
+                // -------------------------------------------------
+
+                (a, b) => {
+                    return Err(format!(
+                        "logical operation requires Bool values, got {} and {}",
+                        a.type_name(),
+                        b.type_name()
+                    ));
+                }
+            };
+
+        values.push(value);
+    }
+
+    Ok(
+        Series::new(
+            lhs.name(),
+            values,
+        )
+    )
+}
+
+pub fn apply_binop(
+    op: BinOp,
+    lhs: Value,
+    rhs: Value,
+) -> Result<Value, String> {
+    match (&lhs, &rhs) {
+        (Value::Series(_), _)
+        | (_, Value::Series(_)) => {
+            apply_series_binop(
+                op,
+                lhs,
+                rhs,
+            )
+        }
+
+        _ => {
+            apply_scalar_binop(
+                op,
+                lhs,
+                rhs,
+            )
+        }
     }
 }
 
