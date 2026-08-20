@@ -35,7 +35,7 @@ pub enum ExprKind {
         methods: Vec<(String, Box<Expr>)>,
     },
 
-    Import(String),
+    Import(Vec<String>),
 
     // Assignment & Deassignment
     Let(String, Box<Expr>),
@@ -59,6 +59,8 @@ pub enum ExprKind {
     Call(Box<Expr>, Vec<Expr>),
     Field(Box<Expr>, String),
     Index(Box<Expr>, IndexExpr),
+
+    Null,
 }
 
 #[derive(Debug, Clone)]

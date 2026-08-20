@@ -1,14 +1,76 @@
-use super::Value;
-
 use std::{
     cell::RefCell,
     collections::HashMap,
     fmt,
+    path::PathBuf,
     rc::Rc,
 };
 
+use super::Value;
+
 pub type ModuleRef =
     Rc<RefCell<Module>>;
+
+#[derive(Clone, Debug)]
+pub struct ModulePath {
+    parts: Vec<String>,
+}
+
+impl ModulePath {
+    pub fn new(parts: Vec<String>) -> Self {
+        Self { parts }
+    }
+
+    pub fn parts(&self) -> &[String] {
+        &self.parts
+    }
+
+    pub fn name(&self) -> String {
+        self.parts.join(".")
+    }
+
+    pub fn last(&self) -> Option<&str> {
+        self.parts
+            .last()
+            .map(String::as_str)
+    }
+
+    pub fn join(
+        &self,
+        other: &[String],
+    ) -> Self {
+        let mut parts =
+            self.parts.clone();
+
+        parts.extend(
+            other.iter().cloned()
+        );
+
+        Self { parts }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleContext {
+    pub module_path: ModulePath,
+    pub file_path: PathBuf,
+}
+
+impl ModuleContext {
+    pub fn new(
+        module_path: ModulePath,
+        file_path: PathBuf,
+    ) -> Self {
+        Self {
+            module_path,
+            file_path,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.module_path.name()
+    }
+}
 
 #[derive(Clone)]
 pub struct Module {

@@ -125,3 +125,62 @@ fn import_unknown_module_is_error() {
             .is_err()
     );
 }
+
+#[test]
+fn csv_read() {
+    let result =
+        run(
+            r#"
+            import csv
+
+            csv.read(
+                "tests/data/simple.csv"
+            ).nrows
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn cyclic_import_is_error() {
+    let source =
+        "import tests.modules.c";
+
+    let mut lexer =
+        Lexer::new(source);
+
+    let tokens =
+        lexer.lex().unwrap();
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        parser.parse().unwrap();
+
+    let mut interpreter =
+        Interpreter::new();
+
+    assert!(
+        interpreter
+            .eval_program(&program)
+            .is_err()
+    );
+}
+
+#[test]
+fn nested_module_namespace() {
+    let source = r#"
+        import tests.modules.a
+
+        tests.modules.a.get_b(5)
+    "#;
+
+    // run...
+}
+
+

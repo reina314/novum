@@ -3,6 +3,8 @@ pub mod env;
 pub mod function;
 pub mod iterator;
 pub mod matrix;
+pub mod series;
+pub mod dataframe;
 pub mod module;
 pub mod object;
 pub mod r#struct;
@@ -19,9 +21,19 @@ pub use matrix::{
     Matrix,
     MatrixRef
 };
+pub use series::{
+    Series,
+    SeriesRef,
+};
+pub use dataframe::{
+    DataFrame,
+    DataFrameRef,
+};
 pub use module::{
     Module,
     ModuleRef,
+    ModulePath,
+    ModuleContext,
 };
 pub use object::{
     Object,

@@ -231,6 +231,8 @@ impl<'a> Lexer<'a> {
 
             "struct" => TokenKind::Struct,
 
+            "null" => TokenKind::Null,
+
             _ => TokenKind::Ident(s),
         }
     }

@@ -23,10 +23,6 @@ impl Env {
         self.0.values.borrow_mut().insert(name.into(), value);
     }
 
-    pub fn contains_local(&self, name: &str) -> bool {
-        self.0.values.borrow().contains_key(name)
-    }
-
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.0.values.borrow().get(name) { return Some(v.clone()); }
         self.0.parent.as_ref().and_then(|p| p.get(name))
@@ -41,6 +37,19 @@ impl Env {
         } else {
             false
         }
+    }
+
+    pub fn local_values(
+        &self,
+    ) -> HashMap<String, Value> {
+        self.0
+            .values
+            .borrow()
+            .clone()
+    }
+
+    pub fn contains_local(&self, name: &str) -> bool {
+        self.0.values.borrow().contains_key(name)
     }
 
     pub fn remove_local(&self, name: &str) -> Option<Value> {

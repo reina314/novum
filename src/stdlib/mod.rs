@@ -13,6 +13,7 @@ use std::{
 pub mod general;
 pub mod math;
 pub mod linalg;
+pub mod csv;
 pub mod statistics;
 
 pub fn load_module(
@@ -27,6 +28,9 @@ pub fn load_module(
 
         "math" =>
             Some(math_module()),
+
+        "csv" =>
+            Some(csv_module()),
 
         _ => None,
     }
@@ -261,6 +265,22 @@ fn math_module() -> ModuleRef {
     )
 }
 
+fn csv_module() -> ModuleRef {
+    let mut module =
+        Module::new("csv");
+
+    module.set(
+        "read",
+        Value::Builtin(
+            csv::read
+        ),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
 pub fn builtins()
     -> HashMap<String, Value>
 {
@@ -280,6 +300,8 @@ pub fn builtins()
 
 
     //== Math (math.rs) ======================
+    // DEPRECATED and use `math_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "sqrt".into(),
         Value::Builtin(math::sqrt),
@@ -300,6 +322,8 @@ pub fn builtins()
 
 
     //== Linear Algebra (linalg.rs) ==========
+    // DEPRECATED and use `linalg_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "matrix".into(),
         Value::Builtin(linalg::matrix),
@@ -343,6 +367,8 @@ pub fn builtins()
 
 
     //== Descriptive Statistics (statistics/descriptive.rs) ==========
+    // DEPRECATED and use `stats_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "sum".into(),
         Value::Builtin(statistics::descriptive::sum),
@@ -401,6 +427,8 @@ pub fn builtins()
 
 
     //== Inferential Statistics (statistics/inferential.rs) ==========
+    // DEPRECATED and use `stats_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "mean_ci".into(),
         Value::Builtin(statistics::inferential::mean_ci),
