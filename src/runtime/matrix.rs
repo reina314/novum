@@ -578,6 +578,76 @@ impl Matrix {
             })
             .collect()
     }
+
+    pub fn fmt_display(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        let rows = self.rows();
+        let cols = self.cols();
+
+        // --------------------------------------------------
+        // Convert every value to its display representation
+        // --------------------------------------------------
+
+        let mut values = Vec::with_capacity(rows);
+
+        for r in 0..rows {
+            let mut row = Vec::with_capacity(cols);
+
+            for c in 0..cols {
+                let value = self
+                    .get(r, c)
+                    .expect("matrix index out of bounds");
+
+                row.push(value.to_string());
+            }
+
+            values.push(row);
+        }
+
+        // --------------------------------------------------
+        // Calculate the width of each column
+        // --------------------------------------------------
+
+        let mut widths = vec![0; cols];
+
+        for c in 0..cols {
+            for r in 0..rows {
+                widths[c] =
+                    widths[c].max(values[r][c].len());
+            }
+        }
+
+        // --------------------------------------------------
+        // Display
+        // --------------------------------------------------
+
+        for r in 0..rows {
+            if r > 0 {
+                writeln!(f)?;
+            }
+
+            write!(f, "[")?;
+
+            for c in 0..cols {
+                if c > 0 {
+                    write!(f, ", ")?;
+                }
+
+                write!(
+                    f,
+                    "{:>width$}",
+                    values[r][c],
+                    width = widths[c]
+                )?;
+            }
+
+            write!(f, "]")?;
+        }
+
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Matrix {

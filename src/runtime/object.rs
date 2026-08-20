@@ -84,6 +84,39 @@ impl Object {
     ) -> Option<FuncRef> {
         self.methods.get(name).cloned()
     }
+
+    pub fn fmt_display(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{{")?;
+
+        let mut fields =
+            self.fields
+                .iter()
+                .collect::<Vec<_>>();
+
+        fields.sort_by(
+            |(a, _), (b, _)| a.cmp(b)
+        );
+
+        for (i, (name, value)) in
+            fields.iter().enumerate()
+        {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(
+                f,
+                "{}: {}",
+                name,
+                value
+            )?;
+        }
+
+        write!(f, "}}")
+    }
 }
 
 impl Default for Object {
@@ -98,12 +131,6 @@ impl fmt::Debug for Object {
             .field("fields", &self.fields)
             .field("methods", &self.methods.keys().collect::<Vec<_>>())
             .finish()
-    }
-}
-
-impl fmt::Display for Object {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<object>")
     }
 }
 

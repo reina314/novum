@@ -12,39 +12,45 @@ use std::{
 fn parse_value(
     text: &str,
 ) -> Value {
-    let trimmed =
+    let text =
         text.trim();
 
-    if trimmed.is_empty()
-        || trimmed.eq_ignore_ascii_case("na")
-        || trimmed.eq_ignore_ascii_case("null")
+    // Missing values
+    if text.is_empty()
+        || text.eq_ignore_ascii_case("na")
+        || text.eq_ignore_ascii_case("null")
+        || text == "."
     {
         return Value::Null;
     }
 
-    if trimmed == "true" {
+    // Bool
+    if text.eq_ignore_ascii_case("true") {
         return Value::Bool(true);
     }
 
-    if trimmed == "false" {
+    if text.eq_ignore_ascii_case("false") {
         return Value::Bool(false);
     }
 
-    if let Ok(v) =
-        trimmed.parse::<i64>()
+    // Int
+    if let Ok(value) =
+        text.parse::<i64>()
     {
-        return Value::Int(v);
+        return Value::Int(value);
     }
 
-    if let Ok(v) =
-        trimmed.parse::<f64>()
+    // Float
+    if let Ok(value) =
+        text.parse::<f64>()
     {
-        return Value::Float(v);
+        return Value::Float(value);
     }
 
+    // String
     Value::Str(
         Rc::new(
-            trimmed.to_owned()
+            text.to_owned()
         )
     )
 }
@@ -74,11 +80,11 @@ pub fn read(
 
     let file =
         File::open(path)
-            .map_err(|e| {
+            .map_err(|error| {
                 format!(
                     "failed to open '{}': {}",
                     path,
-                    e
+                    error
                 )
             })?;
 
@@ -86,11 +92,12 @@ pub fn read(
         csv::Reader::from_reader(file);
 
     let headers =
-        reader.headers()
-            .map_err(|e| {
+        reader
+            .headers()
+            .map_err(|error| {
                 format!(
                     "failed to read CSV header: {}",
-                    e
+                    error
                 )
             })?
             .clone();
@@ -110,20 +117,19 @@ pub fn read(
 
     for record in reader.records() {
         let record =
-            record.map_err(|e| {
+            record.map_err(|error| {
                 format!(
                     "failed to read CSV record: {}",
-                    e
+                    error
                 )
             })?;
 
-        if record.len()
-            != headers.len()
-        {
-            return Err(
-                "CSV row has incorrect number of fields"
-                    .into()
-            );
+        if record.len() != headers.len() {
+            return Err(format!(
+                "CSV row has {} fields, expected {}",
+                record.len(),
+                headers.len()
+            ));
         }
 
         for i in 0..record.len() {
@@ -135,27 +141,28 @@ pub fn read(
         }
     }
 
-    let series = columns
-        .into_iter()
-        .enumerate()
-        .map(|(i, data)| {
-            Rc::new(
-                Series::new(
-                    headers[i].to_owned(),
-                    data,
+    let series =
+        columns
+            .into_iter()
+            .enumerate()
+            .map(|(i, data)| {
+                Rc::new(
+                    Series::new(
+                        headers[i].to_owned(),
+                        data,
+                    )
                 )
-            )
-        })
-        .collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
-    let df =
+    let dataframe =
         DataFrame::from_series(
             series
         )?;
 
     Ok(
         Value::DataFrame(
-            Rc::new(df)
+            Rc::new(dataframe)
         )
     )
 }

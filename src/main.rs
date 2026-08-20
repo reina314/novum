@@ -13,6 +13,8 @@ use std::{
     fs,
 };
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Default)]
 struct Options {
     display_lexer: bool,
@@ -20,12 +22,22 @@ struct Options {
     file: Option<String>,
 }
 
+enum Command {
+    Run(Options),
+    Help,
+    Version,
+}
+
 impl Options {
-    fn parse() -> Result<Self, String> {
+    fn parse() -> Result<Command, String> {
         let mut options = Self::default();
 
         for arg in env::args().skip(1) {
             match arg.as_str() {
+                "--version" | "-V" => {
+                    return Ok(Command::Version);
+                }
+
                 "-l" | "--lexer" => {
                     options.display_lexer = true;
                 }
@@ -40,8 +52,7 @@ impl Options {
                 }
 
                 "help" | "--help" | "-h" => {
-                    Self::print_help();
-                    std::process::exit(0);
+                    return Ok(Command::Help);
                 }
 
                 _ if arg.starts_with('-') => {
@@ -50,7 +61,9 @@ impl Options {
 
                 _ => {
                     if options.file.is_some() {
-                        return Err("only one input file is allowed".into());
+                        return Err(
+                            "only one input file is allowed".into()
+                        );
                     }
 
                     options.file = Some(arg);
@@ -58,13 +71,13 @@ impl Options {
             }
         }
 
-        Ok(options)
+        Ok(Command::Run(options))
     }
 
     fn print_help() {
         println!(
             "\
-novum v{}
+novum v{VERSION}
 
 USAGE:
     novum [OPTIONS] [FILE]
@@ -74,6 +87,7 @@ OPTIONS:
     -p, --parser     Show parser output
     -a, --all        Show lexer and parser output
     -h, --help       Show this help message
+    -V, --version    Show version information
 
 REPL:
     help             Show REPL commands
@@ -85,15 +99,14 @@ KEYS:
     Home / End       Move to line boundaries
     Ctrl-C           Cancel current input
     Ctrl-D           Exit the REPL
-",
-            env!("CARGO_PKG_VERSION")
+"
         );
     }
 }
 
 fn main() {
-    let options = match Options::parse() {
-        Ok(options) => options,
+    let command = match Options::parse() {
+        Ok(command) => command,
 
         Err(message) => {
             eprintln!("error: {message}");
@@ -102,29 +115,37 @@ fn main() {
         }
     };
 
-    println!("novum v{}\n", env!("CARGO_PKG_VERSION"));
-
-    let mut interpreter = Interpreter::new();
-
-    match options.file {
-        Some(path) => {
-            if let Err(error) = run_file(
-                &mut interpreter,
-                &path,
-                options.display_lexer,
-                options.display_parser,
-            ) {
-                eprintln!("{error}");
-                std::process::exit(1);
-            }
+    match command {
+        Command::Version => {
+            println!("novum v{VERSION}");
         }
 
-        None => {
-            repl(
-                &mut interpreter,
-                options.display_lexer,
-                options.display_parser,
-            );
+        Command::Help => {
+            Options::print_help();
+        }
+
+        Command::Run(options) => {
+            let mut interpreter = Interpreter::new();
+
+            if let Some(path) = options.file {
+                if let Err(error) = run_file(
+                    &mut interpreter,
+                    &path,
+                    options.display_lexer,
+                    options.display_parser,
+                ) {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            } else {
+                println!("novum v{VERSION}\n");
+
+                repl(
+                    &mut interpreter,
+                    options.display_lexer,
+                    options.display_parser,
+                );
+            }
         }
     }
 }
@@ -187,18 +208,40 @@ fn run(
     }
 
     match interpreter.eval_program(&program) {
-        Ok(ControlFlow::Value(value)) if value != Value::Unit => {
-            if let Some(index) = line_index {
-                println!("[{index}] >> {value}");
-            } else {
-                println!(">> {value}");
-            }
+        Ok(ControlFlow::Value(value))
+            if value != Value::Unit =>
+        {
+            print_result(value, line_index);
         }
 
         Ok(_) => {}
 
         Err(error) => {
             error.display(source);
+        }
+    }
+}
+
+fn print_result(
+    value: Value,
+    line_index: Option<usize>,
+) {
+    let output = value.to_string();
+
+    let prefix = match line_index {
+        Some(index) => format!("[{index}] >> "),
+        None => ">> ".to_string(),
+    };
+
+    let indent = " ".repeat(prefix.len());
+
+    let mut lines = output.lines();
+
+    if let Some(first) = lines.next() {
+        println!("{prefix}{first}");
+
+        for line in lines {
+            println!("{indent}{line}");
         }
     }
 }
@@ -244,9 +287,12 @@ fn repl(
                     _ => {}
                 }
 
-                // Store the command only after accepting it as input.
-                if let Err(error) = editor.add_history_entry(line.as_str()) {
-                    eprintln!("warning: failed to save history entry: {error}");
+                if let Err(error) =
+                    editor.add_history_entry(&line)
+                {
+                    eprintln!(
+                        "warning: failed to save history entry: {error}"
+                    );
                 }
 
                 run(
@@ -262,7 +308,6 @@ fn repl(
 
             Err(ReadlineError::Interrupted) => {
                 println!("^C");
-                continue;
             }
 
             Err(ReadlineError::Eof) => {

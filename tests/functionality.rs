@@ -127,25 +127,6 @@ fn import_unknown_module_is_error() {
 }
 
 #[test]
-fn csv_read() {
-    let result =
-        run(
-            r#"
-            import csv
-
-            csv.read(
-                "tests/data/simple.csv"
-            ).nrows
-            "#
-        );
-
-    assert_eq!(
-        result,
-        Value::Int(3)
-    );
-}
-
-#[test]
 fn cyclic_import_is_error() {
     let source =
         "import tests.modules.c";

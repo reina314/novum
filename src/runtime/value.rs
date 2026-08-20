@@ -46,6 +46,8 @@ pub enum Value {
     
     ListMethod(List, String),
     ObjectMethod(ObjectMethod),
+    SeriesMethod(SeriesRef, String),
+    DataFrameMethod(DataFrameRef, String),
     
     Unit,
     Null,
@@ -78,6 +80,8 @@ impl Value {
 
             Self::ListMethod(..) => "Method",
             Self::ObjectMethod(_) => "Method",
+            Self::SeriesMethod(..) => "Method",
+            Self::DataFrameMethod(..) => "Method",
 
             Self::Unit => "Unit",
             Self::Null => "Null",
@@ -159,9 +163,12 @@ impl fmt::Debug for Value {
             Self::Func(v) => write!(f, "{v}"),
             Self::Iterator(_) => write!(f, "<iterator>"),
             Self::Builtin(_) => write!(f, "<builtin>"),
+
             Self::ListMethod(_, name) => write!(f, "<list_method> {name}"),
             Self::ObjectMethod(method) => write!(f, "<object_method> {}", method.name),
-            
+            Self::SeriesMethod(_, name) => write!(f, "<series_method> {name}"),
+            Self::DataFrameMethod(_, name) => write!(f, "<dataframe_method> {name}"),
+
             Self::Unit => write!(f, "<unit>"),
             Self::Null => write!(f, "<null>"),
         }
@@ -171,11 +178,145 @@ impl fmt::Debug for Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Str(v) => write!(f, "{v:?}"),
-            Self::Null => write!(f, "null"),
+            Self::Int(v) =>
+                write!(f, "{v}"),
+
+            Self::Float(v) =>
+                write!(f, "{}", format_float(*v)),
+
+            Self::Bool(v) =>
+                write!(f, "{v}"),
+
+            Self::Str(v) =>
+                write!(f, "{v}"),
+
+            Self::Null =>
+                write!(f, "null"),
+
+            Self::Unit =>
+                write!(f, "()"),
+
+            Self::List(list) => {
+                let list = list.borrow();
+
+                write!(f, "[")?;
+
+                for (i, value) in list.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(f, "{value}")?;
+                }
+
+                write!(f, "]")
+            }
+
+            Self::Dict(dict) => {
+                let dict = dict.borrow();
+
+                let mut entries =
+                    dict.iter()
+                        .collect::<Vec<_>>();
+
+                entries.sort_by(
+                    |(key_a, _), (key_b, _)| {
+                        key_a.cmp(key_b)
+                    }
+                );
+
+                write!(f, "{{")?;
+
+                for (i, (key, value)) in
+                    entries.iter().enumerate()
+                {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(
+                        f,
+                        "{:?}: {}",
+                        key,
+                        value
+                    )?;
+                }
+
+                write!(f, "}}")
+            }
+
+            Self::Matrix(matrix) => 
+                matrix.borrow().fmt_display(f),
+
+            Self::Series(series) => 
+                series.fmt_display(f),
+
+            Self::DataFrame(df) =>
+                df.fmt_display(f),
+
+            Self::Object(object) => 
+                object.borrow().fmt_display(f),
+
+            Self::Struct(def) =>
+                write!(f, "<struct {}>", def.name),
+
+            Self::Module(module) =>
+                write!(f, "<module {}>", module.borrow().name()),
+
+            Self::Range(
+                start,
+                end,
+                inclusive,
+            ) => {
+                if *inclusive {
+                    write!(
+                        f,
+                        "{}..={}",
+                        start,
+                        end
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{}..{}",
+                        start,
+                        end
+                    )
+                }
+            }
+
+            Self::Func(_) =>
+                write!(f, "<function>"),
+
+            Self::Builtin(_) =>
+                write!(f, "<builtin>"),
+
+            Self::Iterator(_) =>
+                write!(f, "<iterator>"),
+
+            Self::ListMethod(_, name) =>
+                write!(f, "<list method {}>", name),
+
+            Self::ObjectMethod(method) =>
+                write!(f, "<method {}>", method.name),
+
+            Self::SeriesMethod(_, name) =>
+                write!(f, "<series method {}>", name),
+
+            Self::DataFrameMethod(_, name) =>
+                write!(f, "<dataframe method {}>", name),
+
             _ => write!(f, "{:?}", self),
         }
     }
+}
+
+fn format_float(value: f64) -> String {
+    let s = format!("{value:.8}");
+
+    s.trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 impl PartialEq for Value {
