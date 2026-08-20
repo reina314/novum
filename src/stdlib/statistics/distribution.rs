@@ -1,6 +1,7 @@
 use super::util::{
     erf,
     regularized_beta,
+    regularized_gamma_p,
 };
 
 pub fn normal_cdf(
@@ -42,3 +43,109 @@ pub fn student_t_cdf(
         0.5 * ib
     }
 }
+
+/// Inverse of `student_t_cdf`
+pub fn student_t_quantile(
+    p: f64,
+    df: f64,
+) -> f64 {
+    if !(0.0 < p && p < 1.0)
+        || df <= 0.0
+    {
+        return f64::NAN;
+    }
+
+    if (p - 0.5).abs() < 1e-15 {
+        return 0.0;
+    }
+
+    let sign =
+        if p < 0.5 {
+            -1.0
+        } else {
+            1.0
+        };
+
+    let target =
+        if sign > 0.0 {
+            p
+        } else {
+            1.0 - p
+        };
+
+    let mut low = 0.0;
+    let mut high = 1.0;
+
+    while student_t_cdf(high, df)
+        < target
+    {
+        high *= 2.0;
+
+        if high > 1.0e10 {
+            return f64::INFINITY * sign;
+        }
+    }
+
+    for _ in 0..100 {
+        let mid =
+            (low + high) / 2.0;
+
+        if student_t_cdf(mid, df)
+            < target
+        {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    sign * (low + high) / 2.0
+}
+
+pub fn chi_square_cdf(
+    x: f64,
+    df: f64,
+) -> f64 {
+    if x < 0.0 || df <= 0.0 {
+        return f64::NAN;
+    }
+
+    regularized_gamma_p(
+        df / 2.0,
+        x / 2.0,
+    )
+}
+
+pub fn f_cdf(
+    x: f64,
+    df1: f64,
+    df2: f64,
+) -> f64 {
+    if x < 0.0
+        || df1 <= 0.0
+        || df2 <= 0.0
+    {
+        return f64::NAN;
+    }
+
+    let z =
+        (df1 * x)
+        / (df1 * x + df2);
+
+    regularized_beta(
+        z,
+        df1 / 2.0,
+        df2 / 2.0,
+    )
+}
+
+
+
+
+
+
+
+
+
+
+

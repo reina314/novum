@@ -54,6 +54,89 @@ pub fn ln_gamma(x: f64) -> f64 {
         + a.ln()
 }
 
+pub fn regularized_gamma_p(
+    a: f64,
+    x: f64,
+) -> f64 {
+    if a <= 0.0 || x < 0.0 {
+        return f64::NAN;
+    }
+
+    if x == 0.0 {
+        return 0.0;
+    }
+
+    // Series representation for x < a + 1
+    if x < a + 1.0 {
+        let mut sum = 1.0 / a;
+        let mut term = sum;
+        let mut n = 1.0;
+
+        while n <= 1000.0 {
+            term *= x / (a + n);
+            sum += term;
+
+            if term.abs() < sum.abs() * 1e-14 {
+                break;
+            }
+
+            n += 1.0;
+        }
+
+        let log_prefactor =
+            -x
+            + a * x.ln()
+            - ln_gamma(a);
+
+        return sum * log_prefactor.exp();
+    }
+
+    // Continued fraction for x >= a + 1
+    const MAX_ITER: usize = 1000;
+    const EPS: f64 = 1e-14;
+    const FPMIN: f64 = 1e-300;
+
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / FPMIN;
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for i in 1..=MAX_ITER {
+        let i = i as f64;
+
+        let an = -i * (i - a);
+
+        b += 2.0;
+
+        d = an * d + b;
+
+        if d.abs() < FPMIN {
+            d = FPMIN;
+        }
+
+        c = b + an / c;
+
+        if c.abs() < FPMIN {
+            c = FPMIN;
+        }
+
+        d = 1.0 / d;
+
+        let delta = d * c;
+        h *= delta;
+
+        if (delta - 1.0).abs() < EPS {
+            break;
+        }
+    }
+
+    let q =
+        (-x + a * x.ln() - ln_gamma(a)).exp()
+        * h;
+
+    1.0 - q
+}
+
 fn beta_continued_fraction(
     a: f64,
     b: f64,

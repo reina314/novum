@@ -13,6 +13,9 @@ use super::{
     distribution::{
         normal_cdf,
         student_t_cdf,
+        student_t_quantile,
+        chi_square_cdf,
+        f_cdf,
     },
 };
 
@@ -49,6 +52,117 @@ fn result_object(
             RefCell::new(object)
         )
     )
+}
+
+/// ## Sample
+/// ```py
+/// mean_ci([1,2,3,4,5], 0.95)
+/// ```
+pub fn mean_ci(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "mean_ci() expects data and confidence"
+                .into()
+        );
+    }
+
+    let x =
+        collect_numbers(&args[0])?;
+
+    let confidence =
+        match args[1] {
+            Value::Int(v) => v as f64,
+            Value::Float(v) => v,
+
+            _ => {
+                return Err(
+                    "confidence must be numeric"
+                        .into()
+                );
+            }
+        };
+
+    if !(0.0 < confidence && confidence < 1.0) {
+        return Err(
+            "confidence must be between 0 and 1"
+                .into()
+        );
+    }
+
+    if x.len() < 2 {
+        return Err(
+            "mean_ci() requires at least 2 observations"
+                .into()
+        );
+    }
+
+    let n =
+        x.len() as f64;
+
+    let mean =
+        x.iter().sum::<f64>() / n;
+
+    let variance =
+        x.iter()
+            .map(|v| {
+                let d = *v - mean;
+                d * d
+            })
+            .sum::<f64>()
+            / (n - 1.0);
+
+    let se =
+        (variance / n).sqrt();
+
+    let alpha =
+    1.0 - confidence;
+
+    let critical =
+        student_t_quantile(
+            1.0 - alpha / 2.0,
+            n - 1.0,
+        );
+
+    let margin =
+        critical * se;
+
+    let result =
+        result_object(
+            "Mean confidence interval",
+            mean,
+            0.0,
+        );
+
+    if let Value::Object(object) = &result {
+        object.borrow_mut().set_field(
+            "mean",
+            Value::Float(mean),
+        );
+
+        object.borrow_mut().set_field(
+            "lower",
+            Value::Float(mean - margin),
+        );
+
+        object.borrow_mut().set_field(
+            "upper",
+            Value::Float(mean + margin),
+        );
+
+        object.borrow_mut().set_field(
+            "confidence",
+            Value::Float(confidence),
+        );
+
+        object.borrow_mut().set_field(
+            "df",
+            Value::Float(n - 1.0),
+        );
+    }
+
+    Ok(result)
 }
 
 pub fn one_sample_t(
@@ -168,6 +282,7 @@ pub fn one_sample_t(
     Ok(result)
 }
 
+/// Internally executes `one_sample_t()` of the difference between pairs.
 pub fn paired_t(
     args: Vec<Value>,
 ) -> Result<Value, String> {
@@ -554,3 +669,566 @@ pub fn mann_whitney(
 
     Ok(result)
 }
+
+/// Chi Squared test for Goodness of Fit
+/// 
+/// ## Usage
+/// ```py
+/// chi_square_gof(observed, expected)
+/// ```
+/// 
+/// ## Sample
+/// ```py
+/// chi_square_gof(
+///     [20, 30, 50],
+///     [25, 25, 50]
+/// )
+/// ```
+pub fn chi_square_gof(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "chi_square_gof() expects observed and expected"
+                .into()
+        );
+    }
+
+    let observed =
+        collect_numbers(&args[0])?;
+
+    let expected =
+        collect_numbers(&args[1])?;
+
+    if observed.len() != expected.len() {
+        return Err(
+            "observed and expected must have equal lengths"
+                .into()
+        );
+    }
+
+    if observed.len() < 2 {
+        return Err(
+            "chi-square goodness-of-fit requires at least 2 categories"
+                .into()
+        );
+    }
+
+    let mut statistic = 0.0;
+
+    for (o, e) in observed
+        .iter()
+        .zip(expected.iter())
+    {
+        if *e <= 0.0 {
+            return Err(
+                "expected frequencies must be positive"
+                    .into()
+            );
+        }
+
+        statistic +=
+            (o - e).powi(2) / e;
+    }
+
+    let df =
+        (observed.len() - 1) as f64;
+
+    let p =
+        1.0
+        - chi_square_cdf(
+            statistic,
+            df,
+        );
+
+    let result =
+        result_object(
+            "Chi-square goodness-of-fit test",
+            statistic,
+            p,
+        );
+
+    if let Value::Object(object) = &result {
+        object.borrow_mut().set_field(
+            "df",
+            Value::Float(df),
+        );
+    }
+
+    Ok(result)
+}
+
+/// Chi Squared test for Independence
+///  
+/// ### Sample
+/// ```py
+/// chi_square_independence(
+///     matrix([
+///         [10, 20, 30],
+///         [20, 30, 10]
+///     ])
+/// )
+/// ```
+pub fn chi_square_independence(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "chi_square_independence() expects a Matrix"
+                .into()
+        );
+    }
+
+    let matrix =
+        match &args[0] {
+            Value::Matrix(matrix) =>
+                matrix.borrow(),
+
+            other => {
+                return Err(format!(
+                    "chi_square_independence() expects Matrix, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let rows = matrix.rows();
+    let cols = matrix.cols();
+
+    if rows < 2 || cols < 2 {
+        return Err(
+            "contingency table must have at least 2 rows and 2 columns"
+                .into()
+        );
+    }
+
+    let mut row_totals =
+        vec![0.0; rows];
+
+    let mut col_totals =
+        vec![0.0; cols];
+
+    let mut total = 0.0;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let value =
+                matrix.get(r, c).unwrap();
+
+            if value < 0.0 {
+                return Err(
+                    "observed frequencies must be non-negative"
+                        .into()
+                );
+            }
+
+            row_totals[r] += value;
+            col_totals[c] += value;
+            total += value;
+        }
+    }
+
+    if total <= 0.0 {
+        return Err(
+            "contingency table total must be positive"
+                .into()
+        );
+    }
+
+    let mut statistic = 0.0;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let expected =
+                row_totals[r]
+                    * col_totals[c]
+                    / total;
+
+            if expected > 0.0 {
+                let observed =
+                    matrix.get(r, c).unwrap();
+
+                statistic +=
+                    (observed - expected).powi(2)
+                    / expected;
+            }
+        }
+    }
+
+    let df =
+        ((rows - 1) * (cols - 1))
+            as f64;
+
+    let p =
+        1.0
+        - chi_square_cdf(
+            statistic,
+            df,
+        );
+
+    let result =
+        result_object(
+            "Chi-square test of independence",
+            statistic,
+            p,
+        );
+
+    if let Value::Object(object) = &result {
+        object.borrow_mut().set_field(
+            "df",
+            Value::Float(df),
+        );
+
+        object.borrow_mut().set_field(
+            "rows",
+            Value::Int(rows as i64),
+        );
+
+        object.borrow_mut().set_field(
+            "cols",
+            Value::Int(cols as i64),
+        );
+    }
+
+    Ok(result)
+}
+
+pub fn anova(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "anova() expects a List of groups"
+                .into()
+        );
+    }
+
+    let groups =
+        match &args[0] {
+            Value::List(groups) =>
+                groups.borrow(),
+
+            other => {
+                return Err(format!(
+                    "anova() expects List, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    if groups.len() < 2 {
+        return Err(
+            "ANOVA requires at least 2 groups"
+                .into()
+        );
+    }
+
+    let mut data =
+        Vec::<Vec<f64>>::new();
+
+    for group in groups.iter() {
+        data.push(
+            collect_numbers(group)?
+        );
+    }
+
+    let total_n: usize =
+        data.iter()
+            .map(Vec::len)
+            .sum();
+
+    if total_n <= data.len() {
+        return Err(
+            "ANOVA requires residual degrees of freedom"
+                .into()
+        );
+    }
+
+    let grand_mean =
+        data.iter()
+            .flatten()
+            .sum::<f64>()
+            / total_n as f64;
+
+    let mut ss_between = 0.0;
+    let mut ss_within = 0.0;
+
+    for group in &data {
+        let n =
+            group.len() as f64;
+
+        let mean =
+            group.iter().sum::<f64>()
+            / n;
+
+        ss_between +=
+            n * (mean - grand_mean).powi(2);
+
+        ss_within +=
+            group
+                .iter()
+                .map(|x| {
+                    (x - mean).powi(2)
+                })
+                .sum::<f64>();
+    }
+
+    let k =
+        data.len() as f64;
+
+    let df_between =
+        k - 1.0;
+
+    let df_within =
+        total_n as f64 - k;
+
+    let ms_between =
+        ss_between / df_between;
+
+    let ms_within =
+        ss_within / df_within;
+
+    if ms_within == 0.0 {
+        let result =
+            if ss_between == 0.0 {
+                result_object(
+                    "One-way ANOVA",
+                    0.0,
+                    1.0,
+                )
+            } else {
+                result_object(
+                    "One-way ANOVA",
+                    f64::INFINITY,
+                    0.0,
+                )
+            };
+
+        if let Value::Object(object) = &result {
+            object.borrow_mut().set_field(
+                "df_between",
+                Value::Float(df_between),
+            );
+
+            object.borrow_mut().set_field(
+                "df_within",
+                Value::Float(df_within),
+            );
+        }
+
+        return Ok(result);
+    }
+
+    let f =
+        ms_between / ms_within;
+
+    let p =
+        1.0
+        - f_cdf(
+            f,
+            df_between,
+            df_within,
+        );
+
+    let result =
+        result_object(
+            "One-way ANOVA",
+            f,
+            p,
+        );
+
+    if let Value::Object(object) = &result {
+        object.borrow_mut().set_field(
+            "f",
+            Value::Float(f),
+        );
+
+        object.borrow_mut().set_field(
+            "df_between",
+            Value::Float(df_between),
+        );
+
+        object.borrow_mut().set_field(
+            "df_within",
+            Value::Float(df_within),
+        );
+
+        object.borrow_mut().set_field(
+            "ss_between",
+            Value::Float(ss_between),
+        );
+
+        object.borrow_mut().set_field(
+            "ss_within",
+            Value::Float(ss_within),
+        );
+
+        object.borrow_mut().set_field(
+            "ms_between",
+            Value::Float(ms_between),
+        );
+
+        object.borrow_mut().set_field(
+            "ms_within",
+            Value::Float(ms_within),
+        );
+    }
+
+    Ok(result)
+}
+
+pub fn kruskal_wallis(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "kruskal_wallis() expects a List of groups"
+                .into()
+        );
+    }
+
+    let groups =
+        match &args[0] {
+            Value::List(groups) =>
+                groups.borrow(),
+
+            other => {
+                return Err(format!(
+                    "kruskal_wallis() expects List, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    if groups.len() < 2 {
+        return Err(
+            "Kruskal-Wallis requires at least 2 groups"
+                .into()
+        );
+    }
+
+    let mut samples =
+        Vec::<Vec<f64>>::new();
+
+    for group in groups.iter() {
+        samples.push(
+            collect_numbers(group)?
+        );
+    }
+
+    let mut combined =
+        Vec::<(f64, usize)>::new();
+
+    for (group_index, group) in
+        samples.iter().enumerate()
+    {
+        for value in group {
+            combined.push(
+                (*value, group_index)
+            );
+        }
+    }
+
+    combined.sort_by(
+        |a, b| a.0.total_cmp(&b.0)
+    );
+
+    let mut ranks =
+        vec![0.0; combined.len()];
+
+    let mut i = 0;
+
+    while i < combined.len() {
+        let mut j = i + 1;
+
+        while j < combined.len()
+            && combined[j].0
+                == combined[i].0
+        {
+            j += 1;
+        }
+
+        let rank =
+            (i + 1 + j) as f64 / 2.0;
+
+        for k in i..j {
+            ranks[k] = rank;
+        }
+
+        i = j;
+    }
+
+    let mut rank_sums =
+        vec![0.0; samples.len()];
+
+    let mut counts =
+        vec![0usize; samples.len()];
+
+    for (i, (_, group)) in
+        combined.iter().enumerate()
+    {
+        rank_sums[*group] += ranks[i];
+        counts[*group] += 1;
+    }
+
+    let n =
+        combined.len() as f64;
+
+    let mut h =
+        0.0;
+
+    for i in 0..samples.len() {
+        let ni =
+            counts[i] as f64;
+
+        h +=
+            rank_sums[i]
+                * rank_sums[i]
+                / ni;
+    }
+
+    h =
+        12.0 * h
+        / (n * (n + 1.0))
+        - 3.0 * (n + 1.0);
+
+    let df =
+        (samples.len() - 1) as f64;
+
+    let p =
+        1.0
+        - chi_square_cdf(
+            h.max(0.0),
+            df,
+        );
+
+    let result =
+        result_object(
+            "Kruskal-Wallis test",
+            h,
+            p,
+        );
+
+    if let Value::Object(object) = &result {
+        object.borrow_mut().set_field(
+            "h",
+            Value::Float(h),
+        );
+
+        object.borrow_mut().set_field(
+            "df",
+            Value::Float(df),
+        );
+
+        object.borrow_mut().set_field(
+            "n",
+            Value::Int(n as i64),
+        );
+    }
+
+    Ok(result)
+}
+
+
+
+

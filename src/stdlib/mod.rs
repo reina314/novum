@@ -147,6 +147,11 @@ pub fn builtins()
 
     //== Inferential Statistics (statistics/inferential.rs) ==========
     map.insert(
+        "mean_ci".into(),
+        Value::Builtin(statistics::inferential::mean_ci),
+    );
+    
+    map.insert(
         "one_sample_t".into(),
         Value::Builtin(statistics::inferential::one_sample_t),
     );
@@ -164,6 +169,26 @@ pub fn builtins()
     map.insert(
         "mann_whitney".into(),
         Value::Builtin(statistics::inferential::mann_whitney),
+    );
+
+    map.insert(
+        "chi_square_gof".into(),
+        Value::Builtin(statistics::inferential::chi_square_gof),
+    );
+
+    map.insert(
+        "chi_square_independence".into(),
+        Value::Builtin(statistics::inferential::chi_square_independence),
+    );
+
+    map.insert(
+        "anova".into(),
+        Value::Builtin(statistics::inferential::anova),
+    );
+
+    map.insert(
+        "kruskal_wallis".into(),
+        Value::Builtin(statistics::inferential::kruskal_wallis),
     );
 
     map
