@@ -1,17 +1,34 @@
 use crate::{
-    error::{Error, ErrorKind, Result, StackFrame},
-    runtime::{ControlFlow, Env, Function, IteratorObj, Value, StructDefinition},
-    stdlib::{self, general},
-    syntax::{BinOp, Expr, ExprKind, IndexExpr, ListItem, Program},
-    interpreter::operator,
+    Lexer, Parser, error::{
+        Error, 
+        ErrorKind, 
+        Result, 
+        StackFrame
+    }, interpreter::operator, runtime::{
+        ControlFlow, Env, Function, IteratorObj, Module, ModuleContext, ModulePath, ModuleRef,StructDefinition, Value,
+    }, stdlib::{
+        self, 
+        general
+    }, syntax::{
+        BinOp, 
+        Expr, 
+        ExprKind, 
+        IndexExpr, 
+        ListItem, 
+        Program
+    },
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell, path::PathBuf, rc::Rc,
+};
 
 pub struct Interpreter {
     env: Env,
     stack: Vec<StackFrame>,
     loop_depth: usize,
     function_depth: usize,
+    module_stack: Vec<ModuleContext>,
+    project_root: PathBuf,
 }
 
 impl Default for Interpreter {
@@ -22,11 +39,18 @@ impl Interpreter {
     pub fn new() -> Self {
         let env = Env::global();
 
+        let project_root = std::env::current_dir()
+            .expect(
+                "failed to determine current directory"
+            );
+
         let interpreter = Self { 
             env,
             stack: Vec::new(),
             loop_depth: 0,
-            function_depth: 0 
+            function_depth: 0,
+            module_stack: Vec::new(),
+            project_root,
         };
 
         for (name, value) 
@@ -73,6 +97,8 @@ impl Interpreter {
                     expr,
                 )
             }
+
+            Import(parts) => self.eval_import(parts, expr),
 
             Let(name, rhs) => {
                 if self.env.contains_local(name) {
@@ -191,6 +217,8 @@ impl Interpreter {
             Field(obj, name) => self.eval_field(obj, name, expr),
 
             Index(obj, index) => self.eval_index(obj, index, expr),
+
+            Null => Ok(ControlFlow::Value(Value::Null))
         }
     }
 
@@ -304,6 +332,430 @@ impl Interpreter {
         );
 
         Ok(ControlFlow::Value(Value::Unit))
+    }
+
+    fn resolve_module_path(
+        &self,
+        requested: &ModulePath,
+        whole: &Expr,
+    ) -> Result<PathBuf> {
+        let path = if let Some(current) =
+            self.module_stack.last()
+        {
+            // Import from another module:
+            //
+            // /project/tests/modules/a.nv
+            //
+            // import b
+            //
+            // -> /project/tests/modules/b.nv
+
+            let parent =
+                current
+                    .file_path
+                    .parent()
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            "module file has no parent directory",
+                            whole,
+                        )
+                    })?;
+
+            let mut path =
+                parent.to_path_buf();
+
+            for part in requested.parts() {
+                path.push(part);
+            }
+
+            path.set_extension("nv");
+
+            path
+        } else {
+            // Import from main program:
+            //
+            // import tests.modules.a
+            //
+            // -> project/tests/modules/a.nv
+
+            let mut path =
+                self.project_root.clone();
+
+            for part in requested.parts() {
+                path.push(part);
+            }
+
+            path.set_extension("nv");
+
+            path
+        };
+
+        if !path.is_file() {
+            return Err(
+                self.error(
+                    ErrorKind::Name,
+                    format!(
+                        "module '{}' not found at '{}'",
+                        requested.name(),
+                        path.display()
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        Ok(path)
+    }
+
+    fn bind_module_path(
+        &mut self,
+        path: &ModulePath,
+        module: ModuleRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        let parts =
+            path.parts();
+
+        if parts.is_empty() {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    "cannot bind empty module path",
+                    whole,
+                )
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Root namespace
+        // ---------------------------------------------------------
+
+        let root_name =
+            &parts[0];
+
+        let mut current =
+            match self.env.get(root_name) {
+                Some(Value::Module(module)) => {
+                    module
+                }
+
+                Some(other) => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "cannot create module namespace '{}': name already refers to {}",
+                                root_name,
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                None => {
+                    let module =
+                        Rc::new(
+                            RefCell::new(
+                                Module::new(
+                                    root_name.clone()
+                                )
+                            )
+                        );
+
+                    self.env.define(
+                        root_name.clone(),
+                        Value::Module(
+                            module.clone()
+                        ),
+                    );
+
+                    module
+                }
+            };
+
+        // ---------------------------------------------------------
+        // Intermediate namespaces
+        // ---------------------------------------------------------
+
+        for part in
+            &parts[1..parts.len() - 1]
+        {
+            let next =
+                current.borrow().get(part);
+
+            current =
+                match next {
+                    Some(Value::Module(module)) =>
+                        module,
+
+                    Some(other) => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "module namespace '{}' is already occupied by {}",
+                                    part,
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+
+                    None => {
+                        let module =
+                            Rc::new(
+                                RefCell::new(
+                                    Module::new(
+                                        part.clone()
+                                    )
+                                )
+                            );
+
+                        current
+                            .borrow_mut()
+                            .set(
+                                part.clone(),
+                                Value::Module(
+                                    module.clone()
+                                ),
+                            );
+
+                        module
+                    }
+                };
+        }
+
+        // ---------------------------------------------------------
+        // Final component
+        // ---------------------------------------------------------
+
+        let final_name =
+            parts.last()
+                .unwrap();
+
+        current.borrow_mut().set(
+            final_name.clone(),
+            Value::Module(module),
+        );
+
+        Ok(())
+    }
+
+    fn eval_import(
+        &mut self,
+        parts: &[String],
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        if parts.is_empty() {
+            return Err(
+                self.error(
+                    ErrorKind::Name,
+                    "empty module name",
+                    whole,
+                )
+            );
+        }
+
+        let requested =
+            ModulePath::new(
+                parts.to_vec()
+            );
+
+        // =========================================================
+        // Standard library module
+        // =========================================================
+
+        if parts.len() == 1 {
+            let name =
+                &parts[0];
+
+            if let Some(module) =
+                crate::stdlib::load_module(name)
+            {
+                if self.env.contains_local(name) {
+                    return Err(
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "name '{}' is already defined in this scope",
+                                name
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                self.env.define(
+                    name.clone(),
+                    Value::Module(module),
+                );
+
+                return Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                );
+            }
+        }
+
+        // =========================================================
+        // Resolve physical file
+        // =========================================================
+
+        let path =
+            self.resolve_module_path(
+                &requested,
+                whole,
+            )?;
+
+        let canonical =
+            std::fs::canonicalize(&path)
+                .map_err(|error| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "failed to resolve module '{}': {}",
+                            path.display(),
+                            error
+                        ),
+                        whole,
+                    )
+                })?;
+
+        // =========================================================
+        // Cyclic import detection
+        // =========================================================
+
+        if self
+            .module_stack
+            .iter()
+            .any(|context| {
+                context.file_path == canonical
+            })
+        {
+            let mut chain =
+                self.module_stack
+                    .iter()
+                    .map(ModuleContext::name)
+                    .collect::<Vec<_>>();
+
+            chain.push(
+                requested.name()
+            );
+
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "cyclic module import: {}",
+                        chain.join(" -> ")
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        // =========================================================
+        // Read source
+        // =========================================================
+
+        let source =
+            std::fs::read_to_string(&canonical)
+                .map_err(|error| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "failed to read module '{}': {}",
+                            canonical.display(),
+                            error
+                        ),
+                        whole,
+                    )
+                })?;
+
+        // =========================================================
+        // Create module environment
+        // =========================================================
+
+        let module_env =
+            self.env.child();
+
+        let previous_env =
+            std::mem::replace(
+                &mut self.env,
+                module_env,
+            );
+
+        // =========================================================
+        // Push module context
+        // =========================================================
+
+        self.module_stack.push(
+            ModuleContext::new(
+                requested.clone(),
+                canonical.clone(),
+            )
+        );
+
+        // =========================================================
+        // Evaluate module
+        // =========================================================
+
+        let result =
+            self.execute_source(&source);
+
+        // Always restore interpreter state.
+        self.module_stack.pop();
+
+        let module_env =
+            std::mem::replace(
+                &mut self.env,
+                previous_env,
+            );
+
+        result?;
+
+        // =========================================================
+        // Build runtime Module
+        // =========================================================
+
+        let mut module =
+            Module::new(
+                requested.name()
+            );
+
+        for (name, value)
+            in module_env.local_values()
+        {
+            module.set(
+                name,
+                value,
+            );
+        }
+
+        let module =
+            Rc::new(
+                RefCell::new(module)
+            );
+
+        // =========================================================
+        // Insert into nested module namespace
+        // =========================================================
+
+        self.bind_module_path(
+            &requested,
+            module,
+            whole,
+        )?;
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn eval_assign_index(
@@ -610,6 +1062,18 @@ impl Interpreter {
                 );
 
                 Ok(ControlFlow::Value(value))
+            }
+
+            // Deny module modification
+            Value::Module(module) => {
+                Err(self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "cannot modify module '{}'",
+                        module.borrow().name()
+                    ),
+                    whole,
+                ))
             }
 
             other => Err(self.error(
@@ -1648,6 +2112,86 @@ impl Interpreter {
                 ))
             }
 
+            Value::Module(module) => {
+                let module =
+                    module.borrow();
+
+                module
+                    .get(name)
+                    .map(ControlFlow::Value)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            format!(
+                                "module '{}' has no member '{}'",
+                                module.name(),
+                                name
+                            ),
+                            whole,
+                        )
+                    })
+            }
+
+            Value::DataFrame(df) => {
+                // Initially allow only properties.
+                match name {
+                    "columns" => {
+                        let columns =
+                            df.columns()
+                                .into_iter()
+                                .map(|name| {
+                                    Value::Str(
+                                        Rc::new(name)
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::List(
+                                    Rc::new(
+                                        RefCell::new(
+                                            columns
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    "nrows" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Int(
+                                    df.nrows() as i64
+                                )
+                            )
+                        )
+                    }
+
+                    "ncols" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Int(
+                                    df.ncols() as i64
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(self.error(
+                            ErrorKind::Runtime,
+                            format!(
+                                "DataFrame has no field '{}'",
+                                name
+                            ),
+                            whole,
+                        ))
+                    }
+                }
+            }
+
             other => Err(self.error(
                 ErrorKind::Runtime,
                 format!(
@@ -1705,4 +2249,25 @@ impl Interpreter {
             expr,
         )
     }
+
+    fn execute_source(
+        &mut self,
+        source: &str,
+    ) -> Result<ControlFlow> {
+        let mut lexer =
+            Lexer::new(source);
+
+        let tokens =
+            lexer.lex()
+                .map_err(|e| e)?;
+
+        let mut parser =
+            Parser::new(tokens);
+
+        let program =
+            parser.parse()?;
+
+        self.eval_program(&program)
+    }
+
 }

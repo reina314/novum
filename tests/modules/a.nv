@@ -1,0 +1,7 @@
+import b
+
+let value_a = 10
+
+let get_b = |x| {
+    b.value_b + x
+}

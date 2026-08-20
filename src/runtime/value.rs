@@ -5,6 +5,9 @@ use super::{
     ObjectRef,
     StructRef,
     MatrixRef,
+    SeriesRef,
+    DataFrameRef,
+    ModuleRef,
 };
 use std::{
     cell::RefCell,
@@ -27,8 +30,13 @@ pub enum Value {
     List(List),
     Dict(Dict),
     Matrix(MatrixRef),
+    Series(SeriesRef),
+    DataFrame(DataFrameRef),
+
     Object(ObjectRef),
     Struct(StructRef),
+
+    Module(ModuleRef),
 
     Range(i64, i64, bool),
     
@@ -40,6 +48,7 @@ pub enum Value {
     ObjectMethod(ObjectMethod),
     
     Unit,
+    Null,
 }
 
 impl Value {
@@ -53,8 +62,13 @@ impl Value {
             Self::List(_) => "List",
             Self::Dict(_) => "Dict",
             Self::Matrix(_) => "Matrix",
+            Self::Series(_) => "Series",
+            Self::DataFrame(_) => "DataFrame",
+
             Self::Object(_) => "Object",
             Self::Struct(_) => "Struct",
+
+            Self::Module(_) => "Module",
 
             Self::Range(..) => "Range",
 
@@ -66,6 +80,7 @@ impl Value {
             Self::ObjectMethod(_) => "Method",
 
             Self::Unit => "Unit",
+            Self::Null => "Null",
         }
     }
 
@@ -92,11 +107,12 @@ impl Value {
             (Self::Str(x), Self::Str(y)) => x == y,
             (Self::Bool(x), Self::Bool(y)) => x == y,
 
-            (Self::Unit, Self::Unit) => true,
-
             (Self::List(x), Self::List(y)) => Rc::ptr_eq(x, y),
             (Self::Dict(x), Self::Dict(y)) => Rc::ptr_eq(x, y),
             (Self::Matrix(a), Self::Matrix(b)) => Rc::ptr_eq(a, b),
+            (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
+            (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
+
             (Self::Object(x), Self::Object(y)) => Rc::ptr_eq(x, y),
 
             (Self::Func(x), Self::Func(y)) => Rc::ptr_eq(x, y),
@@ -108,6 +124,11 @@ impl Value {
             (Self::ListMethod(_, a), Self::ListMethod(_, b)) => a == b,
             
             (Self::Range(a1,b1,c1), Self::Range(a2,b2,c2)) => (a1,b1,c1)==(a2,b2,c2),
+
+            (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
+
+            (Self::Unit, Self::Unit) => true,
+            (Self::Null, Self::Null) => true,
             
             _ => return Err(format!("comparison not defined between {} and {}", a.type_name(), b.type_name())),
         })
@@ -125,8 +146,13 @@ impl fmt::Debug for Value {
             Self::List(v) => write!(f, "{:?}", v.borrow()),
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
+            Self::Series(v) => write!(f, "{:?}", v),
+            Self::DataFrame(df) => write!(f, "{:?}", df),
+
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
+
+            Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             
@@ -136,7 +162,8 @@ impl fmt::Debug for Value {
             Self::ListMethod(_, name) => write!(f, "<list_method> {name}"),
             Self::ObjectMethod(method) => write!(f, "<object_method> {}", method.name),
             
-            Self::Unit => write!(f, "<null>"),
+            Self::Unit => write!(f, "<unit>"),
+            Self::Null => write!(f, "<null>"),
         }
     }
 }
@@ -145,6 +172,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Str(v) => write!(f, "{v:?}"),
+            Self::Null => write!(f, "null"),
             _ => write!(f, "{:?}", self),
         }
     }

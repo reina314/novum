@@ -1,10 +1,285 @@
-use crate::runtime::Value;
-use std::collections::HashMap;
+use crate::runtime::{
+    Module,
+    ModuleRef,
+    Value,
+};
+
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+};
 
 pub mod general;
 pub mod math;
 pub mod linalg;
+pub mod csv;
 pub mod statistics;
+
+pub fn load_module(
+    name: &str,
+) -> Option<ModuleRef> {
+    match name {
+        "stats" =>
+            Some(stats_module()),
+
+        "linalg" =>
+            Some(linalg_module()),
+
+        "math" =>
+            Some(math_module()),
+
+        "csv" =>
+            Some(csv_module()),
+
+        _ => None,
+    }
+}
+
+fn stats_module() -> ModuleRef {
+    let mut module =
+        Module::new("stats");
+
+    module.set(
+        "sum",
+        Value::Builtin(
+            statistics::descriptive::sum
+        ),
+    );
+
+    module.set(
+        "mean",
+        Value::Builtin(
+            statistics::descriptive::mean
+        ),
+    );
+
+    module.set(
+        "variance",
+        Value::Builtin(
+            statistics::descriptive::variance
+        ),
+    );
+
+    module.set(
+        "std",
+        Value::Builtin(
+            statistics::descriptive::std
+        ),
+    );
+
+    module.set(
+        "median",
+        Value::Builtin(
+            statistics::descriptive::median
+        ),
+    );
+
+    module.set(
+        "quantile",
+        Value::Builtin(
+            statistics::descriptive::quantile
+        ),
+    );
+
+    module.set(
+        "covariance",
+        Value::Builtin(
+            statistics::descriptive::covariance
+        ),
+    );
+
+    module.set(
+        "pearson",
+        Value::Builtin(
+            statistics::descriptive::pearson
+        ),
+    );
+
+    module.set(
+        "spearman",
+        Value::Builtin(
+            statistics::descriptive::spearman
+        ),
+    );
+
+    module.set(
+        "one_sample_t",
+        Value::Builtin(
+            statistics::inferential::one_sample_t
+        ),
+    );
+
+    module.set(
+        "welch_t",
+        Value::Builtin(
+            statistics::inferential::welch_t
+        ),
+    );
+
+    module.set(
+        "paired_t",
+        Value::Builtin(
+            statistics::inferential::paired_t
+        ),
+    );
+
+    module.set(
+        "mann_whitney",
+        Value::Builtin(
+            statistics::inferential::mann_whitney
+        ),
+    );
+
+    module.set(
+        "anova",
+        Value::Builtin(
+            statistics::inferential::anova
+        ),
+    );
+
+    module.set(
+        "kruskal_wallis",
+        Value::Builtin(
+            statistics::inferential::kruskal_wallis
+        ),
+    );
+
+    module.set(
+        "chi_square_gof",
+        Value::Builtin(
+            statistics::inferential::chi_square_gof
+        ),
+    );
+
+    module.set(
+        "chi_square_independence",
+        Value::Builtin(
+            statistics::inferential::chi_square_independence
+        ),
+    );
+
+    module.set(
+        "mean_ci",
+        Value::Builtin(
+            statistics::inferential::mean_ci
+        ),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
+fn linalg_module() -> ModuleRef {
+    let mut module =
+        Module::new("linalg");
+
+    module.set(
+        "matrix",
+        Value::Builtin(
+            linalg::matrix
+        ),
+    );
+
+    module.set(
+        "transpose",
+        Value::Builtin(
+            linalg::transpose
+        ),
+    );
+
+    module.set(
+        "det",
+        Value::Builtin(
+            linalg::det
+        ),
+    );
+
+    module.set(
+        "inverse",
+        Value::Builtin(
+            linalg::inverse
+        ),
+    );
+
+    module.set(
+        "shape",
+        Value::Builtin(
+            linalg::shape
+        ),
+    );
+
+    module.set(
+        "rows",
+        Value::Builtin(
+            linalg::rows
+        ),
+    );
+
+    module.set(
+        "cols",
+        Value::Builtin(
+            linalg::cols
+        ),
+    );
+
+    module.set(
+        "linear_regression",
+        Value::Builtin(
+            linalg::linear_regression
+        ),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
+fn math_module() -> ModuleRef {
+    let mut module =
+        Module::new("math");
+
+    module.set(
+        "sqrt",
+        Value::Builtin(math::sqrt),
+    );
+
+    module.set(
+        "abs",
+        Value::Builtin(math::abs),
+    );
+
+    module.set(
+        "exp",
+        Value::Builtin(math::exp),
+    );
+
+    module.set(
+        "log",
+        Value::Builtin(math::log),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
+fn csv_module() -> ModuleRef {
+    let mut module =
+        Module::new("csv");
+
+    module.set(
+        "read",
+        Value::Builtin(
+            csv::read
+        ),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
 
 pub fn builtins()
     -> HashMap<String, Value>
@@ -25,6 +300,8 @@ pub fn builtins()
 
 
     //== Math (math.rs) ======================
+    // DEPRECATED and use `math_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "sqrt".into(),
         Value::Builtin(math::sqrt),
@@ -45,6 +322,8 @@ pub fn builtins()
 
 
     //== Linear Algebra (linalg.rs) ==========
+    // DEPRECATED and use `linalg_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "matrix".into(),
         Value::Builtin(linalg::matrix),
@@ -88,6 +367,8 @@ pub fn builtins()
 
 
     //== Descriptive Statistics (statistics/descriptive.rs) ==========
+    // DEPRECATED and use `stats_module()` instead
+    // This section is for backward compatibility only
     map.insert(
         "sum".into(),
         Value::Builtin(statistics::descriptive::sum),
@@ -146,6 +427,13 @@ pub fn builtins()
 
 
     //== Inferential Statistics (statistics/inferential.rs) ==========
+    // DEPRECATED and use `stats_module()` instead
+    // This section is for backward compatibility only
+    map.insert(
+        "mean_ci".into(),
+        Value::Builtin(statistics::inferential::mean_ci),
+    );
+    
     map.insert(
         "one_sample_t".into(),
         Value::Builtin(statistics::inferential::one_sample_t),
@@ -164,6 +452,26 @@ pub fn builtins()
     map.insert(
         "mann_whitney".into(),
         Value::Builtin(statistics::inferential::mann_whitney),
+    );
+
+    map.insert(
+        "chi_square_gof".into(),
+        Value::Builtin(statistics::inferential::chi_square_gof),
+    );
+
+    map.insert(
+        "chi_square_independence".into(),
+        Value::Builtin(statistics::inferential::chi_square_independence),
+    );
+
+    map.insert(
+        "anova".into(),
+        Value::Builtin(statistics::inferential::anova),
+    );
+
+    map.insert(
+        "kruskal_wallis".into(),
+        Value::Builtin(statistics::inferential::kruskal_wallis),
     );
 
     map

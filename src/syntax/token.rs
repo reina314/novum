@@ -41,6 +41,8 @@ pub enum TokenKind {
 
     Struct,
 
+    Import,
+
     LParen,
     LBrace,
     LBracket,
@@ -57,6 +59,7 @@ pub enum TokenKind {
     DoubleDot,
     DoubleDotEq,
 
+    Null,
     Eof,
 }
 

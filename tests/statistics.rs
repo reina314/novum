@@ -304,6 +304,89 @@ fn mann_whitney_identical_samples() {
 }
 
 #[test]
+fn anova_identical_groups() {
+    let result = run(
+        r#"
+        anova([
+            [1,2,3],
+            [1,2,3],
+            [1,2,3]
+        ])
+        "#
+    );
+
+    match result {
+        Value::Object(object) => {
+            let object = object.borrow();
+
+            let p =
+                match object.get_field("p_value").unwrap() {
+                    Value::Float(v) => v,
+                    _ => panic!("invalid p_value"),
+                };
+
+            assert!(p > 0.99);
+        }
+
+        other => panic!(
+            "expected Object, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn chi_square_identical_distribution() {
+    let result = run(
+        r#"
+        chi_square_gof(
+            [25, 25, 25, 25],
+            [25, 25, 25, 25]
+        )
+        "#
+    );
+
+    match result {
+        Value::Object(object) => {
+            let object = object.borrow();
+
+            let statistic =
+                match object
+                    .get_field("statistic")
+                    .unwrap()
+                {
+                    Value::Float(v) => v,
+                    _ => panic!("invalid statistic"),
+                };
+
+            let p =
+                match object
+                    .get_field("p_value")
+                    .unwrap()
+                {
+                    Value::Float(v) => v,
+                    _ => panic!("invalid p_value"),
+                };
+
+            assert_float_close(
+                statistic,
+                0.0,
+            );
+
+            assert_float_close(
+                p,
+                1.0,
+            );
+        }
+
+        other => panic!(
+            "expected Object, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
 fn linear_regression() {
     let result =
         run(

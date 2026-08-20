@@ -1,25 +1,24 @@
 use crate::runtime::Value;
 
-pub(crate) fn collect_numbers(
-    value: &Value,
-) -> Result<Vec<f64>, String> {
-    let list = match value {
-        Value::List(list) => list.borrow(),
+fn collect_numeric_values<'a, I>(
+    values: I,
+) -> Result<Vec<f64>, String>
+where
+    I: IntoIterator<Item = &'a Value>,
+{
+    let mut result = Vec::new();
 
-        other => {
-            return Err(format!(
-                "expected List, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let mut values = Vec::with_capacity(list.len());
-
-    for value in list.iter() {
+    for value in values {
         match value {
-            Value::Int(v) => values.push(*v as f64),
-            Value::Float(v) => values.push(*v),
+            Value::Int(v) =>
+                result.push(*v as f64),
+
+            Value::Float(v) =>
+                result.push(*v),
+
+            Value::Null => {
+                // ignore
+            }
 
             other => {
                 return Err(format!(
@@ -30,14 +29,40 @@ pub(crate) fn collect_numbers(
         }
     }
 
-    if values.is_empty() {
+    if result.is_empty() {
         return Err(
-            "statistical function requires a non-empty List"
-                .into()
+            "no numeric observations".into()
         );
     }
 
-    Ok(values)
+    Ok(result)
+}
+
+pub(crate) fn collect_numbers(
+    value: &Value,
+) -> Result<Vec<f64>, String> {
+    match value {
+        Value::List(list) => {
+            let list = list.borrow();
+
+            collect_numeric_values(
+                list.iter()
+            )
+        }
+
+        Value::Series(series) => {
+            collect_numeric_values(
+                series.data().iter()
+            )
+        }
+
+        other => {
+            Err(format!(
+                "expected List or Series, got {}",
+                other.type_name()
+            ))
+        }
+    }
 }
 
 pub fn sum(

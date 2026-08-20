@@ -129,12 +129,13 @@ impl Parser {
             TokenKind::Break => {
                 let t = self.eat();
                 Ok(Expr::new(ExprKind::Break, t.span))
-            
             }
+
             TokenKind::Return => self.parse_return(),
             TokenKind::Drop => self.parse_drop(),
             TokenKind::Let => self.parse_let(),
             TokenKind::Struct => self.parse_struct(), 
+            TokenKind::Import => self.parse_import(),
 
             _ => self.parse_or(),
         }
@@ -300,6 +301,68 @@ impl Parser {
                 methods,
             },
             start.join(close),
+        ))
+    }
+
+    fn parse_import(&mut self) -> Result<Expr> {
+        let start =
+            self.expect(TokenKind::Import)?.span;
+
+        let first = self.peek().clone();
+
+        let first_name =
+            match first.kind {
+                TokenKind::Ident(name) => {
+                    self.eat();
+                    name
+                }
+
+                _ => {
+                    return Err(
+                        Error::parse(
+                            "import expects a module name",
+                            first.span,
+                        )
+                    );
+                }
+            };
+
+        let mut parts =
+            vec![first_name];
+
+        let mut end_span =
+            first.span;
+
+        while self.eat_if(TokenKind::Dot) {
+            let token =
+                self.peek().clone();
+
+            let name =
+                match token.kind {
+                    TokenKind::Ident(name) => {
+                        self.eat();
+                        name
+                    }
+
+                    _ => {
+                        return Err(
+                            Error::parse(
+                                "expected module name after '.'",
+                                token.span,
+                            )
+                        );
+                    }
+                };
+
+            end_span =
+                end_span.join(token.span);
+
+            parts.push(name);
+        }
+
+        Ok(Expr::new(
+            ExprKind::Import(parts),
+            start.join(end_span),
         ))
     }
 
@@ -627,6 +690,10 @@ impl Parser {
             TokenKind::Str(s) => { self.eat(); Ok(Expr::new(ExprKind::Str(s), tok.span)) }
             TokenKind::Bool(b) => { self.eat(); Ok(Expr::new(ExprKind::Bool(b), tok.span)) }
             TokenKind::Ident(s) => { self.eat(); Ok(Expr::new(ExprKind::Ident(s), tok.span)) }
+            TokenKind::Null => { self.eat(); Ok(Expr::new(
+                ExprKind::Null,
+                tok.span,
+            ))}
             TokenKind::LParen => {
                 self.eat();
                 let e = self.parse_expr()?;
