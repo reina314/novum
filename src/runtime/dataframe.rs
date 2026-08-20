@@ -1,12 +1,15 @@
 use super::{
     Matrix,
     SeriesRef,
+    Object,
+    ObjectRef,
     Value,
 };
 
 use std::{
     collections::HashMap,
     fmt,
+    cell::RefCell,
     rc::Rc,
 };
 
@@ -97,6 +100,104 @@ impl DataFrame {
             .map(|&index| {
                 self.columns[index].clone()
             })
+    }
+
+    pub fn row(
+        &self,
+        index: usize,
+    ) -> Option<ObjectRef> {
+        if index >= self.nrows {
+            return None;
+        }
+
+        let mut object =
+            Object::new();
+
+        for column in &self.columns {
+            let value =
+                column.get(index)?;
+
+            object.set_field(
+                column.name().to_owned(),
+                value,
+            );
+        }
+
+        Some(
+            Rc::new(
+                RefCell::new(object)
+            )
+        )
+    }
+
+    pub fn take_rows(
+        &self,
+        indices: &[usize],
+    ) -> Result<Self, String> {
+        let mut columns =
+            Vec::with_capacity(
+                self.columns.len()
+            );
+
+        for column in &self.columns {
+            let mut values =
+                Vec::with_capacity(
+                    indices.len()
+                );
+
+            for &index in indices {
+                let value =
+                    column
+                        .get(index)
+                        .ok_or_else(|| {
+                            format!(
+                                "row index out of bounds: {}",
+                                index
+                            )
+                        })?;
+
+                values.push(value);
+            }
+
+            columns.push(
+                Rc::new(
+                    crate::runtime::Series::new(
+                        column.name().to_owned(),
+                        values,
+                    )
+                )
+            );
+        }
+
+        Self::from_series(columns)
+    }
+
+    pub fn filter_rows(
+        &self,
+        keep: &[bool],
+    ) -> Result<Self, String> {
+        if keep.len() != self.nrows {
+            return Err(
+                "filter mask length must equal DataFrame row count"
+                    .into()
+            );
+        }
+
+        let indices =
+            keep.iter()
+                .enumerate()
+                .filter_map(
+                    |(index, keep)| {
+                        if *keep {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    }
+                )
+                .collect::<Vec<_>>();
+
+        self.take_rows(&indices)
     }
 
     pub fn select(
@@ -199,6 +300,20 @@ impl DataFrame {
         }
 
         Matrix::from_rows(rows)
+    }
+
+    pub fn head(
+        &self,
+        n: usize,
+    ) -> Result<Self, String> {
+        let end =
+            n.min(self.nrows);
+
+        let indices =
+            (0..end)
+                .collect::<Vec<_>>();
+
+        self.take_rows(&indices)
     }
 
     pub fn fmt_display(

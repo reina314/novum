@@ -1,4 +1,4 @@
-# Novum v0.4.2
+# Novum v0.5.0
 
 ### For quick ideas, quick experiments, and quick results.
 
@@ -6,35 +6,25 @@ Novum is a lightweight programming language for small tasks, quick experiments, 
 
 ## Sample Code
 ```py
-struct Point {
-    x,
-    y,
+import csv
+import stats
 
-    move: |self, dx, dy| {
-        self.x = self.x + dx;
-        self.y = self.y + dy;
-    }
-}
+let df = csv.read("tests/data/experiment.csv")
 
-let A = matrix([
-    [1, 2, 3],
-    [4, 5, 6],
-    [7, 8, 9]
-]);
+print(df)
 
-let transform = |x| x * 2;
+let filtered =
+    df.filter(|row|
+        row.age >= 21
+    )
 
-let B = A[0..2, 1..3] * 2;
+let grouped =
+    filtered.group_by(
+        "condition"
+    )
 
-let p = Point(
-    transform(B[0, 0]),
-    transform(B[1, 1])
-);
+let summary =
+    grouped.mean("score")
 
-p.move(1, 1);
-
-welch_t(
-    [p.x, p.y, 5, 6, 7],
-    [8, 9, 10, 11, 12]
-)
+print(summary)
 ```

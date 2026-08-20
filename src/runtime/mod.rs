@@ -5,6 +5,7 @@ pub mod iterator;
 pub mod matrix;
 pub mod series;
 pub mod dataframe;
+pub mod grouped_dataframe;
 pub mod module;
 pub mod object;
 pub mod r#struct;
@@ -28,6 +29,10 @@ pub use series::{
 pub use dataframe::{
     DataFrame,
     DataFrameRef,
+};
+pub use grouped_dataframe::{
+    GroupedDataFrame,
+    GroupedDataFrameRef,
 };
 pub use module::{
     Module,

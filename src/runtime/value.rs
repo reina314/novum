@@ -7,6 +7,7 @@ use super::{
     MatrixRef,
     SeriesRef,
     DataFrameRef,
+    GroupedDataFrameRef,
     ModuleRef,
 };
 use std::{
@@ -32,6 +33,7 @@ pub enum Value {
     Matrix(MatrixRef),
     Series(SeriesRef),
     DataFrame(DataFrameRef),
+    GroupedDataFrame(GroupedDataFrameRef),
 
     Object(ObjectRef),
     Struct(StructRef),
@@ -48,6 +50,7 @@ pub enum Value {
     ObjectMethod(ObjectMethod),
     SeriesMethod(SeriesRef, String),
     DataFrameMethod(DataFrameRef, String),
+    GroupedDataFrameMethod(GroupedDataFrameRef, String,),
     
     Unit,
     Null,
@@ -66,6 +69,7 @@ impl Value {
             Self::Matrix(_) => "Matrix",
             Self::Series(_) => "Series",
             Self::DataFrame(_) => "DataFrame",
+            Self::GroupedDataFrame(_) => "GroupedDataFrame",
 
             Self::Object(_) => "Object",
             Self::Struct(_) => "Struct",
@@ -82,6 +86,7 @@ impl Value {
             Self::ObjectMethod(_) => "Method",
             Self::SeriesMethod(..) => "Method",
             Self::DataFrameMethod(..) => "Method",
+            Self::GroupedDataFrameMethod(..) => "Method",
 
             Self::Unit => "Unit",
             Self::Null => "Null",
@@ -152,6 +157,7 @@ impl fmt::Debug for Value {
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
             Self::Series(v) => write!(f, "{:?}", v),
             Self::DataFrame(df) => write!(f, "{:?}", df),
+            Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
@@ -168,6 +174,7 @@ impl fmt::Debug for Value {
             Self::ObjectMethod(method) => write!(f, "<object_method> {}", method.name),
             Self::SeriesMethod(_, name) => write!(f, "<series_method> {name}"),
             Self::DataFrameMethod(_, name) => write!(f, "<dataframe_method> {name}"),
+            Self::GroupedDataFrameMethod(_, name) => write!(f, "<grouped dataframe method {}>", name),
 
             Self::Unit => write!(f, "<unit>"),
             Self::Null => write!(f, "<null>"),
