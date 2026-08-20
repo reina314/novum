@@ -2,10 +2,9 @@ mod common;
 
 use common::{
     run,
-    assert_float_close,
 };
 use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Matrix};
+use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
@@ -32,6 +31,85 @@ fn function_arity_is_checked() {
     let program = parser.parse().unwrap();
     let mut interpreter = Interpreter::new();
     assert!(interpreter.eval_program(&program).is_err());
+}
+
+#[test]
+fn list_push_method() {
+    let result = run(
+        r#"
+        let xs = [1, 2]
+        xs.push(3)
+        xs
+        "#
+    );
+
+    match result {
+        Value::List(list) => {
+            let list =
+                list.borrow();
+
+            assert_eq!(
+                list.as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected List, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn list_pop_method() {
+    let result = run(
+        r#"
+        let xs = [1, 2, 3]
+        xs.pop()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn list_remove_method() {
+    let result = run(
+        r#"
+        let xs = [10, 20, 30]
+        xs.remove(1)
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn list_len_method() {
+    let result = run(
+        r#"
+        let xs = [10, 20, 30]
+        xs.len()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
 }
 
 #[test]
@@ -374,3 +452,46 @@ fn struct_method_updates_multiple_fields() {
         Value::Int(23)
     );
 }
+
+#[test]
+fn bound_method_keeps_receiver() {
+    let series =
+        Rc::new(
+            Series::new(
+                "score",
+                vec![
+                    Value::Int(1),
+                    Value::Int(2),
+                ],
+            )
+        );
+
+    let method =
+        BoundMethod::new(
+            MethodReceiver::Series(
+                series.clone()
+            ),
+            "to_list",
+        );
+
+    assert_eq!(
+        method.name(),
+        "to_list"
+    );
+
+    match method.receiver() {
+        MethodReceiver::Series(value) => {
+            assert!(
+                Rc::ptr_eq(
+                    value,
+                    &series
+                )
+            );
+        }
+
+        _ => panic!(
+            "unexpected receiver"
+        ),
+    }
+}
+

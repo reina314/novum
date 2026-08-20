@@ -4,9 +4,7 @@ use common::{
     run,
     assert_float_close,
 };
-use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Matrix};
-use std::{cell::RefCell, rc::Rc};
+use novum::runtime::{Value, Matrix};
 
 #[test]
 fn matrix_addition() {

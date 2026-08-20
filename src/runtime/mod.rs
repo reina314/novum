@@ -9,6 +9,7 @@ pub mod grouped_dataframe;
 pub mod module;
 pub mod object;
 pub mod r#struct;
+pub mod bound_method;
 pub mod value;
 
 pub use control::ControlFlow;
@@ -43,11 +44,14 @@ pub use module::{
 pub use object::{
     Object,
     ObjectRef,
-    ObjectMethod
 };
 pub use r#struct::{
     StructDefinition,
     StructRef
+};
+pub use bound_method::{
+    BoundMethod,
+    MethodReceiver,
 };
 pub use value::{
     Dict,

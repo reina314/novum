@@ -4,9 +4,8 @@ use common::{
     run,
     assert_float_close,
 };
-use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Matrix};
-use std::{cell::RefCell, rc::Rc};
+use novum::runtime::{Value};
+use std::{rc::Rc};
 
 #[test]
 fn csv_read() {
