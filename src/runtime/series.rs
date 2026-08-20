@@ -92,6 +92,48 @@ impl Series {
 
         Matrix::from_rows(rows)
     }
+
+    pub fn fmt_display(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        const MAX_ITEMS: usize = 10;
+
+        let data = self.data();
+
+        write!(f, "{}: [", self.name())?;
+
+        if data.len() <= MAX_ITEMS {
+            for (i, value) in data.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+
+                write!(f, "{value}")?;
+            }
+        } else {
+            let head = MAX_ITEMS / 2;
+            let tail = MAX_ITEMS - head;
+
+            // First half
+            for (i, value) in data.iter().take(head).enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+
+                write!(f, "{value}")?;
+            }
+
+            write!(f, ", ...")?;
+
+            // Last half
+            for value in data.iter().skip(data.len() - tail) {
+                write!(f, ", {value}")?;
+            }
+        }
+
+        write!(f, "]")
+    }
 }
 
 impl fmt::Debug for Series {

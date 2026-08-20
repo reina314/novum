@@ -200,6 +200,215 @@ impl DataFrame {
 
         Matrix::from_rows(rows)
     }
+
+    pub fn fmt_display(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        const MAX_ROWS: usize = 10;
+
+        let nrows = self.nrows();
+        let ncols = self.ncols();
+        let names = self.columns();
+
+        writeln!(
+            f,
+            "DataFrame ({} rows x {} columns)",
+            nrows,
+            ncols
+        )?;
+
+        #[derive(Clone, Copy)]
+        enum Align {
+            Left,
+            Right,
+            Center,
+        }
+
+        fn cell_text(value: Option<Value>) -> (String, Align) {
+            match value {
+                None => (
+                    "null".to_string(),
+                    Align::Center,
+                ),
+
+                Some(value) => {
+                    let align = match &value {
+                        Value::Int(_)
+                        | Value::Float(_) =>
+                            Align::Right,
+
+                        Value::Bool(_) =>
+                            Align::Center,
+
+                        Value::Str(_) =>
+                            Align::Left,
+
+                        _ =>
+                            Align::Left,
+                    };
+
+                    (value.to_string(), align)
+                }
+            }
+        }
+
+        // --------------------------------------------
+        // Rows
+        // --------------------------------------------
+
+        let rows: Vec<Option<usize>> =
+            if nrows <= MAX_ROWS {
+                (0..nrows).map(Some).collect()
+            } else {
+                let head = MAX_ROWS / 2;
+                let tail = MAX_ROWS - head;
+
+                let mut rows = Vec::with_capacity(MAX_ROWS + 1);
+
+                rows.extend((0..head).map(Some));
+                rows.push(None);
+                rows.extend(
+                    (nrows - tail..nrows).map(Some)
+                );
+
+                rows
+            };
+
+        // --------------------------------------------
+        // Cells
+        // --------------------------------------------
+
+        let cells: Vec<Vec<(String, Align)>> = rows
+            .iter()
+            .map(|row| {
+                match row {
+                    Some(row) => {
+                        (0..ncols)
+                            .map(|col| {
+                                cell_text(
+                                    self.columns[col].get(*row)
+                                )
+                            })
+                            .collect()
+                    }
+
+                    None => {
+                        (0..ncols)
+                            .map(|_| {
+                                (
+                                    "...".to_string(),
+                                    Align::Center,
+                                )
+                            })
+                            .collect()
+                    }
+                }
+            })
+            .collect();
+
+        // --------------------------------------------
+        // Column widths
+        // --------------------------------------------
+
+        let mut widths =
+            Vec::with_capacity(ncols);
+
+        for col in 0..ncols {
+            let mut width = names[col].len();
+
+            for row in &cells {
+                width = width.max(row[col].0.len());
+            }
+
+            widths.push(width);
+        }
+
+        // --------------------------------------------
+        // Header
+        // --------------------------------------------
+
+        for col in 0..ncols {
+            if col > 0 {
+                write!(f, " | ")?;
+            }
+
+            write!(
+                f,
+                "{:<width$}",
+                names[col],
+                width = widths[col]
+            )?;
+        }
+
+        writeln!(f)?;
+
+        // --------------------------------------------
+        // Separator
+        // --------------------------------------------
+
+        for col in 0..ncols {
+            if col > 0 {
+                write!(f, "-+-")?;
+            }
+
+            write!(
+                f,
+                "{:-<width$}",
+                "",
+                width = widths[col]
+            )?;
+        }
+
+        writeln!(f)?;
+
+        // --------------------------------------------
+        // Body
+        // --------------------------------------------
+
+        for row in &cells {
+            for col in 0..ncols {
+                if col > 0 {
+                    write!(f, " | ")?;
+                }
+
+                let (text, align) = &row[col];
+
+                match align {
+                    Align::Left => {
+                        write!(
+                            f,
+                            "{:<width$}",
+                            text,
+                            width = widths[col]
+                        )?;
+                    }
+
+                    Align::Right => {
+                        write!(
+                            f,
+                            "{:>width$}",
+                            text,
+                            width = widths[col]
+                        )?;
+                    }
+
+                    Align::Center => {
+                        write!(
+                            f,
+                            "{:^width$}",
+                            text,
+                            width = widths[col]
+                        )?;
+                    }
+                }
+            }
+
+            writeln!(f)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl fmt::Debug for DataFrame {
@@ -217,31 +426,5 @@ impl fmt::Debug for DataFrame {
                 &self.nrows,
             )
             .finish()
-    }
-}
-
-impl fmt::Display for DataFrame {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        writeln!(
-            f,
-            "DataFrame: {} rows × {} columns",
-            self.nrows(),
-            self.ncols()
-        )?;
-
-        for (i, name) in
-            self.columns().iter().enumerate()
-        {
-            if i > 0 {
-                write!(f, " | ")?;
-            }
-
-            write!(f, "{name}")?;
-        }
-
-        writeln!(f)
     }
 }
