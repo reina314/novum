@@ -6,7 +6,8 @@ fn collect_numeric_values<'a, I>(
 where
     I: IntoIterator<Item = &'a Value>,
 {
-    let mut result = Vec::new();
+    let mut result =
+        Vec::new();
 
     for value in values {
         match value {
@@ -17,7 +18,7 @@ where
                 result.push(*v),
 
             Value::Null => {
-                // ignore
+                // Missing value is omitted.
             }
 
             other => {

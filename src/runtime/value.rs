@@ -46,6 +46,8 @@ pub enum Value {
     
     ListMethod(List, String),
     ObjectMethod(ObjectMethod),
+    SeriesMethod(SeriesRef, String),
+    DataFrameMethod(DataFrameRef, String),
     
     Unit,
     Null,
@@ -78,6 +80,8 @@ impl Value {
 
             Self::ListMethod(..) => "Method",
             Self::ObjectMethod(_) => "Method",
+            Self::SeriesMethod(..) => "Method",
+            Self::DataFrameMethod(..) => "Method",
 
             Self::Unit => "Unit",
             Self::Null => "Null",
@@ -159,9 +163,12 @@ impl fmt::Debug for Value {
             Self::Func(v) => write!(f, "{v}"),
             Self::Iterator(_) => write!(f, "<iterator>"),
             Self::Builtin(_) => write!(f, "<builtin>"),
+            
             Self::ListMethod(_, name) => write!(f, "<list_method> {name}"),
             Self::ObjectMethod(method) => write!(f, "<object_method> {}", method.name),
-            
+            Self::SeriesMethod(_, name) => write!(f, "<series_method> {name}"),
+            Self::DataFrameMethod(_, name) => write!(f, "<dataframe_method> {name}"),
+
             Self::Unit => write!(f, "<unit>"),
             Self::Null => write!(f, "<null>"),
         }

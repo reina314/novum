@@ -1,12 +1,14 @@
-use super::Value;
+use super::{
+    Value,
+    Matrix
+};
 
 use std::{
     fmt,
     rc::Rc,
 };
 
-pub type SeriesRef =
-    Rc<Series>;
+pub type SeriesRef = Rc<Series>;
 
 #[derive(Clone)]
 pub struct Series {
@@ -40,10 +42,55 @@ impl Series {
         self.data.get(index).cloned()
     }
 
-    pub fn data(&self)
-        -> &[Value]
-    {
+    pub fn data(&self) -> &[Value] {
         &self.data
+    }
+
+    pub fn into_values(self) -> Vec<Value> {
+        self.data
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    pub fn to_matrix(
+        &self,
+    ) -> Result<Matrix, String> {
+        let values =
+            self.data()
+                .iter()
+                .map(|value| {
+                    match value {
+                        Value::Int(v) =>
+                            Ok(*v as f64),
+
+                        Value::Float(v) =>
+                            Ok(*v),
+
+                        Value::Null =>
+                            Err(format!(
+                                "Series '{}' contains Null",
+                                self.name()
+                            )),
+
+                        other =>
+                            Err(format!(
+                                "Series '{}' is not numeric; found {}",
+                                self.name(),
+                                other.type_name()
+                            )),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+        let rows =
+            values
+                .into_iter()
+                .map(|value| vec![value])
+                .collect();
+
+        Matrix::from_rows(rows)
     }
 }
 

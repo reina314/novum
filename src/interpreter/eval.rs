@@ -5,7 +5,7 @@ use crate::{
         Result, 
         StackFrame
     }, interpreter::operator, runtime::{
-        ControlFlow, Env, Function, IteratorObj, Module, ModuleContext, ModulePath, ModuleRef,StructDefinition, Value,
+        ControlFlow, Env, Function, IteratorObj, Module, ModuleContext, ModulePath, ModuleRef,StructDefinition, SeriesRef, DataFrameRef, Value,
     }, stdlib::{
         self, 
         general
@@ -2006,10 +2006,18 @@ impl Interpreter {
         }
     }
 
-    fn eval_call(&mut self, callee: &Expr, args: &[Expr], whole: &Expr) -> Result<ControlFlow> {
+    fn eval_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        whole: &Expr
+    ) -> Result<ControlFlow> {
         let callable = self.eval_value(callee)?;
-        let mut values = Vec::with_capacity(args.len());
-        for arg in args { values.push(self.eval_value(arg)?); }
+
+        let values =
+        args.iter()
+            .map(|arg| self.eval_value(arg))
+            .collect::<Result<Vec<_>>>()?;
 
         match callable {
             Value::Func(func) => self.call_function(func, values, whole),
@@ -2040,6 +2048,30 @@ impl Interpreter {
                 )
             }
             
+            Value::SeriesMethod(
+                series,
+                name,
+            ) => {
+                self.call_series_method(
+                    series,
+                    &name,
+                    values,
+                    whole,
+                )
+            }
+
+            Value::DataFrameMethod(
+                df,
+                name,
+            ) => {
+                self.call_dataframe_method(
+                    df,
+                    &name,
+                    values,
+                    whole,
+                )
+            }
+
             Value::Struct(definition) => {
                 let object = definition
                     .instantiate(values)
@@ -2132,33 +2164,60 @@ impl Interpreter {
                     })
             }
 
-            Value::DataFrame(df) => {
-                // Initially allow only properties.
+            Value::Series(series) => {
                 match name {
-                    "columns" => {
-                        let columns =
-                            df.columns()
-                                .into_iter()
-                                .map(|name| {
-                                    Value::Str(
-                                        Rc::new(name)
-                                    )
-                                })
-                                .collect::<Vec<_>>();
-
+                    "name" => {
                         Ok(
                             ControlFlow::Value(
-                                Value::List(
+                                Value::Str(
                                     Rc::new(
-                                        RefCell::new(
-                                            columns
-                                        )
+                                        series.name()
+                                            .to_owned()
                                     )
                                 )
                             )
                         )
                     }
 
+                    "len" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::Int(
+                                    series.len() as i64
+                                )
+                            )
+                        )
+                    }
+
+                    "to_list"
+                    | "to_matrix" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::SeriesMethod(
+                                    series.clone(),
+                                    name.to_owned(),
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "Series has no field or method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            Value::DataFrame(df) => {
+                match name {
                     "nrows" => {
                         Ok(
                             ControlFlow::Value(
@@ -2179,15 +2238,52 @@ impl Interpreter {
                         )
                     }
 
+                    "columns" => {
+                        let values =
+                            df.columns()
+                                .into_iter()
+                                .map(|name| {
+                                    Value::Str(
+                                        Rc::new(name)
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::List(
+                                    Rc::new(
+                                        RefCell::new(values)
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    "column"
+                    | "select"
+                    | "to_matrix" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::DataFrameMethod(
+                                    df.clone(),
+                                    name.to_owned(),
+                                )
+                            )
+                        )
+                    }
+
                     _ => {
-                        Err(self.error(
-                            ErrorKind::Runtime,
-                            format!(
-                                "DataFrame has no field '{}'",
-                                name
-                            ),
-                            whole,
-                        ))
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "DataFrame has no field or method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
                     }
                 }
             }
@@ -2222,6 +2318,288 @@ impl Interpreter {
             ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(ControlFlow::Value(v)),
             ControlFlow::Break => Err(self.error(ErrorKind::Control,"break outside loop",call_site)),
         }
+    }
+
+    fn call_series_method(
+        &mut self,
+        series: SeriesRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        if !args.is_empty() {
+            return Err(
+                self.error(
+                    ErrorKind::Arity,
+                    format!(
+                        "{}() expects no arguments",
+                        name
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        match name {
+            "to_list" => {
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    series.data()
+                                        .to_vec()
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                let matrix =
+                    series.to_matrix()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(matrix)
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Series has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_dataframe_method(
+        &mut self,
+        dataframe: DataFrameRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "column" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "column() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let column_name =
+                    match &args[0] {
+                        Value::Str(name) =>
+                            name.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "column() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let series =
+                    dataframe
+                        .column(column_name)
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "unknown DataFrame column '{}'",
+                                    column_name
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Series(series)
+                    )
+                )
+            }
+
+            "select" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "select() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let names =
+                    self.value_to_string_list(
+                        &args[0],
+                        whole,
+                    )?;
+
+                let selected =
+                    dataframe
+                        .select(&names)
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::DataFrame(
+                            Rc::new(selected)
+                        )
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_matrix() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let matrix =
+                    dataframe
+                        .to_matrix()
+                        .map_err(|message| {
+                            self.attach(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(matrix)
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "DataFrame has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_dataframe_method()`
+    fn value_to_string_list(
+        &self,
+        value: &Value,
+        whole: &Expr,
+    ) -> Result<Vec<String>> {
+        let list =
+            match value {
+                Value::List(list) =>
+                    list.borrow(),
+
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "expected List of Str, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        let mut result =
+            Vec::with_capacity(
+                list.len()
+            );
+
+        for value in list.iter() {
+            match value {
+                Value::Str(name) => {
+                    result.push(
+                        name.as_ref().clone()
+                    );
+                }
+
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "expected Str in column list, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     fn error(&self, kind: ErrorKind, message: impl Into<String>, expr: &Expr) -> Error {
