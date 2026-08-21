@@ -68,31 +68,89 @@ impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
+fn install_builtins(env: &mut Env,) {
+    for (name, value) 
+        in stdlib::builtins() {
+        env.define(name, value);
+    }
+}
+
+fn install_standard_enums(env: &mut Env,) {
+    // ---------------------------------------------------------
+    // Option
+    // ---------------------------------------------------------
+    let mut option =
+        RuntimeEnumDef::new("Option");
+
+    option
+        .add_variant(
+            "Some",
+            1,
+        )
+        .expect("valid Option");
+
+    option
+        .add_variant(
+            "None",
+            0,
+        )
+        .expect("valid Option");
+
+    env.define(
+        "Option",
+        Value::Enum(
+            Rc::new(option)
+        ),
+    );
+
+    // ---------------------------------------------------------
+    // Result
+    // ---------------------------------------------------------
+    let mut result =
+        RuntimeEnumDef::new("Result");
+
+    result
+        .add_variant(
+            "Ok",
+            1,
+        )
+        .expect("valid Result");
+
+    result
+        .add_variant(
+            "Err",
+            1,
+        )
+        .expect("valid Result");
+
+    env.define(
+        "Result",
+        Value::Enum(
+            Rc::new(result)
+        ),
+    );
+}
+
 impl Interpreter {
     pub fn new() -> Self {
-        let env = Env::global();
+        let mut env = Env::global();
+
+        install_builtins(&mut env);
+        install_standard_enums(&mut env);
 
         let project_root = std::env::current_dir()
             .expect(
                 "failed to determine current directory"
             );
 
-        let interpreter = Self { 
+        return Self { 
             env,
             stack: Vec::new(),
             loop_depth: 0,
             function_depth: 0,
             module_stack: Vec::new(),
             project_root,
-        };
-
-        for (name, value) 
-            in stdlib::builtins() 
-        {
-            interpreter.env.define(name, value);
         }
-        
-        interpreter
     }
 
     pub fn eval_program(
