@@ -312,27 +312,98 @@ pub fn r#typeof(args: Vec<Value>) -> Result<Value, String> {
     ))
 }
 
-pub fn iter(mut args: Vec<Value>) -> Result<Value,String> {
-    if args.len()!= 1 { 
+pub fn iter(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
         return Err(
-            "iter() takes exactly 1 argument".into()
-        ); 
-    
+            "iter() takes exactly 1 argument"
+                .into()
+        );
     }
-    match args.remove(0) {
-        Value::Iterator(it) => 
-            Ok(Value::Iterator(it)),
-        
-        Value::List(data) =>
-            Ok(Value::Iterator(IteratorObj::List{data,index:0})),
-        
-        Value::Str(s) =>
-            Ok(Value::Iterator(IteratorObj::Str{data:Rc::new(s.chars().collect()),index:0})),
-        
-        other =>
+
+    let value =
+        args.remove(0);
+
+    match value {
+        Value::Iterator(iterator) => {
+            Ok(
+                Value::Iterator(iterator)
+            )
+        }
+
+        Value::List(data) => {
+            Ok(
+                Value::Iterator(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::List {
+                                data,
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            )
+        }
+
+        Value::Str(string) => {
+            Ok(
+                Value::Iterator(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Str {
+                                data: Rc::new(
+                                    string
+                                        .chars()
+                                        .collect()
+                                ),
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            )
+        }
+
+        Value::Range(
+            start,
+            end,
+            inclusive,
+        ) => {
+            let end =
+                if inclusive {
+                    end.checked_add(1)
+                        .ok_or_else(|| {
+                            "inclusive range endpoint overflow"
+                                .to_owned()
+                        })?
+                } else {
+                    end
+                };
+
+            Ok(
+                Value::Iterator(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Range {
+                                current: start,
+                                end,
+                            }
+                        )
+                    )
+                )
+            )
+        }
+
+        other => {
             Err(
-                format!("{} is not iterable",other.type_name())
-            ),
+                format!(
+                    "{} is not iterable",
+                    other.type_name()
+                )
+            )
+        }
     }
 }
 

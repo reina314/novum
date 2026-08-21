@@ -1,6 +1,6 @@
 use super::{
     FuncRef,
-    IteratorObj,
+    IteratorRef,
     ObjectRef,
     StructRef,
     EnumRef,
@@ -51,7 +51,7 @@ pub enum Value {
     Range(i64, i64, bool),
     
     Func(FuncRef),
-    Iterator(IteratorObj),
+    Iterator(IteratorRef),
     Builtin(BuiltinFn),
 
     BoundMethod(BoundMethod),
@@ -122,8 +122,14 @@ impl Value {
 
     pub fn eq_values(a: &Self, b: &Self) -> Result<bool, String> {
         Ok(match (a, b) {
-            (Self::Int(x), Self::Int(y)) => x == y,
-            (Self::Float(x), Self::Float(y)) => x == y,
+            (
+                Self::Int(x),
+                Self::Int(y)
+            ) => x == y,
+            (
+                Self::Float(x),
+                Self::Float(y)
+            ) => x == y,
 
             (Self::Int(x), Self::Float(y)) => (*x as f64) == *y,
             (Self::Float(x), Self::Int(y)) => *x == (*y as f64),
@@ -131,7 +137,10 @@ impl Value {
             (Self::Str(x), Self::Str(y)) => x == y,
             (Self::Bool(x), Self::Bool(y)) => x == y,
 
-            (Self::Tuple(a), Self::Tuple(b),) => {
+            (// recursive element-wise
+                Self::Tuple(a),
+                Self::Tuple(b)
+            ) => {
                 if a.len() != b.len() {
                     false
                 } else {
@@ -144,9 +153,52 @@ impl Value {
                     true
                 }
             }
-            (Self::List(x), Self::List(y)) => Rc::ptr_eq(x, y),
-            (Self::Dict(x), Self::Dict(y)) => Rc::ptr_eq(x, y),
-            (Self::Matrix(a), Self::Matrix(b)) => Rc::ptr_eq(a, b),
+            
+            (// recursive element-wise
+                Self::List(x),
+                Self::List(y)
+            ) => {
+                let x = x.borrow();
+                let y = y.borrow();
+
+                Self::eq_slices(
+                    &x,
+                    &y,
+                )?
+            },
+
+            (// recursive key/value-wise
+                Self::Dict(x),
+                Self::Dict(y),
+            ) => {
+                let x = x.borrow();
+                let y = y.borrow();
+
+                if x.len() != y.len() {
+                    false
+                } else {
+                    for (key, value) in x.iter() {
+                        let Some(other) = y.get(key) else {
+                            return Ok(false);
+                        };
+
+                        if !Self::eq_values(
+                            value,
+                            other,
+                        )? {
+                            return Ok(false);
+                        }
+                    }
+
+                    true
+                }
+            }
+
+            (// recursive element-wise
+                Self::Matrix(a),
+                Self::Matrix(b)
+            ) => Rc::ptr_eq(a, b),
+
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
             (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
 
@@ -195,6 +247,23 @@ impl Value {
             
             _ => return Err(format!("comparison not defined between {} and {}", a.type_name(), b.type_name())),
         })
+    }
+
+    fn eq_slices(
+        a: &[Value],
+        b: &[Value],
+    ) -> Result<bool, String> {
+        if a.len() != b.len() {
+            return Ok(false);
+        }
+
+        for (x, y) in a.iter().zip(b.iter()) {
+            if !Self::eq_values(x, y)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }
 
@@ -427,5 +496,8 @@ fn format_float(value: f64) -> String {
 }
 
 impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool { Self::eq_values(self, other).unwrap_or(false) }
+    fn eq(&self, other: &Self) -> bool { 
+        Self::eq_values(self, other)
+            .unwrap_or(false) 
+    }
 }

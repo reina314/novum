@@ -91,6 +91,12 @@ pub enum ExprKind {
     Field(Box<Expr>, String),
     Index(Box<Expr>, IndexExpr),
 
+    Range {
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        inclusive: bool,
+    },
+
     Null,
     Unit,
 }

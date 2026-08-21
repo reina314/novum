@@ -1495,4 +1495,354 @@ fn let_pattern_mismatch() {
     );
 }
 
+#[test]
+fn list_iterator_next() {
+    let result =
+        run(
+            r#"
+            let it =
+                [1, 2, 3].iter()
+
+            it.next()
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(1)]
+            );
+        }
+
+        other => panic!(
+            "expected Option, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn list_range_expansion() {
+    let result =
+        run(
+            "[1..5]"
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other,
+        ),
+    }
+}
+
+#[test]
+fn iterator_map() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3]
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn iterator_map_filter_chain() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3, 4, 5]
+                .iter()
+                .map(|x| x * 2)
+                .filter(|x| x > 5)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(6),
+                    Value::Int(8),
+                    Value::Int(10),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_expression_collect() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .iter()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_iterator_map() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .map(|x| x * x)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(4),
+                    Value::Int(9),
+                    Value::Int(16),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_map_matches_explicit_iterator() {
+    let implicit =
+        run(
+            r#"
+            (1..5)
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    let explicit =
+        run(
+            r#"
+            (1..5)
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        implicit,
+        explicit,
+    );
+}
+
+#[test]
+fn range_expression() {
+    let result =
+        run(
+            "(1..5)"
+        );
+
+    assert_eq!(
+        result,
+        Value::Range(
+            1,
+            5,
+            false,
+        )
+    );
+}
+
+#[test]
+fn list_slice_range() {
+    let result =
+        run(
+            "[1,2,3,4,5][1..4]"
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other,
+        ),
+    }
+}
+
+#[test]
+fn inclusive_range_expression() {
+    let result =
+        run(
+            "(1..=5)"
+        );
+
+    assert_eq!(
+        result,
+        Value::Range(
+            1,
+            5,
+            true,
+        )
+    );
+}
+
+#[test]
+fn string_chars_iterator() {
+    let result =
+        run(
+            r#"
+            "abc"
+                .chars()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Str(
+                        Rc::new("a".into())
+                    ),
+                    Value::Str(
+                        Rc::new("b".into())
+                    ),
+                    Value::Str(
+                        Rc::new("c".into())
+                    ),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn string_chars_unicode() {
+    let result =
+        run(
+            r#"
+            "あいう"
+                .chars()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Str(
+                        Rc::new("あ".into())
+                    ),
+                    Value::Str(
+                        Rc::new("い".into())
+                    ),
+                    Value::Str(
+                        Rc::new("う".into())
+                    ),
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected List, got {:?}",
+                other
+            );
+        }
+    }
+}
+
 

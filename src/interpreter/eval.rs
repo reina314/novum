@@ -1,51 +1,17 @@
 use crate::{
-    stdlib,
-    Lexer, 
-    Parser, 
-    interpreter::operator,
-    error::{
+    Lexer, Parser, error::{
         Error, 
         ErrorKind, 
         Result, 
         StackFrame
-    }, 
-    runtime::{
-        Env, 
-        Value,
-        Function, 
-        ControlFlow, 
-        IteratorObj,
-        List,
-        Module, 
-        ModuleContext, 
-        ModulePath, 
-        ModuleRef,
-        ObjectRef,
-        StructDefinition,
-        EnumValue,
-        EnumValueRef,
-        EnumDef as RuntimeEnumDef,
-        EnumConstructor,
-        Series,
-        SeriesRef, 
-        DataFrameRef,
-        GroupedDataFrame,
-        GroupedDataFrameRef,
-        BoundMethod,
-        MethodReceiver,
-    }, 
-    syntax::{
-        ast::{
+    }, interpreter::operator, runtime::{
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+    }, stdlib, syntax::{
+        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, ast::{
             EnumDef as AstEnumDef,
             MatchArm,
             Pattern,
-        },
-        BinOp, 
-        Expr, 
-        ExprKind, 
-        IndexExpr, 
-        ListItem, 
-        Program
+        }
     },
 };
 use std::{
@@ -153,6 +119,217 @@ impl Interpreter {
         }
     }
 
+    fn next_iterator_value(
+        &mut self,
+        iterator: &mut IteratorObj,
+        whole: &Expr,
+    ) -> Result<Option<Value>> {
+        match iterator {
+            IteratorObj::List {
+                data,
+                index,
+            } => {
+                let value =
+                    data.borrow()
+                        .get(*index)
+                        .cloned();
+
+                if value.is_some() {
+                    *index += 1;
+                }
+
+                Ok(value)
+            }
+
+            IteratorObj::Str {
+                data,
+                index,
+            } => {
+                let value =
+                    data.get(*index)
+                        .copied();
+
+                match value {
+                    Some(ch) => {
+                        *index += 1;
+
+                        Ok(
+                            Some(
+                                Value::Str(
+                                    Rc::new(
+                                        ch.to_string()
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+
+            IteratorObj::Range {
+                current,
+                end,
+            } => {
+                if *current >= *end {
+                    return Ok(None);
+                }
+
+                let value =
+                    *current;
+
+                *current += 1;
+
+                Ok(
+                    Some(
+                        Value::Int(value)
+                    )
+                )
+            }
+
+            IteratorObj::Map {
+                source,
+                function,
+            } => {
+                let input =
+                    {
+                        let mut source =
+                            source.borrow_mut();
+
+                        self.next_iterator_value(
+                            &mut source,
+                            whole,
+                        )?
+                    };
+
+                match input {
+                    Some(value) => {
+                        match self.call_function(
+                            function.clone(),
+                            vec![value],
+                            whole,
+                        )? {
+                            ControlFlow::Value(value) =>
+                                Ok(Some(value)),
+
+                            ControlFlow::Return(_) |
+                            ControlFlow::Break => {
+                                Err(
+                                    self.error(
+                                        ErrorKind::Runtime,
+                                        "iterator map callback produced invalid control flow",
+                                        whole,
+                                    )
+                                )
+                            }
+
+                            ControlFlow::Continue => todo!()
+                        }
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+
+            IteratorObj::Filter {
+                source,
+                predicate,
+            } => {
+                loop {
+                    let input =
+                        {
+                            let mut source =
+                                source.borrow_mut();
+
+                            self.next_iterator_value(
+                                &mut source,
+                                whole,
+                            )?
+                        };
+
+                    let value =
+                        match input {
+                            Some(value) =>
+                                value,
+
+                            None =>
+                                return Ok(None),
+                        };
+
+                    let result =
+                        self.call_function(
+                            predicate.clone(),
+                            vec![
+                                value.clone()
+                            ],
+                            whole,
+                        )?;
+
+                    match result {
+                        ControlFlow::Value(
+                            Value::Bool(true)
+                        ) => {
+                            return Ok(
+                                Some(value)
+                            );
+                        }
+
+                        ControlFlow::Value(
+                            Value::Bool(false)
+                        ) => {
+                            continue;
+                        }
+
+                        ControlFlow::Value(
+                            other
+                        ) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "filter predicate must return Bool, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+
+                        ControlFlow::Return(_) |
+                        ControlFlow::Break => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "iterator filter callback produced invalid control flow",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        ControlFlow::Continue => todo!(),
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_from_iterator(
+        &mut self,
+        iterator: &IteratorRef,
+        whole: &Expr,
+    ) -> Result<Option<Value>> {
+        let mut iterator =
+            iterator.borrow_mut();
+
+        self.next_iterator_value(
+            &mut iterator,
+            whole,
+        )
+    }
+
     pub fn eval_program(
         &mut self,
         program: &Program
@@ -179,6 +356,8 @@ impl Interpreter {
                             expr
                         )
                     ),
+                ControlFlow::Continue => 
+                    todo!(),
             }
         }
 
@@ -441,6 +620,19 @@ impl Interpreter {
 
             Try(inner) => self.eval_try(expr, inner),
 
+            Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.eval_range(
+                    start,
+                    end,
+                    *inclusive,
+                    expr,
+                )
+            }
+
             Block(exprs) => self.eval_block(exprs, true),
 
             Lambda(params, body) => Ok(ControlFlow::Value(Value::Func(Rc::new(Function {
@@ -471,6 +663,7 @@ impl Interpreter {
                     "break cannot appear here",
                     expr
                 )),
+            ControlFlow::Continue => todo!()
         }
     }
 
@@ -480,18 +673,50 @@ impl Interpreter {
             .ok_or_else(|| self.error(ErrorKind::Name, format!("{} is undefined", name), expr))
     }
 
-    fn eval_list(&mut self, items: &[ListItem], expr: &Expr) -> Result<ControlFlow> {
-        let mut values = Vec::new();
+    fn eval_list(
+        &mut self,
+        items: &[ListItem],
+        expr: &Expr,
+    ) -> Result<ControlFlow> {
+        let mut values =
+            Vec::new();
+
         for item in items {
             match item {
-                ListItem::Expr(e) => values.push(self.eval_value(e)?),
+                ListItem::Expr(item) => {
+                    values.push(
+                        self.eval_value(item)?
+                    );
+                }
+
                 ListItem::Range(range) => {
-                    let mut it = self.eval_iterable(range, expr)?;
-                    while let Some(v) = it.next() { values.push(v); }
+                    let iterator =
+                        self.eval_iterable(
+                            range,
+                            expr,
+                        )?;
+
+                    while let Some(value) =
+                        self.next_from_iterator(
+                            &iterator,
+                            expr,
+                        )?
+                    {
+                        values.push(value);
+                    }
                 }
             }
         }
-        Ok(ControlFlow::Value(Value::List(Rc::new(RefCell::new(values)))))
+
+        Ok(
+            ControlFlow::Value(
+                Value::List(
+                    Rc::new(
+                        RefCell::new(values)
+                    )
+                )
+            )
+        )
     }
 
     fn eval_dict(
@@ -1051,9 +1276,10 @@ impl Interpreter {
         pattern: &Pattern,
         value_expr: &Expr,
     ) -> Result<ControlFlow> {
-        // =========================================================
-        // 1. Evaluate initializer.
-        // =========================================================
+        // ---------------------------------------------------------
+        // 1. Evaluate the initializer.
+        // ---------------------------------------------------------
+
         let value =
             match self.eval(value_expr)? {
                 ControlFlow::Value(value) =>
@@ -1063,9 +1289,10 @@ impl Interpreter {
                     return Ok(other),
             };
 
-        // =========================================================
-        // 2. Match pattern and collect bindings.
-        // =========================================================
+        // ---------------------------------------------------------
+        // 2. Match the pattern and collect all bindings first.
+        // ---------------------------------------------------------
+
         let mut bindings =
             HashMap::new();
 
@@ -1093,35 +1320,19 @@ impl Interpreter {
             );
         }
 
-        // =========================================================
-        // 3. Check duplicate bindings inside the pattern.
-        //=========================================================
-        for name in bindings.keys() {
-            if self.env.contains_local(name) {
-                return Err(
-                    self.error(
-                        ErrorKind::Name,
-                        format!(
-                            "variable '{}' is already defined in the current scope",
-                            name
-                        ),
-                        value_expr,
-                    )
-                );
-            }
-        }
+        // ---------------------------------------------------------
+        // 3. Commit all bindings atomically.
+        // ---------------------------------------------------------
 
-        // =========================================================
-        // 4. Commit all bindings.
-        // =========================================================
-        for (name, value)
-            in bindings
-        {
-            self.env.define(
-                name,
-                value,
-            );
-        }
+        self.env
+            .declare_all(bindings)
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Name,
+                    message,
+                    value_expr,
+                )
+            })?;
 
         Ok(
             ControlFlow::Value(
@@ -1852,14 +2063,14 @@ impl Interpreter {
                 ))
             }
 
-            (
-                Value::Matrix(_),
-                IndexExpr::Tuple(_),
-            ) => {
-                unreachable!(
-                    "Matrix tuple indexing should have been handled above"
-                )
-            }
+            // (
+            //     Value::Matrix(_),
+            //     IndexExpr::Tuple(_),
+            // ) => {
+            //     unreachable!(
+            //         "Matrix tuple indexing should have been handled above"
+            //     )
+            // }
 
             // =========================================================
             // Tuple indexing on unsupported values
@@ -2196,49 +2407,38 @@ impl Interpreter {
         &mut self,
         index: &IndexExpr,
         whole: &Expr,
-    ) -> Result<IteratorObj> {
+    ) -> Result<IteratorRef> {
         match index {
+            // =====================================================
+            // Single iterable expression
+            // =====================================================
             IndexExpr::Single(expr) => {
-                match self.eval_value(expr)? {
-                    Value::Iterator(it) => Ok(it),
+                let value =
+                    self.eval_value(expr)?;
 
-                    Value::List(data) => {
-                        Ok(IteratorObj::List {
-                            data,
-                            index: 0,
-                        })
-                    }
-
-                    Value::Str(s) => {
-                        Ok(IteratorObj::Str {
-                            data: Rc::new(
-                                s.chars().collect()
-                            ),
-                            index: 0,
-                        })
-                    }
-
-                    other => Err(self.error(
-                        ErrorKind::Type,
-                        format!(
-                            "{} is not iterable",
-                            other.type_name()
-                        ),
-                        whole,
-                    )),
-                }
+                self.make_iterator(
+                    value,
+                    whole,
+                )
             }
 
+            // =====================================================
+            // Range
+            // =====================================================
             IndexExpr::Range {
                 start,
                 end,
                 inclusive,
             } => {
-                let start_value =
+                let start =
                     match start {
                         Some(expr) => {
                             match self.eval_value(expr)? {
-                                Value::Int(v) if v >= 0 => v,
+                                Value::Int(value)
+                                    if value >= 0 =>
+                                {
+                                    value
+                                }
 
                                 Value::Int(_) => {
                                     return Err(
@@ -2268,11 +2468,12 @@ impl Interpreter {
                         None => 0,
                     };
 
-                let mut end_value =
+                let mut end =
                     match end {
                         Some(expr) => {
                             match self.eval_value(expr)? {
-                                Value::Int(v) => v,
+                                Value::Int(value) =>
+                                    value,
 
                                 other => {
                                     return Err(
@@ -2293,9 +2494,8 @@ impl Interpreter {
                     };
 
                 if *inclusive {
-                    end_value =
-                        end_value
-                            .checked_add(1)
+                    end =
+                        end.checked_add(1)
                             .ok_or_else(|| {
                                 self.error(
                                     ErrorKind::Overflow,
@@ -2305,18 +2505,116 @@ impl Interpreter {
                             })?;
                 }
 
-                Ok(IteratorObj::Range {
-                    current: start_value,
-                    end: end_value,
-                })
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Range {
+                                current: start,
+                                end,
+                            }
+                        )
+                    )
+                )
             }
 
+            // =====================================================
+            // Tuple index expression is not an iterable itself
+            // =====================================================
             IndexExpr::Tuple(_) => {
-                Err(self.error(
-                    ErrorKind::Type,
-                    "tuple index is not iterable",
-                    whole,
-                ))
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "tuple index is not iterable",
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `eval_iterable()`
+    fn make_iterator(
+        &mut self,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        match value {
+            Value::Iterator(iterator) => {
+                Ok(iterator)
+            }
+
+            Value::List(data) => {
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::List {
+                                data,
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            }
+
+            Value::Str(string) => {
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Str {
+                                data: Rc::new(
+                                    string
+                                        .chars()
+                                        .collect()
+                                ),
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            }
+
+            Value::Range(
+                start,
+                end,
+                inclusive,
+            ) => {
+                let end =
+                    if inclusive {
+                        end.checked_add(1)
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Overflow,
+                                    "inclusive range endpoint overflow",
+                                    whole,
+                                )
+                            })?
+                    } else {
+                        end
+                    };
+
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Range {
+                                current: start,
+                                end,
+                            }
+                        )
+                    )
+                )
+            }
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "{} is not iterable",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
             }
         }
     }
@@ -2333,9 +2631,14 @@ impl Interpreter {
             loop {
                 match self.eval_value(cond)? {
                     Value::Bool(true) => match self.eval(body)? {
-                        ControlFlow::Value(v) => last=v,
-                        ControlFlow::Break => break,
-                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                        ControlFlow::Value(v) 
+                            => last=v,
+                        ControlFlow::Break 
+                            => break,
+                        ControlFlow::Return(v) 
+                            => return Ok(ControlFlow::Return(v)),
+                        ControlFlow::Continue 
+                            => todo!(),
                     }
                     Value::Bool(false) => break,
                     other => return Err(self.error(ErrorKind::Type, format!("'while' expects Bool, got {}",other.type_name()),whole)),
@@ -2352,26 +2655,95 @@ impl Interpreter {
         name: &str,
         iterable: &IndexExpr,
         body: &Expr,
-        whole: &Expr
+        whole: &Expr,
     ) -> Result<ControlFlow> {
-        let mut iterator = self.eval_iterable(iterable, whole)?;
-        let old_env = self.env.clone();
-        self.env = self.env.child();
+        let iterator =
+            self.eval_iterable(
+                iterable,
+                whole,
+            )?;
+
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            self.env.child();
+
         self.loop_depth += 1;
+
         let result = (|| {
-            let mut last = Value::Unit;
-            while let Some(value) = iterator.next() {
-                self.env.define(name, value);
+            // Declare loop variable once.
+            self.env
+                .declare(
+                    name.to_owned(),
+                    Value::Unit,
+                )
+                .map_err(|message| {
+                    self.error(
+                        ErrorKind::Name,
+                        message,
+                        whole,
+                    )
+                })?;
+
+            let mut last =
+                Value::Unit;
+
+            while let Some(value) =
+                self.next_from_iterator(
+                    &iterator,
+                    whole,
+                )?
+            {
+                let assigned =
+                    self.env.assign_local(
+                        name,
+                        value,
+                    );
+
+                if !assigned {
+                    return Err(
+                        self.error(
+                            ErrorKind::Runtime,
+                            format!(
+                                "loop variable '{}' disappeared from scope",
+                                name
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
                 match self.eval(body)? {
-                    ControlFlow::Value(v) => last=v,
-                    ControlFlow::Break => break,
-                    ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
+
+                    ControlFlow::Break => {
+                        break;
+                    }
+
+                    ControlFlow::Return(value) => {
+                        return Ok(
+                            ControlFlow::Return(value)
+                        );
+                    }
+
+                    ControlFlow::Continue => {
+                        continue;
+                    }
                 }
             }
-            Ok(ControlFlow::Value(last))
+
+            Ok(
+                ControlFlow::Value(last)
+            )
         })();
+
         self.loop_depth -= 1;
-        self.env = old_env;
+        self.env =
+            old_env;
+
         result
     }
 
@@ -2585,6 +2957,72 @@ impl Interpreter {
                 )
             }
         }
+    }
+
+    fn eval_range(
+        &mut self,
+        start: &Option<Box<Expr>>,
+        end: &Option<Box<Expr>>,
+        inclusive: bool,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let start =
+            match start {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) => value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range start expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => 0,
+            };
+
+        let end =
+            match end {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) => value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range end expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => i64::MAX,
+            };
+
+        Ok(
+            ControlFlow::Value(
+                Value::Range(
+                    start,
+                    end,
+                    inclusive,
+                )
+            )
+        )
     }
 
     fn eval_block(
@@ -2992,6 +3430,46 @@ impl Interpreter {
         let value = self.eval_value(obj)?;
 
         match value {
+            Value::Str(string) => {
+                match name {
+                    "chars"
+                    | "len"
+                    | "trim"
+                    | "to_upper"
+                    | "to_lower"
+                    | "contains"
+                    | "starts_with"
+                    | "ends_with"
+                    | "split" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::Str(
+                                            string.clone()
+                                        ),
+                                        name,
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "Str has no field or method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
             Value::List(list) => {
                 Ok(ControlFlow::Value(
                     Value::BoundMethod(
@@ -3313,6 +3791,83 @@ impl Interpreter {
                 }
             }
 
+            Value::Iterator(iterator) => {
+                match name {
+                    "next"
+                    | "map"
+                    | "filter"
+                    | "collect" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::Iterator(
+                                            iterator.clone()
+                                        ),
+                                        name,
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "Iterator has no method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            Value::Range(
+                start,
+                end,
+                inclusive,
+            ) => {
+                match name {
+                    "iter"
+                    | "map"
+                    | "filter"
+                    | "collect"
+                    => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::Range {
+                                            start,
+                                            end,
+                                            inclusive,
+                                        },
+                                        name,
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "Range has no method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+            
             other => Err(self.error(
                 ErrorKind::Runtime,
                 format!(
@@ -3445,6 +4000,8 @@ impl Interpreter {
                 "break outside loop",
                 call_site,
             )),
+
+            ControlFlow::Continue => todo!(),
         }
     }
 
@@ -3455,6 +4012,15 @@ impl Interpreter {
         whole: &Expr,
     ) -> Result<ControlFlow> {
         match method.receiver() {
+            MethodReceiver::Str(string) => {
+                self.call_string_method(
+                    string.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+            
             MethodReceiver::List(list) => {
                 self.call_list_method(
                     list.clone(),
@@ -3464,9 +4030,33 @@ impl Interpreter {
                 )
             }
 
+            MethodReceiver::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.call_range_method(
+                    *start,
+                    *end,
+                    *inclusive,
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
             MethodReceiver::Object(object) => {
                 self.call_object_method(
                     object.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Iterator(iterator) => {
+                self.call_iterator_method(
+                    iterator.clone(),
                     method.name(),
                     args,
                     whole,
@@ -3502,6 +4092,219 @@ impl Interpreter {
         }
     }
 
+    fn call_string_method(
+        &mut self,
+        string: Rc<String>,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            // =====================================================
+            // chars()
+            // =====================================================
+
+            "chars" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "chars() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let chars =
+                    string
+                        .chars()
+                        .collect::<Vec<char>>();
+
+                let iterator =
+                    IteratorObj::Str {
+                        data: Rc::new(chars),
+                        index: 0,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    iterator
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // len()
+            // =====================================================
+
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            string.chars().count()
+                                as i64
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // trim()
+            // =====================================================
+
+            "trim" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "trim() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                string.trim()
+                                    .to_owned()
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // to_upper()
+            // =====================================================
+
+            "to_upper" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_upper() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                string
+                                    .to_uppercase()
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // to_lower()
+            // =====================================================
+
+            "to_lower" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_lower() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                string
+                                    .to_lowercase()
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // contains()
+            // =====================================================
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let needle =
+                    match &args[0] {
+                        Value::Str(value) =>
+                            value.as_ref(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "contains() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            string.contains(
+                                needle
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Str has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
     fn call_list_method(
         &mut self,
         list: List,
@@ -3513,7 +4316,6 @@ impl Interpreter {
             // =====================================================
             // push(value)
             // =====================================================
-
             "push" => {
                 if args.len() != 1 {
                     return Err(self.error(
@@ -3538,7 +4340,6 @@ impl Interpreter {
             // =====================================================
             // pop()
             // =====================================================
-
             "pop" => {
                 if !args.is_empty() {
                     return Err(self.error(
@@ -3561,7 +4362,6 @@ impl Interpreter {
             // =====================================================
             // remove(index)
             // =====================================================
-
             "remove" => {
                 if args.len() != 1 {
                     return Err(self.error(
@@ -3624,7 +4424,6 @@ impl Interpreter {
             // =====================================================
             // len()
             // =====================================================
-
             "len" => {
                 if !args.is_empty() {
                     return Err(self.error(
@@ -3647,9 +4446,34 @@ impl Interpreter {
             }
 
             // =====================================================
+            // iter()
+            // =====================================================
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(RefCell::new(IteratorObj::List {
+                                data: list.clone(),
+                                index: 0,
+                            }))
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
             // Unknown method
             // =====================================================
-
             _ => {
                 Err(self.error(
                     ErrorKind::Runtime,
@@ -3661,6 +4485,109 @@ impl Interpreter {
                 ))
             }
         }
+    }
+
+    fn call_range_method(
+        &mut self,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            self.make_range_iterator(
+                                start,
+                                end,
+                                inclusive,
+                                whole,
+                            )?
+                        )
+                    )
+                )
+            }
+
+            "map"
+            | "filter"
+            | "collect" => {
+                let iterator =
+                    self.make_range_iterator(
+                        start,
+                        end,
+                        inclusive,
+                        whole,
+                    )?;
+
+                self.call_iterator_method(
+                    iterator,
+                    name,
+                    args,
+                    whole,
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Range has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_range_method()`
+    fn make_range_iterator(
+        &mut self,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        let end =
+            if inclusive {
+                end.checked_add(1)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Overflow,
+                            "inclusive range endpoint overflow",
+                            whole,
+                        )
+                    })?
+            } else {
+                end
+            };
+
+        Ok(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Range {
+                        current: start,
+                        end,
+                    }
+                )
+            )
+        )
     }
 
     fn call_object_method(
@@ -3719,6 +4646,256 @@ impl Interpreter {
             call_args,
             whole,
         )
+    }
+
+    fn call_iterator_method(
+        &mut self,
+        iterator: IteratorRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            // =====================================================
+            // next()
+            // =====================================================
+            "next" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "next() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let value =
+                    {
+                        let mut iterator =
+                            iterator.borrow_mut();
+
+                        self.next_iterator_value(
+                            &mut iterator,
+                            whole,
+                        )?
+                    };
+
+                match value {
+                    Some(value) => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::EnumValue(
+                                    Rc::new(
+                                        EnumValue::new(
+                                            "Option",
+                                            "Some",
+                                            vec![value],
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    None => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::EnumValue(
+                                    Rc::new(
+                                        EnumValue::new(
+                                            "Option",
+                                            "None",
+                                            vec![],
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // map(fn)
+            // =====================================================
+            "map" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "map() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let function =
+                    match args
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                    {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "map() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let mapped =
+                    IteratorObj::Map {
+                        source:
+                            iterator.clone(),
+
+                        function,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    mapped
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // filter(fn)
+            // =====================================================
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "filter() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let predicate =
+                    match args
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                    {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "filter() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let filtered =
+                    IteratorObj::Filter {
+                        source:
+                            iterator.clone(),
+
+                        predicate,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    filtered
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =====================================================
+            // collect()
+            // =====================================================
+            "collect" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "collect() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut values =
+                    Vec::new();
+
+                loop {
+                    let value =
+                        {
+                            let mut iterator =
+                                iterator.borrow_mut();
+
+                            self.next_iterator_value(
+                                &mut iterator,
+                                whole,
+                            )?
+                        };
+
+                    match value {
+                        Some(value) =>
+                            values.push(value),
+
+                        None =>
+                            break,
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Iterator has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
     }
 
     fn call_series_method(
