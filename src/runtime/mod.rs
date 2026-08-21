@@ -19,7 +19,10 @@ pub use function::{
     FuncRef,
     Function
 };
-pub use iterator::IteratorObj;
+pub use iterator::{
+    IteratorObj,
+    IteratorRef,
+};
 pub use matrix::{
     Matrix,
     MatrixRef

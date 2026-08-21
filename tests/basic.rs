@@ -182,6 +182,48 @@ fn duplicate_let_is_error() {
 }
 
 #[test]
+fn nested_scope_shadowing_is_allowed() {
+    let result =
+        run(
+            r#"
+            let x = 10
+
+            {
+                let x = 20
+                x
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn outer_binding_survives_inner_shadowing() {
+    let result =
+        run(
+            r#"
+            let x = 10
+
+            {
+                let x = 20
+                x
+            }
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
 fn let_allows_shadowing_in_child_scope() {
     assert_eq!(
         run(
@@ -1255,5 +1297,552 @@ fn try_option_none() {
     }
 }
 
+#[test]
+fn tuple_value() {
+    let result =
+        run(
+            "(10, 20)"
+        );
+
+    match result {
+        Value::Tuple(values) => {
+            assert_eq!(
+                values.as_ref(),
+                &[
+                    Value::Int(10),
+                    Value::Int(20),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected Tuple, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn tuple_index() {
+    let result =
+        run(
+            r#"
+            let p = (10, 20)
+            p.1
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn match_tuple() {
+    let result =
+        run(
+            r#"
+            match (10, 20) {
+                (x, y) =>
+                    x + y
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn match_nested_tuple() {
+    let result =
+        run(
+            r#"
+            match ((1, 2), 3) {
+                ((a, b), c) =>
+                    a + b + c
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn match_tuple_and_enum() {
+    let result =
+        run(
+            r#"
+            enum Point {
+                Cartesian(x, y)
+                Empty
+            }
+
+            let p =
+                Point.Cartesian(10, 20)
+
+            match p {
+                Point.Cartesian(x, y) =>
+                    x + y
+
+                Point.Empty =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn let_tuple_destructuring() {
+    let result =
+        run(
+            r#"
+            let (x, y) =
+                (10, 20)
+
+            x + y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn let_nested_tuple_destructuring() {
+    let result =
+        run(
+            r#"
+            let ((a, b), c) =
+                ((1, 2), 3)
+
+            a + b + c
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn let_enum_destructuring() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let Result.Ok(x) =
+                Result.Ok(42)
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn let_wildcard_pattern() {
+    let result =
+        run(
+            r#"
+            let (_, x) =
+                (10, 20)
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn let_pattern_mismatch() {
+    let result =
+        run_result(
+            r#"
+            let (x, y) =
+                (1, 2, 3)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn list_iterator_next() {
+    let result =
+        run(
+            r#"
+            let it =
+                [1, 2, 3].iter()
+
+            it.next()
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(1)]
+            );
+        }
+
+        other => panic!(
+            "expected Option, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn list_range_expansion() {
+    let result =
+        run(
+            "[1..5]"
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other,
+        ),
+    }
+}
+
+#[test]
+fn iterator_map() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3]
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn iterator_map_filter_chain() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3, 4, 5]
+                .iter()
+                .map(|x| x * 2)
+                .filter(|x| x > 5)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(6),
+                    Value::Int(8),
+                    Value::Int(10),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_expression_collect() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .iter()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_iterator_map() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .map(|x| x * x)
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(1),
+                    Value::Int(4),
+                    Value::Int(9),
+                    Value::Int(16),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn range_map_matches_explicit_iterator() {
+    let implicit =
+        run(
+            r#"
+            (1..5)
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    let explicit =
+        run(
+            r#"
+            (1..5)
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        implicit,
+        explicit,
+    );
+}
+
+#[test]
+fn range_expression() {
+    let result =
+        run(
+            "(1..5)"
+        );
+
+    assert_eq!(
+        result,
+        Value::Range(
+            1,
+            5,
+            false,
+        )
+    );
+}
+
+#[test]
+fn list_slice_range() {
+    let result =
+        run(
+            "[1,2,3,4,5][1..4]"
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Int(2),
+                    Value::Int(3),
+                    Value::Int(4),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other,
+        ),
+    }
+}
+
+#[test]
+fn inclusive_range_expression() {
+    let result =
+        run(
+            "(1..=5)"
+        );
+
+    assert_eq!(
+        result,
+        Value::Range(
+            1,
+            5,
+            true,
+        )
+    );
+}
+
+#[test]
+fn string_chars_iterator() {
+    let result =
+        run(
+            r#"
+            "abc"
+                .chars()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Str(
+                        Rc::new("a".into())
+                    ),
+                    Value::Str(
+                        Rc::new("b".into())
+                    ),
+                    Value::Str(
+                        Rc::new("c".into())
+                    ),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn string_chars_unicode() {
+    let result =
+        run(
+            r#"
+            "あいう"
+                .chars()
+                .collect()
+            "#
+        );
+
+    match result {
+        Value::List(list) => {
+            assert_eq!(
+                list.borrow().as_slice(),
+                &[
+                    Value::Str(
+                        Rc::new("あ".into())
+                    ),
+                    Value::Str(
+                        Rc::new("い".into())
+                    ),
+                    Value::Str(
+                        Rc::new("う".into())
+                    ),
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected List, got {:?}",
+                other
+            );
+        }
+    }
+}
 
 

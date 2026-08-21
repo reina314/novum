@@ -1,3 +1,5 @@
+use std::todo;
+
 use novum::{
     Interpreter,
     Lexer,
@@ -57,6 +59,8 @@ pub fn run_result(
                     None,
                 )
             ),
+
+        ControlFlow::Continue => todo!(),
     }
 }
 

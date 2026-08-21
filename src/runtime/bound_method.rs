@@ -4,17 +4,30 @@ use super::{
     List,
     ObjectRef,
     SeriesRef,
+    IteratorRef,
 };
 
-use std::fmt;
+use std::{
+    fmt,
+    rc::Rc,
+};
 
 #[derive(Clone)]
 pub enum MethodReceiver {
+    Str(Rc<String>),
     List(List),
+    
+    Range {
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    },
+
     Object(ObjectRef),
     Series(SeriesRef),
     DataFrame(DataFrameRef),
     GroupedDataFrame(GroupedDataFrameRef),
+    Iterator(IteratorRef),
 }
 
 #[derive(Clone)]

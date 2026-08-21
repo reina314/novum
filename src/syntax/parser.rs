@@ -155,46 +155,171 @@ impl Parser {
     fn parse_expr(&mut self) -> Result<Expr> { self.parse_assignment() }
 
     fn parse_assignment(&mut self) -> Result<Expr> {
-        let left = self.parse_control()?;
-        if self.peek().kind == TokenKind::Equals {
-            let eq = self.eat();
-            let right = self.parse_assignment()?;
-            let span = left.span.join(right.span);
+        let left =
+            self.parse_range()?;
+
+        if self.peek().kind
+            == TokenKind::Equals
+        {
+            let eq =
+                self.eat();
+
+            let right =
+                self.parse_assignment()?;
+
+            let span =
+                left.span.join(
+                    right.span
+                );
+
             return match left.kind {
                 ExprKind::Ident(name) => {
-                    Ok(Expr::new(
-                        ExprKind::Assign(
-                            name,
-                            Box::new(right)),
-                        span
-                    ))
+                    Ok(
+                        Expr::new(
+                            ExprKind::Assign(
+                                name,
+                                Box::new(right),
+                            ),
+                            span,
+                        )
+                    )
                 }
 
                 ExprKind::Index(obj, index) => {
-                    Ok(Expr::new(
-                        ExprKind::AssignIndex(
-                            obj,
-                            index,
-                            Box::new(right)),
-                        span
-                    ))
+                    Ok(
+                        Expr::new(
+                            ExprKind::AssignIndex(
+                                obj,
+                                index,
+                                Box::new(right),
+                            ),
+                            span,
+                        )
+                    )
                 }
 
                 ExprKind::Field(obj, name) => {
-                    Ok(Expr::new(
-                        ExprKind::AssignField(
-                            obj,
-                            name,
-                            Box::new(right),
-                        ),
-                        span,
-                    ))
+                    Ok(
+                        Expr::new(
+                            ExprKind::AssignField(
+                                obj,
+                                name,
+                                Box::new(right),
+                            ),
+                            span,
+                        )
+                    )
                 }
 
-                _ => Err(Error::parse("invalid assignment target", eq.span)),
+                _ => {
+                    Err(
+                        Error::parse(
+                            "invalid assignment target",
+                            eq.span,
+                        )
+                    )
+                }
             };
         }
+
         Ok(left)
+    }
+
+    fn parse_range(&mut self) -> Result<Expr> {
+        let left =
+            self.parse_control()?;
+
+        if !self.is_range_operator() {
+            return Ok(left);
+        }
+
+        let (
+            inclusive,
+            operator_span,
+            end,
+        ) =
+            self.parse_range_tail()?;
+
+        let end =
+            end.ok_or_else(|| {
+                Error::parse(
+                    "range expression requires an end value",
+                    operator_span,
+                )
+            })?;
+
+        let span =
+            left.span.join(
+                end.span
+            );
+
+        Ok(
+            Expr::new(
+                ExprKind::Range {
+                    start: Some(
+                        Box::new(left)
+                    ),
+                    end: Some(
+                        Box::new(end)
+                    ),
+                    inclusive,
+                },
+                span,
+            )
+        )
+    }
+
+    fn parse_range_tail(
+        &mut self,
+    ) -> Result<(bool, Span, Option<Expr>)> {
+        let operator =
+            self.peek().clone();
+
+        let inclusive =
+            match operator.kind {
+                TokenKind::DoubleDot => {
+                    self.eat();
+                    false
+                }
+
+                TokenKind::DoubleDotEq => {
+                    self.eat();
+                    true
+                }
+
+                _ => {
+                    return Err(
+                        Error::parse(
+                            "expected range operator",
+                            operator.span,
+                        )
+                    );
+                }
+            };
+
+        let end =
+            if self.is_expr_start() {
+                Some(
+                    self.parse_control()?
+                )
+            } else {
+                None
+            };
+
+        Ok((
+            inclusive,
+            operator.span,
+            end,
+        ))
+    }
+
+    /// Helper for `parse_range()`
+    fn is_range_operator(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::DoubleDot
+                | TokenKind::DoubleDotEq
+        )
     }
 
     /// Helper for `parse_control()`
@@ -258,30 +383,28 @@ impl Parser {
     }
 
     fn parse_let(&mut self) -> Result<Expr> {
-        let start = self.expect(TokenKind::Let)?.span;
-        let tok = self.peek().clone();
-        let name = match tok.kind {
-            TokenKind::Ident(name) => {
-                self.eat();
-                name
-            }
+        let start =
+            self.expect(TokenKind::Let)?.span;
 
-            _ => {
-                return Err(Error::parse(
-                    "let expects an identifier",
-                    tok.span,
-                ));
-            }
-        };
+        let pattern =
+            self.parse_pattern()?;
 
         self.expect(TokenKind::Equals)?;
-        let value = self.parse_expr()?;
-        let span = start.join(value.span);
 
-        Ok(Expr::new(
-            ExprKind::Let(name, Box::new(value)),
-            span,
-        ))
+        let value =
+            self.parse_expr()?;
+
+        Ok(
+            Expr::new(
+                ExprKind::Let(
+                    pattern,
+                    Box::new(value.clone()),
+                ),
+                start.join(
+                    value.span
+                ),
+            )
+        )
     }
 
     fn parse_struct(&mut self) -> Result<Expr> {
@@ -723,35 +846,118 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr> {
-        let mut expr = self.parse_primary()?;
+        let mut expr =
+            self.parse_primary()?;
+
         loop {
             match self.peek().kind.clone() {
                 TokenKind::LParen => {
                     self.eat();
-                    let args = self.parse_args()?;
-                    let end = self.expect(TokenKind::RParen)?.span;
-                    let start = expr.span;
-                    expr = Expr::new(ExprKind::Call(Box::new(expr), args), start.join(end));
+
+                    let args =
+                        self.parse_args()?;
+
+                    let end =
+                        self.expect(
+                            TokenKind::RParen
+                        )?.span;
+
+                    let start =
+                        expr.span;
+
+                    expr = Expr::new(
+                        ExprKind::Call(
+                            Box::new(expr),
+                            args,
+                        ),
+                        start.join(end),
+                    );
                 }
+
                 TokenKind::LBracket => {
                     self.eat();
-                    let index = self.parse_index_expr()?;
-                    let end = self.expect(TokenKind::RBracket)?.span;
-                    let start = expr.span;
-                    expr = Expr::new(ExprKind::Index(Box::new(expr), index), start.join(end));
+
+                    let index =
+                        self.parse_index_expr()?;
+
+                    let end =
+                        self.expect(
+                            TokenKind::RBracket
+                        )?.span;
+
+                    let start =
+                        expr.span;
+
+                    expr = Expr::new(
+                        ExprKind::Index(
+                            Box::new(expr),
+                            index,
+                        ),
+                        start.join(end),
+                    );
                 }
+
                 TokenKind::Dot => {
                     self.eat();
-                    let tok = self.peek().clone();
-                    let name = match tok.kind {
-                        TokenKind::Ident(name) => { self.eat(); name }
-                        _ => return Err(Error::parse("expected identifier after '.'", tok.span)),
-                    };
-                    let start = expr.span;
-                    expr = Expr::new(ExprKind::Field(Box::new(expr), name), start.join(tok.span));
+
+                    let token =
+                        self.peek().clone();
+
+                    match token.kind {
+                        TokenKind::Ident(name) => {
+                            self.eat();
+
+                            let start =
+                                expr.span;
+
+                            expr = Expr::new(
+                                ExprKind::Field(
+                                    Box::new(expr),
+                                    name,
+                                ),
+                                start.join(
+                                    token.span
+                                ),
+                            );
+                        }
+
+                        TokenKind::Int(index)
+                            if index >= 0 =>
+                        {
+                            self.eat();
+
+                            let start =
+                                expr.span;
+
+                            expr = Expr::new(
+                                ExprKind::TupleIndex {
+                                    object:
+                                        Box::new(expr),
+
+                                    index:
+                                        index as usize,
+                                },
+                                start.join(
+                                    token.span
+                                ),
+                            );
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::parse(
+                                    "expected field name or tuple index after '.'",
+                                    token.span,
+                                )
+                            );
+                        }
+                    }
                 }
+
                 TokenKind::Question => {
-                    let start = expr.span;
+                    let start =
+                        expr.span;
+
                     let question =
                         self.peek().clone();
 
@@ -761,13 +967,16 @@ impl Parser {
                         ExprKind::Try(
                             Box::new(expr)
                         ),
-                        start.join(question.span),
+                        start.join(
+                            question.span
+                        ),
                     );
                 }
-                
+
                 _ => break,
             }
         }
+
         Ok(expr)
     }
 
@@ -785,63 +994,59 @@ impl Parser {
     fn parse_index_component(
         &mut self,
     ) -> Result<IndexExpr> {
-        let start = if self.check(TokenKind::DoubleDot)
-            || self.check(TokenKind::DoubleDotEq)
-        {
-            None
-        } else {
-            Some(Box::new(
-                self.parse_expr()?
-            ))
-        };
+        // ---------------------------------------------------------
+        // Start of range may be omitted:
+        //
+        // ..5
+        // ..=5
+        // ---------------------------------------------------------
+        let start =
+            if self.is_range_operator() {
+                None
+            } else {
+                Some(
+                    Box::new(
+                        self.parse_control()?
+                    )
+                )
+            };
 
-        // ..
-        if self.eat_if(TokenKind::DoubleDot) {
-            let end =
-                if self.is_expr_start() {
-                    Some(Box::new(
-                        self.parse_expr()?
-                    ))
-                } else {
-                    None
-                };
-
-            return Ok(IndexExpr::Range {
-                start,
+        // ---------------------------------------------------------
+        // Range
+        // ---------------------------------------------------------
+        if self.is_range_operator() {
+            let (
+                inclusive,
+                _operator_span,
                 end,
-                inclusive: false,
-            });
+            ) =
+                self.parse_range_tail()?;
+
+            return Ok(
+                IndexExpr::Range {
+                    start,
+                    end: end.map(Box::new),
+                    inclusive,
+                }
+            );
         }
 
-        // ..=
-        if self.eat_if(TokenKind::DoubleDotEq) {
-            let end =
-                if self.is_expr_start() {
-                    Some(Box::new(
-                        self.parse_expr()?
-                    ))
-                } else {
-                    None
-                };
-
-            return Ok(IndexExpr::Range {
-                start,
-                end,
-                inclusive: true,
-            });
-        }
-
+        // ---------------------------------------------------------
+        // Single index
+        // ---------------------------------------------------------
         match start {
-            Some(expr) => {
-                Ok(IndexExpr::Single(expr))
-            }
+            Some(expr) =>
+                Ok(
+                    IndexExpr::Single(expr)
+                ),
 
-            None => {
-                Err(Error::parse(
-                    "expected index expression",
-                    self.peek().span,
-                ))
-            }
+            None =>
+                Err(
+                    Error::parse(
+                        "expected index expression",
+                        self.peek().span,
+                    )
+                ),
         }
     }
 
@@ -902,18 +1107,14 @@ impl Parser {
                 ))
             }
             
-            TokenKind::Match => self.parse_match_expr(),
+            TokenKind::Match 
+                => self.parse_match_expr(),
             
-            TokenKind::LParen => {
-                self.eat();
-                let e = self.parse_expr()?;
-                self.expect(TokenKind::RParen)?;
-                Ok(e)
-            }
+            TokenKind::LParen => self.parse_paren_expr(),
             TokenKind::LBrace => self.parse_brace_expr(),
             TokenKind::LBracket => self.parse_list(),
             TokenKind::Pipe => self.parse_lambda(),
-            
+
             _ => Err(Error::parse(format!("unexpected token {:?}", tok.kind), tok.span)),
         }
     }
@@ -1051,28 +1252,85 @@ impl Parser {
         )
     }
 
-    fn parse_pattern(
-        &mut self,
-    ) -> Result<Pattern> {
-        match self.peek().kind.clone() {
-            TokenKind::Underscore => {
-                self.eat();
+    fn parse_paren_expr(&mut self) -> Result<Expr> {
+        let start = self.expect(TokenKind::LParen)?.span;
 
-                Ok(Pattern::Wildcard)
+        if self.check(TokenKind::RParen) {
+            let end = self.eat().span;
+
+            return Ok(
+                Expr::new(
+                    ExprKind::Unit,
+                    start.join(end),
+                )
+            );
+        }
+
+        let first =
+            self.parse_expr()?;
+
+        if !self.check(TokenKind::Comma) {
+            self.expect(TokenKind::RParen)?;
+
+            return Ok(first);
+        }
+
+        let mut elements =
+            vec![first];
+
+        while self.check(TokenKind::Comma) {
+            self.eat();
+
+            if self.check(TokenKind::RParen) {
+                break;
             }
 
+            elements.push(
+                self.parse_expr()?
+            );
+        }
+
+        let end =
+            self.expect(TokenKind::RParen)?.span;
+
+        Ok(
+            Expr::new(
+                ExprKind::Tuple(elements),
+                start.join(end),
+            )
+        )
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        match self.peek().kind.clone() {
+            // =====================================================
+            // Tuple / grouping pattern
+            // =====================================================
+            TokenKind::LParen => {
+                self.parse_tuple_pattern()
+            }
+
+            // =====================================================
+            // Integer literal
+            // =====================================================
             TokenKind::Int(value) => {
                 self.eat();
 
                 Ok(Pattern::Int(value))
             }
 
+            // =====================================================
+            // Float literal
+            // =====================================================
             TokenKind::Float(value) => {
                 self.eat();
 
                 Ok(Pattern::Float(value))
             }
 
+            // =====================================================
+            // Bool
+            // =====================================================
             TokenKind::Bool(true) => {
                 self.eat();
 
@@ -1085,18 +1343,31 @@ impl Parser {
                 Ok(Pattern::Bool(false))
             }
 
+            // =====================================================
+            // String
+            // =====================================================
             TokenKind::Str(value) => {
                 self.eat();
 
                 Ok(Pattern::Str(value))
             }
 
+            // =====================================================
+            // Identifier / enum pattern
+            // =====================================================
             TokenKind::Ident(name) => {
                 self.eat();
 
-                self.parse_ident_pattern(
-                    name
-                )
+
+                self.parse_ident_pattern(name)
+            }
+
+            TokenKind::Underscore => {
+                self.eat();
+
+                return Ok(
+                    Pattern::Wildcard
+                );
             }
 
             _ => {
@@ -1187,6 +1458,54 @@ impl Parser {
         )
     }
 
+    /// Helper for `parse_tuple_pattern()`
+    fn parse_tuple_pattern(
+        &mut self,
+    ) -> Result<Pattern> {
+        self.expect(TokenKind::LParen)?;
+
+        let first =
+            self.parse_pattern()?;
+
+        // `(x)` = grouping
+        if !self.check(TokenKind::Comma) {
+            self.expect(
+                TokenKind::RParen
+            )?;
+
+            return Ok(first);
+        }
+
+        // `(x, ...)` = tuple pattern
+        let mut patterns =
+            vec![first];
+
+        while self.check(
+            TokenKind::Comma
+        ) {
+            self.eat();
+
+            // trailing comma
+            if self.check(
+                TokenKind::RParen
+            ) {
+                break;
+            }
+
+            patterns.push(
+                self.parse_pattern()?
+            );
+        }
+
+        self.expect(
+            TokenKind::RParen
+        )?;
+
+        Ok(
+            Pattern::Tuple(patterns)
+        )
+    }
+
     fn parse_brace_expr(&mut self) -> Result<Expr> {
         if self.looks_like_dict() {
             self.parse_dict()
@@ -1201,32 +1520,98 @@ impl Parser {
         }
     }
 
-    fn parse_list(&mut self) -> Result<Expr> {
-        let open = self.expect(TokenKind::LBracket)?.span;
-        let mut items = Vec::new();
-        if self.peek().kind == TokenKind::RBracket {
-            let end = self.eat().span;
-            return Ok(Expr::new(ExprKind::List(items), open.join(end)));
-        }
-        loop {
-            let first = self.parse_expr()?;
-            if matches!(self.peek().kind, TokenKind::DoubleDot | TokenKind::DoubleDotEq) {
-                let range = self.parse_range_after_lhs(first)?;
-                items.push(ListItem::Range(range));
-            } else {
-                items.push(ListItem::Expr(first));
-            }
-            if !self.at_kind(TokenKind::Comma) { break; }
-            if self.peek().kind == TokenKind::RBracket { break; }
-        }
-        let end = self.expect(TokenKind::RBracket)?.span;
-        Ok(Expr::new(ExprKind::List(items), open.join(end)))
-    }
+    fn parse_list(
+        &mut self,
+    ) -> Result<Expr> {
+        let open =
+            self.expect(
+                TokenKind::LBracket
+            )?.span;
 
-    fn parse_range_after_lhs(&mut self, lhs: Expr) -> Result<IndexExpr> {
-        let inclusive = if self.at_kind(TokenKind::DoubleDotEq) { true } else { self.expect(TokenKind::DoubleDot)?; false };
-        let rhs = self.parse_expr()?;
-        Ok(IndexExpr::Range { start: Some(Box::new(lhs)), end: Some(Box::new(rhs)), inclusive })
+        let mut items =
+            Vec::new();
+
+        if self.check(
+            TokenKind::RBracket
+        ) {
+            let end =
+                self.eat().span;
+
+            return Ok(
+                Expr::new(
+                    ExprKind::List(items),
+                    open.join(end),
+                )
+            );
+        }
+
+        loop {
+            // -----------------------------------------------------
+            // Parse the first part without consuming `..`.
+            // -----------------------------------------------------
+
+            let first =
+                self.parse_control()?;
+
+            if self.is_range_operator() {
+                let (
+                    inclusive,
+                    operator_span,
+                    end,
+                ) =
+                    self.parse_range_tail()?;
+
+                let end =
+                    end.ok_or_else(|| {
+                        Error::parse(
+                            "list range requires an end value",
+                            operator_span,
+                        )
+                    })?;
+
+                items.push(
+                    ListItem::Range(
+                        IndexExpr::Range {
+                            start: Some(
+                                Box::new(first)
+                            ),
+                            end: Some(
+                                Box::new(end)
+                            ),
+                            inclusive,
+                        }
+                    )
+                );
+            } else {
+                items.push(
+                    ListItem::Expr(first)
+                );
+            }
+
+            if !self.eat_if(
+                TokenKind::Comma
+            ) {
+                break;
+            }
+
+            if self.check(
+                TokenKind::RBracket
+            ) {
+                break;
+            }
+        }
+
+        let end =
+            self.expect(
+                TokenKind::RBracket
+            )?.span;
+
+        Ok(
+            Expr::new(
+                ExprKind::List(items),
+                open.join(end),
+            )
+        )
     }
 
     fn parse_lambda(&mut self) -> Result<Expr> {
