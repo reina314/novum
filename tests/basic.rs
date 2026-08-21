@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    run,
+    run, run_result
 };
 use novum::{Interpreter, Lexer, Parser};
 use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
@@ -526,4 +526,734 @@ fn bound_method_keeps_receiver() {
         ),
     }
 }
+
+#[test]
+fn enum_definition() {
+    let result =
+        run(
+            r#"
+            enum Color {
+                Red,
+                Green,
+                Blue,
+            }
+
+            Color
+            "#
+        );
+
+    match result {
+        Value::Enum(definition) => {
+            assert_eq!(
+                definition.name(),
+                "Color"
+            );
+
+            assert!(
+                definition
+                    .variant("Red")
+                    .is_some()
+            );
+
+            assert!(
+                definition
+                    .variant("Green")
+                    .is_some()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Enum, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_variant_constructor() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+                Err(error),
+            }
+
+            Result.Ok(42)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Ok"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[
+                    Value::Int(42)
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected EnumValue, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_variant_arity_error() {
+    let result =
+        run_result(
+            r#"
+            enum Result {
+                Ok(value),
+            }
+
+            Result.Ok()
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn enum_value_equality() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+                Err(error),
+            }
+
+            Result.Ok(42)
+            ==
+            Result.Ok(42)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn enum_value_display() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+            }
+
+            Result.Ok(42)
+            "#
+        );
+
+    assert_eq!(
+        format!("{}", result),
+        "Result.Ok(42)"
+    );
+}
+
+#[test]
+fn match_literal() {
+    let result =
+        run(
+            r#"
+            let x = 2
+
+            match x {
+                0 => "zero"
+                1 => "one"
+                2 => "two"
+                _ => "other"
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new("two".into())
+        )
+    );
+}
+
+#[test]
+fn match_wildcard() {
+    let result =
+        run(
+            r#"
+            let x = 42
+
+            match x {
+                0 => "zero"
+                _ => "other"
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new("other".into())
+        )
+    );
+}
+
+#[test]
+fn match_enum_unit_variant() {
+    let result =
+        run(
+            r#"
+            enum Color {
+                Red
+                Green
+                Blue
+            }
+
+            let color =
+                Color.Green
+
+            match color {
+                Color.Red => 1
+                Color.Green => 2
+                Color.Blue => 3
+                _ => 0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn match_enum_mixed_variants() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+                Empty
+            }
+
+            let result =
+                Result.Empty
+
+            match result {
+                Result.Ok(value) => 1
+                Result.Err(error) => 2
+                Result.Empty => 3
+                _ => 4
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn match_enum_payload() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            match result {
+                Result.Ok(value) =>
+                    value + 1
+
+                Result.Err(error) =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(43)
+    );
+}
+
+#[test]
+fn match_nested_enum() {
+    let result =
+        run(
+            r#"
+            enum Option {
+                Some(value)
+                None
+            }
+
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let value =
+                Result.Ok(
+                    Option.Some(42)
+                )
+
+            match value {
+                Result.Ok(
+                    Option.Some(x)
+                ) =>
+                    x
+
+                _ =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn match_binding_is_local() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            let output =
+                match result {
+                    Result.Ok(value) =>
+                        value + 1
+
+                    _ =>
+                        0
+                }
+
+            output
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(43)
+    );
+}
+
+#[test]
+fn match_binding_does_not_escape() {
+    let result =
+        run_result(
+            r#"
+            enum Result {
+                Ok(value)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            match result {
+                Result.Ok(value) =>
+                    value
+            }
+
+            value
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn match_arm_block() {
+    let result =
+        run(
+            r#"
+            let x = 2
+
+            match x {
+                2 => {
+                    let y = 10
+                    y + 1
+                }
+
+                _ => 0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(11)
+    );
+}
+
+#[test]
+fn match_arm_return() {
+    let result =
+        run(
+            r#"
+            let test = |x| {
+                match x {
+                    0 => return 10
+                    _ => 20
+                }
+            }
+
+            test(0)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
+fn match_arm_break() {
+    let result =
+        run(
+            r#"
+            let x = 0
+
+            while true {
+                match x {
+                    0 => break
+                    _ => null
+                }
+            }
+
+            42
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn option_some() {
+    let result =
+        run(
+            r#"
+            Option.Some(42)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(42)]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected EnumValue, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn option_none() {
+    let result =
+        run(
+            r#"
+            Option.None
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+
+            assert!(
+                value.fields().is_empty()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected EnumValue, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn result_ok() {
+    let result =
+        run(
+            r#"
+            Result.Ok(42)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Ok"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(42)]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected EnumValue, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn option_match() {
+    let result =
+        run(
+            r#"
+            let x =
+                Option.Some(42)
+
+            match x {
+                Option.Some(value) =>
+                    value + 1
+
+                Option.None =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(43)
+    );
+}
+
+#[test]
+fn option_match_none() {
+    let result =
+        run(
+            r#"
+            let x =
+                Option.None
+
+            match x {
+                Option.Some(value) =>
+                    value + 1
+
+                Option.None =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(0)
+    );
+}
+
+#[test]
+fn result_match() {
+    let result =
+        run(
+            r#"
+            let result =
+                Result.Ok(42)
+
+            match result {
+                Result.Ok(value) =>
+                    value
+
+                Result.Err(error) =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn try_result_err() {
+    let result =
+        run_result(
+            r#"
+            get_value = || {
+                return Result.Err("failed")?
+            }
+
+            get_value()
+            "#
+        );
+
+    match result {
+        Ok(value) => {
+            match value {
+                Value::EnumValue(value) => {
+                    assert_eq!(
+                        value.enum_name(),
+                        "Result"
+                    );
+
+                    assert_eq!(
+                        value.variant(),
+                        "Err"
+                    );
+                }
+
+                other => {
+                    panic!(
+                        "unexpected value: {:?}",
+                        other
+                    );
+                }
+            }
+        }
+
+        Err(_) => {
+            panic!(
+                "unexpected error"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_option_some() {
+    let result =
+        run(
+            r#"
+            get_value = || {
+                return Option.Some(42)?
+            }
+
+            get_value()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn try_option_none() {
+    let result =
+        run_result(
+            r#"
+            get_value = || {
+                return Option.None?
+            }
+
+            get_value()
+            "#
+        );
+
+    let value =
+        result.expect(
+            "function should return Option.None"
+        );
+
+    match value {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected value: {:?}",
+                other
+            );
+        }
+    }
+}
+
+
 

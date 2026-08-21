@@ -3,6 +3,9 @@ use super::{
     IteratorObj,
     ObjectRef,
     StructRef,
+    EnumRef,
+    EnumValueRef,
+    EnumConstructor,
     MatrixRef,
     SeriesRef,
     DataFrameRef,
@@ -37,8 +40,11 @@ pub enum Value {
 
     Object(ObjectRef),
     Struct(StructRef),
-
     Module(ModuleRef),
+
+    Enum(EnumRef),
+    EnumValue(EnumValueRef),
+    EnumConstructor(EnumConstructor),
 
     Range(i64, i64, bool),
     
@@ -69,8 +75,11 @@ impl Value {
 
             Self::Object(_) => "Object",
             Self::Struct(_) => "Struct",
-
             Self::Module(_) => "Module",
+
+            Self::Enum(_) => "Enum",
+            Self::EnumValue(_) => "EnumValue",
+            Self::EnumConstructor(_) => "EnumConstructor",
 
             Self::Range(..) => "Range",
 
@@ -139,6 +148,32 @@ impl Value {
 
             (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
 
+            (Self::Enum(a),Self::Enum(b),) => Rc::ptr_eq(a, b),
+            (Self::EnumValue(a),Self::EnumValue(b),
+            ) => {
+                if a.enum_name() != b.enum_name()
+                    || a.variant() != b.variant()
+                    || a.fields().len() != b.fields().len()
+                {
+                    false
+                } else {
+                    for (left, right)
+                        in a.fields()
+                            .iter()
+                            .zip(b.fields().iter())
+                    {
+                        if !Self::eq_values(
+                            left,
+                            right,
+                        )? {
+                            return Ok(false);
+                        }
+                    }
+
+                    true
+                }
+            }
+
             (Self::Unit, Self::Unit) => true,
             (Self::Null, Self::Null) => true,
             
@@ -164,8 +199,16 @@ impl fmt::Debug for Value {
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
-
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
+
+            Self::Enum(definition) =>
+            write!(
+                f,
+                "<enum {}>",
+                definition.name()
+            ),
+            Self::EnumValue(value) => write!(f, "{:?}", value),
+            Self::EnumConstructor(constructor) => write!(f, "{:?}", constructor),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             
@@ -268,6 +311,20 @@ impl fmt::Display for Value {
 
             Self::Module(module) =>
                 write!(f, "<module {}>", module.borrow().name()),
+
+            Self::Enum(definition) =>
+                write!(
+                    f,
+                    "<enum {}>",
+                    definition.name()
+                ),
+
+            Self::EnumValue(value) => write!(f, "{}", value),
+            Self::EnumConstructor(constructor) =>
+                write!(f,
+                "{}",
+                constructor
+            ),
 
             Self::Range(
                 start,

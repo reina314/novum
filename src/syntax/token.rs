@@ -10,6 +10,7 @@ pub enum TokenKind {
     Ident(String),
 
     Equals,
+    FatArrow,
 
     Plus,
     Minus,
@@ -37,8 +38,10 @@ pub enum TokenKind {
     For,
     In,
     Let,
+    Match,
 
     Struct,
+    Enum,
 
     Import,
 
@@ -54,6 +57,8 @@ pub enum TokenKind {
     Comma,
     Colon,
     Semicolon,
+    Underscore,
+    Question,
 
     DoubleDot,
     DoubleDotEq,

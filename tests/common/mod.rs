@@ -1,15 +1,62 @@
-use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{ControlFlow, Value};
+use novum::{
+    Interpreter,
+    Lexer,
+    Parser,
+    Error,
+    ErrorKind,
+    runtime::{
+        ControlFlow,
+        Value
+    }
+};
 
-pub fn run(src: &str) -> Value {
-    let mut lexer = Lexer::new(src);
-    let tokens = lexer.lex().unwrap();
-    let mut parser = Parser::new(tokens);
-    let program = parser.parse().unwrap();
-    let mut interpreter = Interpreter::new();
-    match interpreter.eval_program(&program).unwrap() {
-        ControlFlow::Value(v) => v,
-        _ => panic!("unexpected control flow"),
+pub fn run(source: &str) -> Value {
+    run_result(source)
+        .expect("program failed")
+}
+
+pub fn run_result(
+    source: &str,
+) -> Result<Value, Error> {
+    let mut lexer =
+        Lexer::new(source);
+
+    let tokens =
+        lexer.lex()?;
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        parser.parse()?;
+
+    let mut interpreter =
+        Interpreter::new();
+
+    match interpreter.eval_program(&program)? {
+        ControlFlow::Value(value) =>
+            Ok(value),
+
+        ControlFlow::Return(value) =>
+            Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    format!(
+                        "unexpected top-level return: {}",
+                        value
+                    ),
+                    None,
+                )
+            ),
+
+        ControlFlow::Break =>
+            Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "unexpected top-level break",
+                    None,
+                )
+            ),
     }
 }
 

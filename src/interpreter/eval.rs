@@ -22,6 +22,10 @@ use crate::{
         ModuleRef,
         ObjectRef,
         StructDefinition,
+        EnumValue,
+        EnumValueRef,
+        EnumDef as RuntimeEnumDef,
+        EnumConstructor,
         Series,
         SeriesRef, 
         DataFrameRef,
@@ -31,6 +35,11 @@ use crate::{
         MethodReceiver,
     }, 
     syntax::{
+        ast::{
+            EnumDef as AstEnumDef,
+            MatchArm,
+            Pattern,
+        },
         BinOp, 
         Expr, 
         ExprKind, 
@@ -59,47 +68,129 @@ impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
+fn install_builtins(env: &mut Env,) {
+    for (name, value) 
+        in stdlib::builtins() {
+        env.define(name, value);
+    }
+}
+
+fn install_standard_enums(env: &mut Env,) {
+    // ---------------------------------------------------------
+    // Option
+    // ---------------------------------------------------------
+    let mut option =
+        RuntimeEnumDef::new("Option");
+
+    option
+        .add_variant(
+            "Some",
+            1,
+        )
+        .expect("valid Option");
+
+    option
+        .add_variant(
+            "None",
+            0,
+        )
+        .expect("valid Option");
+
+    env.define(
+        "Option",
+        Value::Enum(
+            Rc::new(option)
+        ),
+    );
+
+    // ---------------------------------------------------------
+    // Result
+    // ---------------------------------------------------------
+    let mut result =
+        RuntimeEnumDef::new("Result");
+
+    result
+        .add_variant(
+            "Ok",
+            1,
+        )
+        .expect("valid Result");
+
+    result
+        .add_variant(
+            "Err",
+            1,
+        )
+        .expect("valid Result");
+
+    env.define(
+        "Result",
+        Value::Enum(
+            Rc::new(result)
+        ),
+    );
+}
+
 impl Interpreter {
     pub fn new() -> Self {
-        let env = Env::global();
+        let mut env = Env::global();
+
+        install_builtins(&mut env);
+        install_standard_enums(&mut env);
 
         let project_root = std::env::current_dir()
             .expect(
                 "failed to determine current directory"
             );
 
-        let interpreter = Self { 
+        return Self { 
             env,
             stack: Vec::new(),
             loop_depth: 0,
             function_depth: 0,
             module_stack: Vec::new(),
             project_root,
-        };
-
-        for (name, value) 
-            in stdlib::builtins() 
-        {
-            interpreter.env.define(name, value);
         }
-        
-        interpreter
     }
 
-    pub fn eval_program(&mut self, program: &Program) -> Result<ControlFlow> {
+    pub fn eval_program(
+        &mut self,
+        program: &Program
+    ) -> Result<ControlFlow> {
         let mut last = Value::Unit;
+
         for expr in &program.statements {
             match self.eval(expr)? {
-                ControlFlow::Value(v) => last = v,
-                ControlFlow::Return(_) => return Err(self.error(ErrorKind::Control, "return outside function", expr)),
-                ControlFlow::Break => return Err(self.error(ErrorKind::Control, "break outside loop", expr)),
+                ControlFlow::Value(v) 
+                    => last = v,
+                ControlFlow::Return(_) 
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "return outside function", 
+                            expr
+                        )
+                    ),
+                ControlFlow::Break 
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "break outside loop",
+                            expr
+                        )
+                    ),
             }
         }
+
         Ok(ControlFlow::Value(last))
     }
 
-    pub fn eval(&mut self, expr: &Expr) -> Result<ControlFlow> {
+    pub fn eval(
+        &mut self,
+        expr: &Expr
+    ) -> Result<ControlFlow> {
         use ExprKind::*;
+
         match &expr.kind {
             Int(n) => Ok(ControlFlow::Value(Value::Int(*n))),
             Float(n) => Ok(ControlFlow::Value(Value::Float(*n))),
@@ -121,6 +212,12 @@ impl Interpreter {
                     expr,
                 )
             }
+            EnumDecl(definition) => {
+                self.eval_enum_decl(
+                    definition,
+                    expr,
+                )
+            }
 
             Import(parts) => self.eval_import(parts, expr),
 
@@ -128,27 +225,43 @@ impl Interpreter {
                 if self.env.contains_local(name) {
                     return Err(self.error(
                         ErrorKind::Name,
-                        format!("{} is already defined in this scope", name),
+                        format!(
+                            "{} is already defined in this scope",
+                            name
+                        ),
                         expr,
                     ));
                 }
 
-                let mut value = self.eval_value(rhs)?;
+                let result = self.eval(rhs)?;
 
-                if let Value::Func(func) = &value {
-                    if func.name.is_none() {
-                        value = Value::Func(Rc::new(Function {
-                            name: Some(name.clone()),
-                            params: func.params.clone(),
-                            body: func.body.clone(),
-                            closure: func.closure.clone(),
-                        }));
+                match result {
+                    ControlFlow::Value(mut value) => {
+                        if let Value::Func(func) = &value {
+                            if func.name.is_none() {
+                                value = Value::Func(Rc::new(Function {
+                                    name: Some(name.clone()),
+                                    params: func.params.clone(),
+                                    body: func.body.clone(),
+                                    closure: func.closure.clone(),
+                                }));
+                            }
+                        }
+
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+
+                        Ok(ControlFlow::Value(
+                            Value::Unit,
+                        ))
+                    }
+
+                    other => {
+                        Ok(other)
                     }
                 }
-
-                self.env.define(name.clone(), value.clone());
-
-                Ok(ControlFlow::Value(value))
             }
             Assign(name, rhs) => {
                 let mut value = self.eval_value(rhs)?;
@@ -272,11 +385,38 @@ impl Interpreter {
                 if self.loop_depth == 0 { Err(self.error(ErrorKind::Control, "break outside loop", expr)) } else { Ok(ControlFlow::Break) }
             }
             Return(value) => {
-                if self.function_depth == 0 { return Err(self.error(ErrorKind::Control, "return outside function", expr)); }
-                let v = match value { Some(v) => self.eval_value(v)?, None => Value::Unit };
+                if self.function_depth == 0 { 
+                    return Err(self.error(ErrorKind::Control, "return outside function", expr)); 
+                }
+
+                let v = 
+                match value { 
+                    Some(v) => self.eval_value(v)?,
+                    None => Value::Unit 
+                };
+
                 Ok(ControlFlow::Return(v))
             }
-            For(name, index, body) => self.eval_for(name, index, body, expr),
+            For(
+                name,
+                index,
+                body
+            ) => self.eval_for(
+                name,
+                index,
+                body,
+                expr
+                ),
+            Match {
+                value,
+                arms,
+            } => self.eval_match(
+                    value,
+                    arms,
+                    expr,
+                ),
+
+            Try(inner) => self.eval_try(expr, inner),
 
             Block(exprs) => self.eval_block(exprs, true),
 
@@ -301,7 +441,12 @@ impl Interpreter {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
             ControlFlow::Return(v) => Ok(v),
-            ControlFlow::Break => Err(self.error(ErrorKind::Control, "break cannot appear here", expr)),
+            ControlFlow::Break => 
+                Err(self.error(
+                    ErrorKind::Control,
+                    "break cannot appear here",
+                    expr
+                )),
         }
     }
 
@@ -407,6 +552,50 @@ impl Interpreter {
         );
 
         Ok(ControlFlow::Value(Value::Unit))
+    }
+
+    fn eval_enum_decl(
+        &mut self,
+        definition: &AstEnumDef,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let mut enum_def =
+            RuntimeEnumDef::new(
+                definition.name.clone()
+            );
+
+        for variant
+            in &definition.variants
+        {
+            enum_def
+                .add_variant(
+                    variant.name.clone(),
+                    variant.fields.len(),
+                )
+                .map_err(|message| {
+                    self.error(
+                        ErrorKind::Name,
+                        message,
+                        whole,
+                    )
+                })?;
+        }
+
+        let enum_ref =
+            Rc::new(enum_def);
+
+        self.env.define(
+            definition.name.clone(),
+            Value::Enum(
+                enum_ref
+            ),
+        );
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn resolve_module_path(
@@ -1866,13 +2055,32 @@ impl Interpreter {
         }
     }
 
-    fn resolve_slice(&mut self, start: Option<&Expr>, end: Option<&Expr>, inclusive: bool, len: usize, whole: &Expr) -> Result<(usize,usize)> {
-        let s = match start { Some(e) => self.eval_index_int(e, whole)?, None => 0 };
-        let mut e = match end { Some(e) => self.eval_index_int(e, whole)?, None => len };
+    fn resolve_slice(
+        &mut self,
+        start: Option<&Expr>,
+        end: Option<&Expr>,
+        inclusive: bool,
+        len: usize,
+        whole: &Expr
+    ) -> Result<(usize,usize)> {
+        let s = match start { 
+            Some(e) => self.eval_index_int(e, whole)?, 
+            None => 0 
+        };
+
+        let mut e = match end { 
+            Some(e) => self.eval_index_int(e, whole)?, 
+            None => len 
+        };
+
         if inclusive {
             e = e.checked_add(1).ok_or_else(|| self.error(ErrorKind::Overflow, "slice endpoint overflow", whole))?;
         }
-        if s > e || e > len { return Err(self.error(ErrorKind::Index, "invalid slice range", whole)); }
+
+        if s > e || e > len { 
+            return Err(self.error(ErrorKind::Index, "invalid slice range", whole)); 
+        }
+
         Ok((s,e))
     }
 
@@ -2005,7 +2213,12 @@ impl Interpreter {
         }
     }
 
-    fn eval_while(&mut self, cond: &Expr, body: &Expr, whole: &Expr) -> Result<ControlFlow> {
+    fn eval_while(
+        &mut self,
+        cond: &Expr,
+        body: &Expr,
+        whole: &Expr
+    ) -> Result<ControlFlow> {
         let mut last = Value::Bool(false);
         self.loop_depth += 1;
         let result = (|| {
@@ -2026,7 +2239,13 @@ impl Interpreter {
         result
     }
 
-    fn eval_for(&mut self, name: &str, iterable: &IndexExpr, body: &Expr, whole: &Expr) -> Result<ControlFlow> {
+    fn eval_for(
+        &mut self,
+        name: &str,
+        iterable: &IndexExpr,
+        body: &Expr,
+        whole: &Expr
+    ) -> Result<ControlFlow> {
         let mut iterator = self.eval_iterable(iterable, whole)?;
         let old_env = self.env.clone();
         self.env = self.env.child();
@@ -2048,20 +2267,253 @@ impl Interpreter {
         result
     }
 
-    fn eval_block(&mut self, exprs: &[Expr], scoped: bool) -> Result<ControlFlow> {
-        let old_env = self.env.clone();
-        if scoped { self.env = self.env.child(); }
-        let result = (|| {
-            let mut last = Value::Unit;
-            for expr in exprs {
-                match self.eval(expr)? {
-                    ControlFlow::Value(v) => last=v,
-                    other => return Ok(other),
+    fn eval_match(
+        &mut self,
+        value_expr: &Expr,
+        arms: &[MatchArm],
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(value_expr)?;
+
+        for arm in arms {
+            let mut bindings 
+                = HashMap::<String, Value>::new();
+
+            let matched =
+                match_pattern(
+                    &arm.pattern,
+                    &value,
+                    &mut bindings,
+                )
+                .map_err(|message| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        message,
+                        whole,
+                    )
+                })?;
+
+            if matched {
+                return self.eval_match_arm(
+                    &arm.body,
+                    bindings,
+                );
+            }
+        }
+
+        Err(
+            self.error(
+                ErrorKind::Runtime,
+                "non-exhaustive match",
+                whole,
+            )
+        )
+    }
+
+    fn eval_match_arm(
+    &mut self,
+    body: &Expr,
+    bindings: HashMap<String, Value>,
+) -> Result<ControlFlow> {
+    // ---------------------------------------------------------
+    // Create a child scope for the match arm.
+    // ---------------------------------------------------------
+    let new_env = self.env.child();
+    let previous =
+        std::mem::replace(
+            &mut self.env,
+            new_env,
+        );
+
+    // ---------------------------------------------------------
+    // Bind pattern variables.
+    // ---------------------------------------------------------
+    for (name, value) in bindings {
+        self.env.define(
+            name,
+            value,
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Evaluate the arm as a normal expression/control flow.
+    // ---------------------------------------------------------
+    let result =
+        self.eval(body);
+
+    // ---------------------------------------------------------
+    // Always restore the previous environment before returning.
+    // ---------------------------------------------------------
+    self.env = previous;
+
+    result
+}
+
+    fn eval_try(
+        &mut self,
+        whole: &Expr,
+        inner: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(inner)?;
+
+        match value {
+            Value::EnumValue(value) => {
+                match (
+                    value.enum_name(),
+                    value.variant(),
+                ) {
+                    // =================================================
+                    // Option.Some
+                    // =================================================
+
+                    ("Option", "Some") => {
+                        if value.fields().len()
+                            != 1
+                        {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "Option.Some expects exactly one value",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                                    .field(0)
+                                    .unwrap()
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Option.None
+                    // =================================================
+
+                    ("Option", "None") => {
+                        Ok(
+                            ControlFlow::Return(
+                                Value::EnumValue(
+                                    Rc::clone(&value)
+                                )
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Result.Ok
+                    // =================================================
+
+                    ("Result", "Ok") => {
+                        if value.fields().len()
+                            != 1
+                        {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "Result.Ok expects exactly one value",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                                    .field(0)
+                                    .unwrap()
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Result.Err
+                    // =================================================
+
+                    ("Result", "Err") => {
+                        Ok(
+                            ControlFlow::Return(
+                                Value::EnumValue(
+                                    Rc::clone(&value)
+                                )
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Unknown enum
+                    // =================================================
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "? cannot be applied to {}.{}",
+                                    value.enum_name(),
+                                    value.variant()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
                 }
             }
-            Ok(ControlFlow::Value(last))
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "? expects Option or Result, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn eval_block(
+        &mut self,
+        exprs: &[Expr],
+        _: bool,
+    ) -> Result<ControlFlow> {
+        let new_env = self.env.child();
+        let old_env =
+            std::mem::replace(
+                &mut self.env,
+                new_env,
+            );
+
+        let result = (|| {
+            let mut last =
+                Value::Unit;
+
+            for expr in exprs {
+                match self.eval(expr)? {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
+
+                    other => {
+                        return Ok(other);
+                    }
+                }
+            }
+
+            Ok(
+                ControlFlow::Value(last)
+            )
         })();
-        if scoped { self.env = old_env; }
+
+        self.env = old_env;
+
         result
     }
 
@@ -2363,6 +2815,62 @@ impl Interpreter {
                 ))
             }
 
+            Value::EnumConstructor(constructor) => {
+                let variant =
+                    constructor
+                        .enum_def()
+                        .variant(
+                            constructor.variant()
+                        )
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "unknown enum variant '{}'",
+                                    constructor.variant()
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                if values.len()
+                    != variant.arity()
+                {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}.{} expects {} arguments, got {}",
+                                constructor
+                                    .enum_def()
+                                    .name(),
+                                constructor.variant(),
+                                variant.arity(),
+                                values.len(),
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                let value =
+                    EnumValue::new(
+                        constructor
+                            .enum_def()
+                            .name(),
+                        constructor.variant(),
+                        values,
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::EnumValue(
+                            Rc::new(value)
+                        )
+                    )
+                )
+            }
+
             other => Err(self.error(ErrorKind::Type,format!("{} is not callable",other.type_name()),whole)),
         }
     }
@@ -2444,6 +2952,56 @@ impl Interpreter {
                             whole,
                         )
                     })
+            }
+
+            Value::Enum(enum_def) => {
+                let variant =
+                    enum_def
+                        .variant(name)
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "enum '{}' has no variant '{}'",
+                                    enum_def.name(),
+                                    name,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                // ---------------------------------------------------------
+                // Unit variant
+                //---------------------------------------------------------
+                if variant.arity() == 0 {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::EnumValue(
+                                Rc::new(
+                                    EnumValue::new(
+                                        enum_def.name(),
+                                        name,
+                                        Vec::new(),
+                                    )
+                                )
+                            )
+                        )
+                    );
+                }
+
+                // ---------------------------------------------------------
+                // Payload variant
+                // ---------------------------------------------------------
+                Ok(
+                    ControlFlow::Value(
+                        Value::EnumConstructor(
+                            EnumConstructor::new(
+                                enum_def.clone(),
+                                name,
+                            )
+                        )
+                    )
+                )
             }
 
             Value::Series(series) => {
@@ -2727,24 +3285,58 @@ impl Interpreter {
         &mut self,
         func: crate::runtime::FuncRef,
         args: Vec<Value>,
-        call_site: &Expr
+        call_site: &Expr,
     ) -> Result<ControlFlow> {
         if func.params.len() != args.len() {
-            return Err(self.error(ErrorKind::Arity, format!("function expects {} arguments, got {}", func.params.len(), args.len()), call_site));
+            return Err(self.error(
+                ErrorKind::Arity,
+                format!(
+                    "function expects {} arguments, got {}",
+                    func.params.len(),
+                    args.len(),
+                ),
+                call_site,
+            ));
         }
-        self.stack.push(StackFrame { function: func.name.clone().unwrap_or_else(|| "<lambda>".into()), span: Some(call_site.span) });
-        let old_env = self.env.clone();
-        let call_env = func.closure.child();
-        for (name,value) in func.params.iter().zip(args) { call_env.define(name.clone(), value); }
-        self.env = call_env;
+
+        let function_name =
+            func.name
+                .clone()
+                .unwrap_or_else(|| "<lambda>".into());
+
+        self.stack.push(StackFrame {
+            function: function_name,
+            span: Some(call_site.span),
+        });
+
+        let old_env = std::mem::replace(
+            &mut self.env,
+            func.closure.child(),
+        );
+
+        for (name, value) in func.params.iter().zip(args) {
+            self.env.define(name.clone(), value);
+        }
+
         self.function_depth += 1;
+
         let result = self.eval(&func.body);
+
         self.function_depth -= 1;
         self.env = old_env;
         self.stack.pop();
+
         match result? {
-            ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(ControlFlow::Value(v)),
-            ControlFlow::Break => Err(self.error(ErrorKind::Control,"break outside loop",call_site)),
+            ControlFlow::Value(value)
+            | ControlFlow::Return(value) => {
+                Ok(ControlFlow::Value(value))
+            }
+
+            ControlFlow::Break => Err(self.error(
+                ErrorKind::Control,
+                "break outside loop",
+                call_site,
+            )),
         }
     }
 
@@ -4485,3 +5077,144 @@ impl Interpreter {
     }
 
 }
+
+/// Helper for `eval_match()`
+fn match_pattern(
+    pattern: &Pattern,
+    value: &Value,
+    bindings: &mut HashMap<String, Value>,
+) -> std::result::Result<bool, String> {
+    match pattern {
+        Pattern::Wildcard => {
+            Ok(true)
+        }
+
+        Pattern::Ident(name) => {
+            bindings.insert(
+                name.clone(),
+                value.clone(),
+            );
+
+            Ok(true)
+        }
+
+        Pattern::Int(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Int(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Float(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Float(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Bool(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Bool(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Str(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Str(actual)
+                        if actual.as_ref() == expected
+                )
+            )
+        }
+
+        Pattern::Enum {
+            path,
+            fields,
+        } => {
+            match value {
+                Value::EnumValue(enum_value) => {
+                    match_enum_pattern(
+                        path,
+                        fields,
+                        enum_value,
+                        bindings,
+                    )
+                }
+
+                _ => Ok(false),
+            }
+        }
+    }
+}
+
+/// Helper for `match_pattern()`
+fn match_enum_pattern(
+    path: &[String],
+    patterns: &[Pattern],
+    value: &EnumValueRef,
+    bindings: &mut HashMap<String, Value>,
+) -> std::result::Result<bool, String> {
+    if path.len() != 2 {
+        return Err(
+            "enum pattern expects Enum.Variant"
+                .into()
+        );
+    }
+
+    let enum_name =
+        &path[0];
+
+    let variant_name =
+        &path[1];
+
+    if value.enum_name()
+        != enum_name
+    {
+        return Ok(false);
+    }
+
+    if value.variant()
+        != variant_name
+    {
+        return Ok(false);
+    }
+
+    if value.fields().len()
+        != patterns.len()
+    {
+        return Err(format!(
+            "enum variant '{}' expects {} pattern arguments, got {}",
+            variant_name,
+            value.fields().len(),
+            patterns.len()
+        ));
+    }
+
+    for (pattern, field)
+        in patterns
+            .iter()
+            .zip(value.fields())
+    {
+        if !match_pattern(
+            pattern,
+            field,
+            bindings,
+        )? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+

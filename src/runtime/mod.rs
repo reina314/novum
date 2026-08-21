@@ -9,6 +9,7 @@ pub mod grouped_dataframe;
 pub mod module;
 pub mod object;
 pub mod r#struct;
+pub mod r#enum;
 pub mod bound_method;
 pub mod value;
 
@@ -48,6 +49,13 @@ pub use object::{
 pub use r#struct::{
     StructDefinition,
     StructRef
+};
+pub use r#enum::{
+    EnumDef,
+    EnumRef,
+    EnumValue,
+    EnumValueRef,
+    EnumConstructor,
 };
 pub use bound_method::{
     BoundMethod,
