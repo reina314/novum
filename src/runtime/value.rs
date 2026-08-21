@@ -20,6 +20,7 @@ use std::{
     collections::HashMap, 
 };
 
+pub type Tuple = Rc<Vec<Value>>;
 pub type List = Rc<RefCell<Vec<Value>>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, String>;
@@ -31,6 +32,7 @@ pub enum Value {
     Bool(bool),
     Str(Rc<String>),
 
+    Tuple(Tuple),
     List(List),
     Dict(Dict),
     Matrix(MatrixRef),
@@ -66,6 +68,7 @@ impl Value {
             Self::Bool(_) => "Bool",
             Self::Str(_) => "Str",
 
+            Self::Tuple(_) => "Tuple",
             Self::List(_) => "List",
             Self::Dict(_) => "Dict",
             Self::Matrix(_) => "Matrix",
@@ -128,6 +131,19 @@ impl Value {
             (Self::Str(x), Self::Str(y)) => x == y,
             (Self::Bool(x), Self::Bool(y)) => x == y,
 
+            (Self::Tuple(a), Self::Tuple(b),) => {
+                if a.len() != b.len() {
+                    false
+                } else {
+                    for (lhs, rhs) in a.iter().zip(b.iter()) {
+                        if !Self::eq_values(lhs, rhs)? {
+                            return Ok(false);
+                        }
+                    }
+
+                    true
+                }
+            }
             (Self::List(x), Self::List(y)) => Rc::ptr_eq(x, y),
             (Self::Dict(x), Self::Dict(y)) => Rc::ptr_eq(x, y),
             (Self::Matrix(a), Self::Matrix(b)) => Rc::ptr_eq(a, b),
@@ -190,30 +206,54 @@ impl fmt::Debug for Value {
             Self::Bool(v) => write!(f, "{v}"),
             Self::Str(v) => write!(f, "{v:?}"),
 
+            Self::Tuple(values) => {
+                write!(f, "(")?;
+
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(f, "{:?}", value)?;
+                }
+
+                if values.len() == 1 {
+                    write!(f, ",")?;
+                }
+
+                write!(f, ")")
+            }
+
             Self::List(v) => write!(f, "{:?}", v.borrow()),
+
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
+
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
+
             Self::Series(v) => write!(f, "{:?}", v),
+
             Self::DataFrame(df) => write!(f, "{:?}", df),
+
             Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
+
             Self::Struct(def) => write!(f, "<struct {}>", def.name),
+
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
-            Self::Enum(definition) =>
-            write!(
-                f,
-                "<enum {}>",
-                definition.name()
-            ),
+            Self::Enum(definition) => write!(f, "<enum {}>", definition.name()),
+
             Self::EnumValue(value) => write!(f, "{:?}", value),
+
             Self::EnumConstructor(constructor) => write!(f, "{:?}", constructor),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             
             Self::Func(v) => write!(f, "{v}"),
+
             Self::Iterator(_) => write!(f, "<iterator>"),
+
             Self::Builtin(_) => write!(f, "<builtin>"),
 
             Self::BoundMethod(method) => write!(f, "{:?}", method),
@@ -244,6 +284,24 @@ impl fmt::Display for Value {
 
             Self::Unit =>
                 write!(f, "()"),
+
+            Self::Tuple(values) => {
+                write!(f, "(")?;
+
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(f, "{}", value)?;
+                }
+
+                if values.len() == 1 {
+                    write!(f, ",")?;
+                }
+
+                write!(f, ")")
+            }
 
             Self::List(list) => {
                 let list = list.borrow();
@@ -313,18 +371,13 @@ impl fmt::Display for Value {
                 write!(f, "<module {}>", module.borrow().name()),
 
             Self::Enum(definition) =>
-                write!(
-                    f,
-                    "<enum {}>",
-                    definition.name()
-                ),
+                write!(f, "<enum {}>", definition.name()),
 
-            Self::EnumValue(value) => write!(f, "{}", value),
+            Self::EnumValue(value) =>
+                write!(f, "{}", value),
+
             Self::EnumConstructor(constructor) =>
-                write!(f,
-                "{}",
-                constructor
-            ),
+                write!(f, "{}", constructor),
 
             Self::Range(
                 start,

@@ -182,6 +182,48 @@ fn duplicate_let_is_error() {
 }
 
 #[test]
+fn nested_scope_shadowing_is_allowed() {
+    let result =
+        run(
+            r#"
+            let x = 10
+
+            {
+                let x = 20
+                x
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn outer_binding_survives_inner_shadowing() {
+    let result =
+        run(
+            r#"
+            let x = 10
+
+            {
+                let x = 20
+                x
+            }
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
 fn let_allows_shadowing_in_child_scope() {
     assert_eq!(
         run(
@@ -1255,5 +1297,202 @@ fn try_option_none() {
     }
 }
 
+#[test]
+fn tuple_value() {
+    let result =
+        run(
+            "(10, 20)"
+        );
+
+    match result {
+        Value::Tuple(values) => {
+            assert_eq!(
+                values.as_ref(),
+                &[
+                    Value::Int(10),
+                    Value::Int(20),
+                ]
+            );
+        }
+
+        other => panic!(
+            "expected Tuple, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn tuple_index() {
+    let result =
+        run(
+            r#"
+            let p = (10, 20)
+            p.1
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn match_tuple() {
+    let result =
+        run(
+            r#"
+            match (10, 20) {
+                (x, y) =>
+                    x + y
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn match_nested_tuple() {
+    let result =
+        run(
+            r#"
+            match ((1, 2), 3) {
+                ((a, b), c) =>
+                    a + b + c
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn match_tuple_and_enum() {
+    let result =
+        run(
+            r#"
+            enum Point {
+                Cartesian(x, y)
+                Empty
+            }
+
+            let p =
+                Point.Cartesian(10, 20)
+
+            match p {
+                Point.Cartesian(x, y) =>
+                    x + y
+
+                Point.Empty =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn let_tuple_destructuring() {
+    let result =
+        run(
+            r#"
+            let (x, y) =
+                (10, 20)
+
+            x + y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn let_nested_tuple_destructuring() {
+    let result =
+        run(
+            r#"
+            let ((a, b), c) =
+                ((1, 2), 3)
+
+            a + b + c
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn let_enum_destructuring() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let Result.Ok(x) =
+                Result.Ok(42)
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn let_wildcard_pattern() {
+    let result =
+        run(
+            r#"
+            let (_, x) =
+                (10, 20)
+
+            x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn let_pattern_mismatch() {
+    let result =
+        run_result(
+            r#"
+            let (x, y) =
+                (1, 2, 3)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
 
 

@@ -197,6 +197,70 @@ impl Interpreter {
             Str(s) => Ok(ControlFlow::Value(Value::Str(Rc::new(s.clone())))),
             Bool(v) => Ok(ControlFlow::Value(Value::Bool(*v))),
             Ident(name) => self.lookup(name, expr),
+
+            Tuple(elements) => {
+                let mut values =
+                    Vec::with_capacity(
+                        elements.len()
+                    );
+
+                for element in elements {
+                    match self.eval(element)? {
+                        ControlFlow::Value(value) => {
+                            values.push(value);
+                        }
+
+                        other => {
+                            return Ok(other);
+                        }
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Tuple(
+                            Rc::new(values)
+                        )
+                    )
+                )
+            }
+            TupleIndex { object, index } => {
+                let value =
+                    self.eval_value(object)?;
+
+                match value {
+                    Value::Tuple(tuple) => {
+                        tuple
+                            .get(*index)
+                            .cloned()
+                            .map(ControlFlow::Value)
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Index,
+                                    format!(
+                                        "tuple index out of range: {}",
+                                        index
+                                    ),
+                                    expr,
+                                )
+                            })
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "{} cannot be indexed by tuple index",
+                                    other.type_name()
+                                ),
+                                expr,
+                            )
+                        )
+                    }
+                }
+            }
+
             List(items) => self.eval_list(items, expr),
             Dict(entries) => self.eval_dict(entries, expr),
 
@@ -221,48 +285,7 @@ impl Interpreter {
 
             Import(parts) => self.eval_import(parts, expr),
 
-            Let(name, rhs) => {
-                if self.env.contains_local(name) {
-                    return Err(self.error(
-                        ErrorKind::Name,
-                        format!(
-                            "{} is already defined in this scope",
-                            name
-                        ),
-                        expr,
-                    ));
-                }
-
-                let result = self.eval(rhs)?;
-
-                match result {
-                    ControlFlow::Value(mut value) => {
-                        if let Value::Func(func) = &value {
-                            if func.name.is_none() {
-                                value = Value::Func(Rc::new(Function {
-                                    name: Some(name.clone()),
-                                    params: func.params.clone(),
-                                    body: func.body.clone(),
-                                    closure: func.closure.clone(),
-                                }));
-                            }
-                        }
-
-                        self.env.define(
-                            name.clone(),
-                            value,
-                        );
-
-                        Ok(ControlFlow::Value(
-                            Value::Unit,
-                        ))
-                    }
-
-                    other => {
-                        Ok(other)
-                    }
-                }
-            }
+            Let(pattern, rhs) => self.eval_let(pattern, rhs),
             Assign(name, rhs) => {
                 let mut value = self.eval_value(rhs)?;
                 if let Value::Func(func) = &value {
@@ -433,7 +456,8 @@ impl Interpreter {
 
             Index(obj, index) => self.eval_index(obj, index, expr),
 
-            Null => Ok(ControlFlow::Value(Value::Null))
+            Null => Ok(ControlFlow::Value(Value::Null)),
+            Unit => Ok(ControlFlow::Value(Value::Unit)),
         }
     }
 
@@ -1014,6 +1038,90 @@ impl Interpreter {
             module,
             whole,
         )?;
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
+    }
+
+    fn eval_let(
+        &mut self,
+        pattern: &Pattern,
+        value_expr: &Expr,
+    ) -> Result<ControlFlow> {
+        // =========================================================
+        // 1. Evaluate initializer.
+        // =========================================================
+        let value =
+            match self.eval(value_expr)? {
+                ControlFlow::Value(value) =>
+                    value,
+
+                other =>
+                    return Ok(other),
+            };
+
+        // =========================================================
+        // 2. Match pattern and collect bindings.
+        // =========================================================
+        let mut bindings =
+            HashMap::new();
+
+        let matched =
+            match_pattern(
+                pattern,
+                &value,
+                &mut bindings,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Runtime,
+                    message,
+                    value_expr,
+                )
+            })?;
+
+        if !matched {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    "let pattern does not match value",
+                    value_expr,
+                )
+            );
+        }
+
+        // =========================================================
+        // 3. Check duplicate bindings inside the pattern.
+        //=========================================================
+        for name in bindings.keys() {
+            if self.env.contains_local(name) {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "variable '{}' is already defined in the current scope",
+                            name
+                        ),
+                        value_expr,
+                    )
+                );
+            }
+        }
+
+        // =========================================================
+        // 4. Commit all bindings.
+        // =========================================================
+        for (name, value)
+            in bindings
+        {
+            self.env.define(
+                name,
+                value,
+            );
+        }
 
         Ok(
             ControlFlow::Value(
@@ -5090,6 +5198,13 @@ fn match_pattern(
         }
 
         Pattern::Ident(name) => {
+            if bindings.contains_key(name) {
+                return Err(format!(
+                    "duplicate binding '{}' in pattern",
+                    name
+                ));
+            }
+
             bindings.insert(
                 name.clone(),
                 value.clone(),
@@ -5150,6 +5265,36 @@ fn match_pattern(
                         enum_value,
                         bindings,
                     )
+                }
+
+                _ => Ok(false),
+            }
+        }
+
+        Pattern::Tuple(patterns) => {
+            match value {
+                Value::Tuple(tuple) => {
+                    if tuple.len()
+                        != patterns.len()
+                    {
+                        return Ok(false);
+                    }
+
+                    for (pattern, value)
+                        in patterns
+                            .iter()
+                            .zip(tuple.iter())
+                    {
+                        if !match_pattern(
+                            pattern,
+                            value,
+                            bindings,
+                        )? {
+                            return Ok(false);
+                        }
+                    }
+
+                    Ok(true)
                 }
 
                 _ => Ok(false),

@@ -44,6 +44,12 @@ pub enum ExprKind {
     Bool(bool),
     Ident(String),
 
+    Tuple(Vec<Expr>),
+    TupleIndex {
+        object: Box<Expr>,
+        index: usize,
+    },
+
     List(Vec<ListItem>),
     Dict(Vec<(String, Expr)>),
 
@@ -57,7 +63,7 @@ pub enum ExprKind {
     Import(Vec<String>),
 
     // Assignment & Deassignment
-    Let(String, Box<Expr>),
+    Let(Pattern, Box<Expr>),
     Assign(String, Box<Expr>),
     AssignIndex(Box<Expr>, IndexExpr, Box<Expr>),
     AssignField(Box<Expr>, String, Box<Expr>),
@@ -86,6 +92,7 @@ pub enum ExprKind {
     Index(Box<Expr>, IndexExpr),
 
     Null,
+    Unit,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +171,8 @@ pub enum Pattern {
     Float(f64),
     Bool(bool),
     Str(String),
+
+    Tuple(Vec<Pattern>),
 
     Enum {
         path: Vec<String>,
