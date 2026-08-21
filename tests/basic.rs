@@ -1151,3 +1151,109 @@ fn result_match() {
     );
 }
 
+#[test]
+fn try_result_err() {
+    let result =
+        run_result(
+            r#"
+            get_value = || {
+                return Result.Err("failed")?
+            }
+
+            get_value()
+            "#
+        );
+
+    match result {
+        Ok(value) => {
+            match value {
+                Value::EnumValue(value) => {
+                    assert_eq!(
+                        value.enum_name(),
+                        "Result"
+                    );
+
+                    assert_eq!(
+                        value.variant(),
+                        "Err"
+                    );
+                }
+
+                other => {
+                    panic!(
+                        "unexpected value: {:?}",
+                        other
+                    );
+                }
+            }
+        }
+
+        Err(_) => {
+            panic!(
+                "unexpected error"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_option_some() {
+    let result =
+        run(
+            r#"
+            get_value = || {
+                return Option.Some(42)?
+            }
+
+            get_value()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn try_option_none() {
+    let result =
+        run_result(
+            r#"
+            get_value = || {
+                return Option.None?
+            }
+
+            get_value()
+            "#
+        );
+
+    let value =
+        result.expect(
+            "function should return Option.None"
+        );
+
+    match value {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected value: {:?}",
+                other
+            );
+        }
+    }
+}
+
+
+

@@ -18,40 +18,45 @@ pub fn run(source: &str) -> Value {
 pub fn run_result(
     source: &str,
 ) -> Result<Value, Error> {
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.lex()?;
+    let mut lexer =
+        Lexer::new(source);
 
-    let mut parser = Parser::new(tokens);
-    let program = parser.parse()?;
+    let tokens =
+        lexer.lex()?;
 
-    let mut interpreter = Interpreter::new();
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        parser.parse()?;
+
+    let mut interpreter =
+        Interpreter::new();
 
     match interpreter.eval_program(&program)? {
         ControlFlow::Value(value) =>
             Ok(value),
 
-        ControlFlow::Return(value) => {
+        ControlFlow::Return(value) =>
             Err(
                 Error::new(
                     ErrorKind::Runtime,
                     format!(
-                        "unexpected return at top level: {}",
+                        "unexpected top-level return: {}",
                         value
                     ),
                     None,
                 )
-            )
-        }
+            ),
 
-        ControlFlow::Break => {
+        ControlFlow::Break =>
             Err(
                 Error::new(
                     ErrorKind::Runtime,
-                    "unexpected break at top level",
+                    "unexpected top-level break",
                     None,
                 )
-            )
-        }
+            ),
     }
 }
 

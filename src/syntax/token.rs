@@ -58,6 +58,7 @@ pub enum TokenKind {
     Colon,
     Semicolon,
     Underscore,
+    Question,
 
     DoubleDot,
     DoubleDotEq,

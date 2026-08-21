@@ -115,6 +115,8 @@ impl<'a> Lexer<'a> {
 
                 '@' => TokenKind::At,
 
+                '?' => TokenKind::Question,
+
                 '=' => {
                     if self.consume_if('=') {
                         TokenKind::DoubleEq

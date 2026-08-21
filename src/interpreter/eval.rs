@@ -185,8 +185,12 @@ impl Interpreter {
         Ok(ControlFlow::Value(last))
     }
 
-    pub fn eval(&mut self, expr: &Expr) -> Result<ControlFlow> {
+    pub fn eval(
+        &mut self,
+        expr: &Expr
+    ) -> Result<ControlFlow> {
         use ExprKind::*;
+
         match &expr.kind {
             Int(n) => Ok(ControlFlow::Value(Value::Int(*n))),
             Float(n) => Ok(ControlFlow::Value(Value::Float(*n))),
@@ -221,27 +225,43 @@ impl Interpreter {
                 if self.env.contains_local(name) {
                     return Err(self.error(
                         ErrorKind::Name,
-                        format!("{} is already defined in this scope", name),
+                        format!(
+                            "{} is already defined in this scope",
+                            name
+                        ),
                         expr,
                     ));
                 }
 
-                let mut value = self.eval_value(rhs)?;
+                let result = self.eval(rhs)?;
 
-                if let Value::Func(func) = &value {
-                    if func.name.is_none() {
-                        value = Value::Func(Rc::new(Function {
-                            name: Some(name.clone()),
-                            params: func.params.clone(),
-                            body: func.body.clone(),
-                            closure: func.closure.clone(),
-                        }));
+                match result {
+                    ControlFlow::Value(mut value) => {
+                        if let Value::Func(func) = &value {
+                            if func.name.is_none() {
+                                value = Value::Func(Rc::new(Function {
+                                    name: Some(name.clone()),
+                                    params: func.params.clone(),
+                                    body: func.body.clone(),
+                                    closure: func.closure.clone(),
+                                }));
+                            }
+                        }
+
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+
+                        Ok(ControlFlow::Value(
+                            Value::Unit,
+                        ))
+                    }
+
+                    other => {
+                        Ok(other)
                     }
                 }
-
-                self.env.define(name.clone(), value.clone());
-
-                Ok(ControlFlow::Value(value))
             }
             Assign(name, rhs) => {
                 let mut value = self.eval_value(rhs)?;
@@ -395,6 +415,8 @@ impl Interpreter {
                     arms,
                     expr,
                 ),
+
+            Try(inner) => self.eval_try(expr, inner),
 
             Block(exprs) => self.eval_block(exprs, true),
 
@@ -2033,13 +2055,32 @@ impl Interpreter {
         }
     }
 
-    fn resolve_slice(&mut self, start: Option<&Expr>, end: Option<&Expr>, inclusive: bool, len: usize, whole: &Expr) -> Result<(usize,usize)> {
-        let s = match start { Some(e) => self.eval_index_int(e, whole)?, None => 0 };
-        let mut e = match end { Some(e) => self.eval_index_int(e, whole)?, None => len };
+    fn resolve_slice(
+        &mut self,
+        start: Option<&Expr>,
+        end: Option<&Expr>,
+        inclusive: bool,
+        len: usize,
+        whole: &Expr
+    ) -> Result<(usize,usize)> {
+        let s = match start { 
+            Some(e) => self.eval_index_int(e, whole)?, 
+            None => 0 
+        };
+
+        let mut e = match end { 
+            Some(e) => self.eval_index_int(e, whole)?, 
+            None => len 
+        };
+
         if inclusive {
             e = e.checked_add(1).ok_or_else(|| self.error(ErrorKind::Overflow, "slice endpoint overflow", whole))?;
         }
-        if s > e || e > len { return Err(self.error(ErrorKind::Index, "invalid slice range", whole)); }
+
+        if s > e || e > len { 
+            return Err(self.error(ErrorKind::Index, "invalid slice range", whole)); 
+        }
+
         Ok((s,e))
     }
 
@@ -2172,7 +2213,12 @@ impl Interpreter {
         }
     }
 
-    fn eval_while(&mut self, cond: &Expr, body: &Expr, whole: &Expr) -> Result<ControlFlow> {
+    fn eval_while(
+        &mut self,
+        cond: &Expr,
+        body: &Expr,
+        whole: &Expr
+    ) -> Result<ControlFlow> {
         let mut last = Value::Bool(false);
         self.loop_depth += 1;
         let result = (|| {
@@ -2193,7 +2239,13 @@ impl Interpreter {
         result
     }
 
-    fn eval_for(&mut self, name: &str, iterable: &IndexExpr, body: &Expr, whole: &Expr) -> Result<ControlFlow> {
+    fn eval_for(
+        &mut self,
+        name: &str,
+        iterable: &IndexExpr,
+        body: &Expr,
+        whole: &Expr
+    ) -> Result<ControlFlow> {
         let mut iterator = self.eval_iterable(iterable, whole)?;
         let old_env = self.env.clone();
         self.env = self.env.child();
@@ -2298,20 +2350,170 @@ impl Interpreter {
     result
 }
 
-    fn eval_block(&mut self, exprs: &[Expr], scoped: bool) -> Result<ControlFlow> {
-        let old_env = self.env.clone();
-        if scoped { self.env = self.env.child(); }
-        let result = (|| {
-            let mut last = Value::Unit;
-            for expr in exprs {
-                match self.eval(expr)? {
-                    ControlFlow::Value(v) => last=v,
-                    other => return Ok(other),
+    fn eval_try(
+        &mut self,
+        whole: &Expr,
+        inner: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(inner)?;
+
+        match value {
+            Value::EnumValue(value) => {
+                match (
+                    value.enum_name(),
+                    value.variant(),
+                ) {
+                    // =================================================
+                    // Option.Some
+                    // =================================================
+
+                    ("Option", "Some") => {
+                        if value.fields().len()
+                            != 1
+                        {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "Option.Some expects exactly one value",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                                    .field(0)
+                                    .unwrap()
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Option.None
+                    // =================================================
+
+                    ("Option", "None") => {
+                        Ok(
+                            ControlFlow::Return(
+                                Value::EnumValue(
+                                    Rc::clone(&value)
+                                )
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Result.Ok
+                    // =================================================
+
+                    ("Result", "Ok") => {
+                        if value.fields().len()
+                            != 1
+                        {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "Result.Ok expects exactly one value",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                                    .field(0)
+                                    .unwrap()
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Result.Err
+                    // =================================================
+
+                    ("Result", "Err") => {
+                        Ok(
+                            ControlFlow::Return(
+                                Value::EnumValue(
+                                    Rc::clone(&value)
+                                )
+                            )
+                        )
+                    }
+
+                    // =================================================
+                    // Unknown enum
+                    // =================================================
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "? cannot be applied to {}.{}",
+                                    value.enum_name(),
+                                    value.variant()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
                 }
             }
-            Ok(ControlFlow::Value(last))
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "? expects Option or Result, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn eval_block(
+        &mut self,
+        exprs: &[Expr],
+        _: bool,
+    ) -> Result<ControlFlow> {
+        let new_env = self.env.child();
+        let old_env =
+            std::mem::replace(
+                &mut self.env,
+                new_env,
+            );
+
+        let result = (|| {
+            let mut last =
+                Value::Unit;
+
+            for expr in exprs {
+                match self.eval(expr)? {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
+
+                    other => {
+                        return Ok(other);
+                    }
+                }
+            }
+
+            Ok(
+                ControlFlow::Value(last)
+            )
         })();
-        if scoped { self.env = old_env; }
+
+        self.env = old_env;
+
         result
     }
 
@@ -3083,24 +3285,58 @@ impl Interpreter {
         &mut self,
         func: crate::runtime::FuncRef,
         args: Vec<Value>,
-        call_site: &Expr
+        call_site: &Expr,
     ) -> Result<ControlFlow> {
         if func.params.len() != args.len() {
-            return Err(self.error(ErrorKind::Arity, format!("function expects {} arguments, got {}", func.params.len(), args.len()), call_site));
+            return Err(self.error(
+                ErrorKind::Arity,
+                format!(
+                    "function expects {} arguments, got {}",
+                    func.params.len(),
+                    args.len(),
+                ),
+                call_site,
+            ));
         }
-        self.stack.push(StackFrame { function: func.name.clone().unwrap_or_else(|| "<lambda>".into()), span: Some(call_site.span) });
-        let old_env = self.env.clone();
-        let call_env = func.closure.child();
-        for (name,value) in func.params.iter().zip(args) { call_env.define(name.clone(), value); }
-        self.env = call_env;
+
+        let function_name =
+            func.name
+                .clone()
+                .unwrap_or_else(|| "<lambda>".into());
+
+        self.stack.push(StackFrame {
+            function: function_name,
+            span: Some(call_site.span),
+        });
+
+        let old_env = std::mem::replace(
+            &mut self.env,
+            func.closure.child(),
+        );
+
+        for (name, value) in func.params.iter().zip(args) {
+            self.env.define(name.clone(), value);
+        }
+
         self.function_depth += 1;
+
         let result = self.eval(&func.body);
+
         self.function_depth -= 1;
         self.env = old_env;
         self.stack.pop();
+
         match result? {
-            ControlFlow::Value(v) | ControlFlow::Return(v) => Ok(ControlFlow::Value(v)),
-            ControlFlow::Break => Err(self.error(ErrorKind::Control,"break outside loop",call_site)),
+            ControlFlow::Value(value)
+            | ControlFlow::Return(value) => {
+                Ok(ControlFlow::Value(value))
+            }
+
+            ControlFlow::Break => Err(self.error(
+                ErrorKind::Control,
+                "break outside loop",
+                call_site,
+            )),
         }
     }
 

@@ -750,6 +750,21 @@ impl Parser {
                     let start = expr.span;
                     expr = Expr::new(ExprKind::Field(Box::new(expr), name), start.join(tok.span));
                 }
+                TokenKind::Question => {
+                    let start = expr.span;
+                    let question =
+                        self.peek().clone();
+
+                    self.eat();
+
+                    expr = Expr::new(
+                        ExprKind::Try(
+                            Box::new(expr)
+                        ),
+                        start.join(question.span),
+                    );
+                }
+                
                 _ => break,
             }
         }

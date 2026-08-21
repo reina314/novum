@@ -72,12 +72,13 @@ pub enum ExprKind {
     Break,
     Return(Option<Box<Expr>>),
     For(String, IndexExpr, Box<Expr>),
+    Try(Box<Expr>),
 
     Match {
         value: Box<Expr>,
         arms: Vec<MatchArm>,
     },
-
+    
     Block(Vec<Expr>),
     Lambda(Vec<String>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
