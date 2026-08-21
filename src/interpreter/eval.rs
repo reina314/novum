@@ -22,6 +22,9 @@ use crate::{
         ModuleRef,
         ObjectRef,
         StructDefinition,
+        EnumValue,
+        EnumDef as RuntimeEnumDef,
+        EnumConstructor,
         Series,
         SeriesRef, 
         DataFrameRef,
@@ -31,6 +34,7 @@ use crate::{
         MethodReceiver,
     }, 
     syntax::{
+        ast::EnumDef as AstEnumDef,
         BinOp, 
         Expr, 
         ExprKind, 
@@ -118,6 +122,12 @@ impl Interpreter {
                     name,
                     fields,
                     methods,
+                    expr,
+                )
+            }
+            EnumDecl(definition) => {
+                self.eval_enum_decl(
+                    definition,
                     expr,
                 )
             }
@@ -407,6 +417,50 @@ impl Interpreter {
         );
 
         Ok(ControlFlow::Value(Value::Unit))
+    }
+
+    fn eval_enum_decl(
+        &mut self,
+        definition: &AstEnumDef,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let mut enum_def =
+            RuntimeEnumDef::new(
+                definition.name.clone()
+            );
+
+        for variant
+            in &definition.variants
+        {
+            enum_def
+                .add_variant(
+                    variant.name.clone(),
+                    variant.fields.len(),
+                )
+                .map_err(|message| {
+                    self.error(
+                        ErrorKind::Name,
+                        message,
+                        whole,
+                    )
+                })?;
+        }
+
+        let enum_ref =
+            Rc::new(enum_def);
+
+        self.env.define(
+            definition.name.clone(),
+            Value::Enum(
+                enum_ref
+            ),
+        );
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn resolve_module_path(
@@ -2363,6 +2417,62 @@ impl Interpreter {
                 ))
             }
 
+            Value::EnumConstructor(constructor) => {
+                let variant =
+                    constructor
+                        .enum_def()
+                        .variant(
+                            constructor.variant()
+                        )
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "unknown enum variant '{}'",
+                                    constructor.variant()
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                if values.len()
+                    != variant.arity()
+                {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}.{} expects {} arguments, got {}",
+                                constructor
+                                    .enum_def()
+                                    .name(),
+                                constructor.variant(),
+                                variant.arity(),
+                                values.len(),
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                let value =
+                    EnumValue::new(
+                        constructor
+                            .enum_def()
+                            .name(),
+                        constructor.variant(),
+                        values,
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::EnumValue(
+                            Rc::new(value)
+                        )
+                    )
+                )
+            }
+
             other => Err(self.error(ErrorKind::Type,format!("{} is not callable",other.type_name()),whole)),
         }
     }
@@ -2445,6 +2555,36 @@ impl Interpreter {
                         )
                     })
             }
+
+            Value::Enum(enum_def) => {
+            if enum_def
+                .variant(name)
+                .is_some()
+            {
+                Ok(
+                    ControlFlow::Value(
+                        Value::EnumConstructor(
+                            EnumConstructor::new(
+                                enum_def.clone(),
+                                name.to_owned(),
+                            )
+                        )
+                    )
+                )
+            } else {
+                Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "enum '{}' has no variant '{}'",
+                            enum_def.name(),
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
 
             Value::Series(series) => {
                 match name {

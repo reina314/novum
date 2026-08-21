@@ -19,6 +19,18 @@ impl Expr {
 }
 
 #[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
     Float(f64),
@@ -34,6 +46,7 @@ pub enum ExprKind {
         fields: Vec<String>,
         methods: Vec<(String, Box<Expr>)>,
     },
+    EnumDecl(EnumDef),
 
     Import(Vec<String>),
 

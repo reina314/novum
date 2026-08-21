@@ -87,6 +87,29 @@ impl Parser {
         }
     }
 
+    fn expect_ident(
+        &mut self,
+    ) -> Result<String> {
+        let token =
+            self.peek().clone();
+
+        match token.kind {
+            TokenKind::Ident(name) => {
+                self.eat();
+                Ok(name)
+            }
+
+            _ => {
+                Err(
+                    Error::parse(
+                        "expected identifier",
+                        token.span,
+                    )
+                )
+            }
+        }
+    }
+
     /// DEPRECATED
     /// 
     /// Kept only for backward compatibility.
@@ -201,6 +224,7 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::Let => self.parse_let(),
             TokenKind::Struct => self.parse_struct(), 
+            TokenKind::Enum => self.parse_enum(),
             TokenKind::Import => self.parse_import(),
 
             _ => self.parse_or(),
@@ -375,6 +399,83 @@ impl Parser {
             },
             start.join(close),
         ))
+    }
+
+    fn parse_enum(&mut self) -> Result<Expr> {
+        let start =
+            self.expect(TokenKind::Enum)?
+                .span;
+
+        let name =
+            self.expect_ident()?;
+
+        self.expect(
+            TokenKind::LBrace
+        )?;
+
+        let mut variants =
+            Vec::new();
+
+        while !self.check(TokenKind::RBrace) {
+            let variant_name =
+                self.expect_ident()?;
+
+            let mut fields =
+                Vec::new();
+
+            // Looking for EnumValue
+            if self.check(TokenKind::LParen) {
+                self.eat();
+
+                if !self.check(TokenKind::RParen) {
+                    loop {
+                        fields.push(
+                            self.expect_ident()?
+                        );
+
+                        if self.check(TokenKind::Comma) {
+                            self.eat();
+
+                            if self.check(TokenKind::RParen) {
+                                break;
+                            }
+
+                            continue;
+                        }
+
+                        break;
+                    }
+                }
+
+                self.expect(TokenKind::RParen)?;
+            }
+
+            variants.push(
+                EnumVariant {
+                    name: variant_name,
+                    fields,
+                }
+            );
+
+            self.eat_if(TokenKind::Comma);
+        }
+
+        let end =
+            self.expect(
+                TokenKind::RBrace
+            )?.span;
+
+        Ok(
+            Expr::new(
+                ExprKind::EnumDecl(
+                    EnumDef {
+                        name,
+                        variants,
+                    }
+                ),
+                start.join(end),
+            )
+        )
     }
 
     fn parse_import(&mut self) -> Result<Expr> {

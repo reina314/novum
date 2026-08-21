@@ -39,6 +39,7 @@ pub enum TokenKind {
     Let,
 
     Struct,
+    Enum,
 
     Import,
 

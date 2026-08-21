@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    run,
+    run, run_result
 };
 use novum::{Interpreter, Lexer, Parser};
 use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
@@ -526,4 +526,151 @@ fn bound_method_keeps_receiver() {
         ),
     }
 }
+
+#[test]
+fn enum_definition() {
+    let result =
+        run(
+            r#"
+            enum Color {
+                Red,
+                Green,
+                Blue,
+            }
+
+            Color
+            "#
+        );
+
+    match result {
+        Value::Enum(definition) => {
+            assert_eq!(
+                definition.name(),
+                "Color"
+            );
+
+            assert!(
+                definition
+                    .variant("Red")
+                    .is_some()
+            );
+
+            assert!(
+                definition
+                    .variant("Green")
+                    .is_some()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Enum, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_variant_constructor() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+                Err(error),
+            }
+
+            Result.Ok(42)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Ok"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[
+                    Value::Int(42)
+                ]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected EnumValue, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_variant_arity_error() {
+    let result =
+        run_result(
+            r#"
+            enum Result {
+                Ok(value),
+            }
+
+            Result.Ok()
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn enum_value_equality() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+                Err(error),
+            }
+
+            Result.Ok(42)
+            ==
+            Result.Ok(42)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn enum_value_display() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value),
+            }
+
+            Result.Ok(42)
+            "#
+        );
+
+    assert_eq!(
+        format!("{}", result),
+        "Result.Ok(42)"
+    );
+}
+
 
