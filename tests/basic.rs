@@ -673,4 +673,304 @@ fn enum_value_display() {
     );
 }
 
+#[test]
+fn match_literal() {
+    let result =
+        run(
+            r#"
+            let x = 2
+
+            match x {
+                0 => "zero"
+                1 => "one"
+                2 => "two"
+                _ => "other"
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new("two".into())
+        )
+    );
+}
+
+#[test]
+fn match_wildcard() {
+    let result =
+        run(
+            r#"
+            let x = 42
+
+            match x {
+                0 => "zero"
+                _ => "other"
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new("other".into())
+        )
+    );
+}
+
+#[test]
+fn match_enum_unit_variant() {
+    let result =
+        run(
+            r#"
+            enum Color {
+                Red
+                Green
+                Blue
+            }
+
+            let color =
+                Color.Green
+
+            match color {
+                Color.Red => 1
+                Color.Green => 2
+                Color.Blue => 3
+                _ => 0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn match_enum_mixed_variants() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+                Empty
+            }
+
+            let result =
+                Result.Empty
+
+            match result {
+                Result.Ok(value) => 1
+                Result.Err(error) => 2
+                Result.Empty => 3
+                _ => 4
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn match_enum_payload() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            match result {
+                Result.Ok(value) =>
+                    value + 1
+
+                Result.Err(error) =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(43)
+    );
+}
+
+#[test]
+fn match_nested_enum() {
+    let result =
+        run(
+            r#"
+            enum Option {
+                Some(value)
+                None
+            }
+
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let value =
+                Result.Ok(
+                    Option.Some(42)
+                )
+
+            match value {
+                Result.Ok(
+                    Option.Some(x)
+                ) =>
+                    x
+
+                _ =>
+                    0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn match_binding_is_local() {
+    let result =
+        run(
+            r#"
+            enum Result {
+                Ok(value)
+                Err(error)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            let output =
+                match result {
+                    Result.Ok(value) =>
+                        value + 1
+
+                    _ =>
+                        0
+                }
+
+            output
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(43)
+    );
+}
+
+#[test]
+fn match_binding_does_not_escape() {
+    let result =
+        run_result(
+            r#"
+            enum Result {
+                Ok(value)
+            }
+
+            let result =
+                Result.Ok(42)
+
+            match result {
+                Result.Ok(value) =>
+                    value
+            }
+
+            value
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn match_arm_block() {
+    let result =
+        run(
+            r#"
+            let x = 2
+
+            match x {
+                2 => {
+                    let y = 10
+                    y + 1
+                }
+
+                _ => 0
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(11)
+    );
+}
+
+#[test]
+fn match_arm_return() {
+    let result =
+        run(
+            r#"
+            let test = |x| {
+                match x {
+                    0 => return 10
+                    _ => 20
+                }
+            }
+
+            test(0)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
+fn match_arm_break() {
+    let result =
+        run(
+            r#"
+            let x = 0
+
+            while true {
+                match x {
+                    0 => break
+                    _ => null
+                }
+            }
+
+            42
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+
 

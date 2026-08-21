@@ -20,6 +20,20 @@ pub struct EnumVariant {
     arity: usize,
 }
 
+impl fmt::Debug for EnumVariant {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "{}({} args)",
+            self.name,
+            self.arity
+        )
+    }
+}
+
 impl EnumDef {
     pub fn new(
         name: impl Into<String>,
@@ -97,6 +111,19 @@ impl fmt::Debug for EnumDef {
     }
 }
 
+impl fmt::Display for EnumDef {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "<enum {}>",
+            self.name
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct EnumValue {
     enum_name: String,
@@ -140,6 +167,78 @@ impl EnumValue {
     }
 }
 
+impl fmt::Debug for EnumValue {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "{}.{}",
+            self.enum_name,
+            self.variant,
+        )?;
+
+        if !self.fields.is_empty() {
+            write!(f, "(")?;
+
+            for (i, value)
+                in self.fields.iter().enumerate()
+            {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+
+                write!(
+                    f,
+                    "{:?}",
+                    value
+                )?;
+            }
+
+            write!(f, ")")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for EnumValue {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "{}.{}",
+            self.enum_name,
+            self.variant,
+        )?;
+
+        if !self.fields.is_empty() {
+            write!(f, "(")?;
+
+            for (i, value)
+                in self.fields.iter().enumerate()
+            {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+
+                write!(
+                    f,
+                    "{}",
+                    value
+                )?;
+            }
+
+            write!(f, ")")?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct EnumConstructor {
     enum_def: EnumRef,
@@ -165,5 +264,51 @@ impl EnumConstructor {
 
     pub fn variant(&self) -> &str {
         &self.variant
+    }
+}
+
+impl fmt::Debug for EnumConstructor {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        let variant =
+            self.enum_def
+                .variant(&self.variant);
+
+        match variant {
+            Some(variant) => {
+                write!(
+                    f,
+                    "<enum constructor {}.{} / {} args>",
+                    self.enum_def.name(),
+                    self.variant,
+                    variant.arity(),
+                )
+            }
+
+            None => {
+                write!(
+                    f,
+                    "<enum constructor {}.{}>",
+                    self.enum_def.name(),
+                    self.variant,
+                )
+            }
+        }
+    }
+}
+
+impl fmt::Display for EnumConstructor {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "{}.{}",
+            self.enum_def.name(),
+            self.variant
+        )
     }
 }

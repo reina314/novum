@@ -29,6 +29,31 @@ impl<'a> Lexer<'a> {
         self.lookahead
     }
 
+    fn skip_trivia(&mut self) {
+        loop {
+            while matches!(self.peek(), Some(c) if c.is_whitespace()) {
+                self.consume();
+            }
+
+            if self.peek() == Some('/') {
+                let mut look = self.chars.clone();
+
+                if look.next() == Some('/') {
+                    self.consume();
+                    self.consume();
+
+                    while !matches!(self.peek(), None | Some('\n')) {
+                        self.consume();
+                    }
+
+                    continue;
+                }
+            }
+
+            break;
+        }
+    }
+
     fn consume(&mut self) -> Option<char> {
         let ch = self.lookahead?;
 
@@ -36,6 +61,15 @@ impl<'a> Lexer<'a> {
         self.lookahead = self.chars.next();
 
         Some(ch)
+    }
+
+    fn consume_if(&mut self, expected: char) -> bool {
+        if self.peek() == Some(expected) {
+            self.consume();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn lex(&mut self) -> Result<Vec<Token>> {
@@ -84,6 +118,9 @@ impl<'a> Lexer<'a> {
                 '=' => {
                     if self.consume_if('=') {
                         TokenKind::DoubleEq
+                    } else 
+                    if self.consume_if('>') {
+                        TokenKind::FatArrow
                     } else {
                         TokenKind::Equals
                     }
@@ -161,40 +198,6 @@ impl<'a> Lexer<'a> {
         Ok(tokens)
     }
 
-    fn consume_if(&mut self, expected: char) -> bool {
-        if self.peek() == Some(expected) {
-            self.consume();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn skip_trivia(&mut self) {
-        loop {
-            while matches!(self.peek(), Some(c) if c.is_whitespace()) {
-                self.consume();
-            }
-
-            if self.peek() == Some('/') {
-                let mut look = self.chars.clone();
-
-                if look.next() == Some('/') {
-                    self.consume();
-                    self.consume();
-
-                    while !matches!(self.peek(), None | Some('\n')) {
-                        self.consume();
-                    }
-
-                    continue;
-                }
-            }
-
-            break;
-        }
-    }
-
     fn lex_ident(&mut self, first: char) -> TokenKind {
         let mut s = String::new();
         s.push(first);
@@ -208,6 +211,8 @@ impl<'a> Lexer<'a> {
         }
 
         match s.as_str() {
+            "_" => TokenKind::Underscore,
+
             "true" => TokenKind::Bool(true),
             "false" => TokenKind::Bool(false),
 
@@ -225,6 +230,7 @@ impl<'a> Lexer<'a> {
             "for" => TokenKind::For,
             "in" => TokenKind::In,
             "let" => TokenKind::Let,
+            "match" => TokenKind::Match,
 
             "import" => TokenKind::Import,
 
@@ -315,7 +321,6 @@ impl<'a> Lexer<'a> {
                         '"' => '"',
                         '\'' => '\'',
 
-                        // 仕様上、未知の escape をそのまま通す
                         other => other,
                     };
 

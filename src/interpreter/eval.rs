@@ -23,6 +23,7 @@ use crate::{
         ObjectRef,
         StructDefinition,
         EnumValue,
+        EnumValueRef,
         EnumDef as RuntimeEnumDef,
         EnumConstructor,
         Series,
@@ -34,7 +35,11 @@ use crate::{
         MethodReceiver,
     }, 
     syntax::{
-        ast::EnumDef as AstEnumDef,
+        ast::{
+            EnumDef as AstEnumDef,
+            MatchArm,
+            Pattern,
+        },
         BinOp, 
         Expr, 
         ExprKind, 
@@ -90,15 +95,35 @@ impl Interpreter {
         interpreter
     }
 
-    pub fn eval_program(&mut self, program: &Program) -> Result<ControlFlow> {
+    pub fn eval_program(
+        &mut self,
+        program: &Program
+    ) -> Result<ControlFlow> {
         let mut last = Value::Unit;
+
         for expr in &program.statements {
             match self.eval(expr)? {
-                ControlFlow::Value(v) => last = v,
-                ControlFlow::Return(_) => return Err(self.error(ErrorKind::Control, "return outside function", expr)),
-                ControlFlow::Break => return Err(self.error(ErrorKind::Control, "break outside loop", expr)),
+                ControlFlow::Value(v) 
+                    => last = v,
+                ControlFlow::Return(_) 
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "return outside function", 
+                            expr
+                        )
+                    ),
+                ControlFlow::Break 
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "break outside loop",
+                            expr
+                        )
+                    ),
             }
         }
+
         Ok(ControlFlow::Value(last))
     }
 
@@ -282,11 +307,36 @@ impl Interpreter {
                 if self.loop_depth == 0 { Err(self.error(ErrorKind::Control, "break outside loop", expr)) } else { Ok(ControlFlow::Break) }
             }
             Return(value) => {
-                if self.function_depth == 0 { return Err(self.error(ErrorKind::Control, "return outside function", expr)); }
-                let v = match value { Some(v) => self.eval_value(v)?, None => Value::Unit };
+                if self.function_depth == 0 { 
+                    return Err(self.error(ErrorKind::Control, "return outside function", expr)); 
+                }
+
+                let v = 
+                match value { 
+                    Some(v) => self.eval_value(v)?,
+                    None => Value::Unit 
+                };
+
                 Ok(ControlFlow::Return(v))
             }
-            For(name, index, body) => self.eval_for(name, index, body, expr),
+            For(
+                name,
+                index,
+                body
+            ) => self.eval_for(
+                name,
+                index,
+                body,
+                expr
+                ),
+            Match {
+                value,
+                arms,
+            } => self.eval_match(
+                    value,
+                    arms,
+                    expr,
+                ),
 
             Block(exprs) => self.eval_block(exprs, true),
 
@@ -311,7 +361,12 @@ impl Interpreter {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
             ControlFlow::Return(v) => Ok(v),
-            ControlFlow::Break => Err(self.error(ErrorKind::Control, "break cannot appear here", expr)),
+            ControlFlow::Break => 
+                Err(self.error(
+                    ErrorKind::Control,
+                    "break cannot appear here",
+                    expr
+                )),
         }
     }
 
@@ -2102,6 +2157,89 @@ impl Interpreter {
         result
     }
 
+    fn eval_match(
+        &mut self,
+        value_expr: &Expr,
+        arms: &[MatchArm],
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(value_expr)?;
+
+        for arm in arms {
+            let mut bindings 
+                = HashMap::<String, Value>::new();
+
+            let matched =
+                match_pattern(
+                    &arm.pattern,
+                    &value,
+                    &mut bindings,
+                )
+                .map_err(|message| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        message,
+                        whole,
+                    )
+                })?;
+
+            if matched {
+                return self.eval_match_arm(
+                    &arm.body,
+                    bindings,
+                );
+            }
+        }
+
+        Err(
+            self.error(
+                ErrorKind::Runtime,
+                "non-exhaustive match",
+                whole,
+            )
+        )
+    }
+
+    fn eval_match_arm(
+    &mut self,
+    body: &Expr,
+    bindings: HashMap<String, Value>,
+) -> Result<ControlFlow> {
+    // ---------------------------------------------------------
+    // Create a child scope for the match arm.
+    // ---------------------------------------------------------
+    let new_env = self.env.child();
+    let previous =
+        std::mem::replace(
+            &mut self.env,
+            new_env,
+        );
+
+    // ---------------------------------------------------------
+    // Bind pattern variables.
+    // ---------------------------------------------------------
+    for (name, value) in bindings {
+        self.env.define(
+            name,
+            value,
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Evaluate the arm as a normal expression/control flow.
+    // ---------------------------------------------------------
+    let result =
+        self.eval(body);
+
+    // ---------------------------------------------------------
+    // Always restore the previous environment before returning.
+    // ---------------------------------------------------------
+    self.env = previous;
+
+    result
+}
+
     fn eval_block(&mut self, exprs: &[Expr], scoped: bool) -> Result<ControlFlow> {
         let old_env = self.env.clone();
         if scoped { self.env = self.env.child(); }
@@ -2557,34 +2695,54 @@ impl Interpreter {
             }
 
             Value::Enum(enum_def) => {
-            if enum_def
-                .variant(name)
-                .is_some()
-            {
+                let variant =
+                    enum_def
+                        .variant(name)
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "enum '{}' has no variant '{}'",
+                                    enum_def.name(),
+                                    name,
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                // ---------------------------------------------------------
+                // Unit variant
+                //---------------------------------------------------------
+                if variant.arity() == 0 {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::EnumValue(
+                                Rc::new(
+                                    EnumValue::new(
+                                        enum_def.name(),
+                                        name,
+                                        Vec::new(),
+                                    )
+                                )
+                            )
+                        )
+                    );
+                }
+
+                // ---------------------------------------------------------
+                // Payload variant
+                // ---------------------------------------------------------
                 Ok(
                     ControlFlow::Value(
                         Value::EnumConstructor(
                             EnumConstructor::new(
                                 enum_def.clone(),
-                                name.to_owned(),
+                                name,
                             )
                         )
                     )
                 )
-            } else {
-                Err(
-                    self.error(
-                        ErrorKind::Name,
-                        format!(
-                            "enum '{}' has no variant '{}'",
-                            enum_def.name(),
-                            name
-                        ),
-                        whole,
-                    )
-                )
             }
-        }
 
             Value::Series(series) => {
                 match name {
@@ -4625,3 +4783,144 @@ impl Interpreter {
     }
 
 }
+
+/// Helper for `eval_match()`
+fn match_pattern(
+    pattern: &Pattern,
+    value: &Value,
+    bindings: &mut HashMap<String, Value>,
+) -> std::result::Result<bool, String> {
+    match pattern {
+        Pattern::Wildcard => {
+            Ok(true)
+        }
+
+        Pattern::Ident(name) => {
+            bindings.insert(
+                name.clone(),
+                value.clone(),
+            );
+
+            Ok(true)
+        }
+
+        Pattern::Int(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Int(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Float(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Float(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Bool(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Bool(actual)
+                        if actual == expected
+                )
+            )
+        }
+
+        Pattern::Str(expected) => {
+            Ok(
+                matches!(
+                    value,
+                    Value::Str(actual)
+                        if actual.as_ref() == expected
+                )
+            )
+        }
+
+        Pattern::Enum {
+            path,
+            fields,
+        } => {
+            match value {
+                Value::EnumValue(enum_value) => {
+                    match_enum_pattern(
+                        path,
+                        fields,
+                        enum_value,
+                        bindings,
+                    )
+                }
+
+                _ => Ok(false),
+            }
+        }
+    }
+}
+
+/// Helper for `match_pattern()`
+fn match_enum_pattern(
+    path: &[String],
+    patterns: &[Pattern],
+    value: &EnumValueRef,
+    bindings: &mut HashMap<String, Value>,
+) -> std::result::Result<bool, String> {
+    if path.len() != 2 {
+        return Err(
+            "enum pattern expects Enum.Variant"
+                .into()
+        );
+    }
+
+    let enum_name =
+        &path[0];
+
+    let variant_name =
+        &path[1];
+
+    if value.enum_name()
+        != enum_name
+    {
+        return Ok(false);
+    }
+
+    if value.variant()
+        != variant_name
+    {
+        return Ok(false);
+    }
+
+    if value.fields().len()
+        != patterns.len()
+    {
+        return Err(format!(
+            "enum variant '{}' expects {} pattern arguments, got {}",
+            variant_name,
+            value.fields().len(),
+            patterns.len()
+        ));
+    }
+
+    for (pattern, field)
+        in patterns
+            .iter()
+            .zip(value.fields())
+    {
+        if !match_pattern(
+            pattern,
+            field,
+            bindings,
+        )? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+

@@ -859,24 +859,46 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr> {
         let tok = self.peek().clone();
         match tok.kind {
-            TokenKind::Int(n) => { self.eat(); Ok(Expr::new(ExprKind::Int(n), tok.span)) }
-            TokenKind::Float(n) => { self.eat(); Ok(Expr::new(ExprKind::Float(n), tok.span)) }
-            TokenKind::Str(s) => { self.eat(); Ok(Expr::new(ExprKind::Str(s), tok.span)) }
-            TokenKind::Bool(b) => { self.eat(); Ok(Expr::new(ExprKind::Bool(b), tok.span)) }
-            TokenKind::Ident(s) => { self.eat(); Ok(Expr::new(ExprKind::Ident(s), tok.span)) }
-            TokenKind::Null => { self.eat(); Ok(Expr::new(
-                ExprKind::Null,
-                tok.span,
-            ))}
+            TokenKind::Int(n) => { 
+                self.eat(); 
+                Ok(Expr::new(ExprKind::Int(n), tok.span)) 
+            }
+            TokenKind::Float(n) => { 
+                self.eat(); 
+                Ok(Expr::new(ExprKind::Float(n), tok.span)) 
+            }
+            TokenKind::Str(s) => { 
+                self.eat(); 
+                Ok(Expr::new(ExprKind::Str(s), tok.span)) 
+            }
+            TokenKind::Bool(b) => { 
+                self.eat(); 
+                Ok(Expr::new(ExprKind::Bool(b), tok.span)) 
+            }
+            TokenKind::Ident(s) => { 
+                self.eat(); 
+                Ok(Expr::new(ExprKind::Ident(s), tok.span)) 
+            }
+            TokenKind::Null => { 
+                self.eat(); 
+                Ok(Expr::new(
+                    ExprKind::Null,
+                    tok.span,
+                ))
+            }
+            
+            TokenKind::Match => self.parse_match_expr(),
+            
             TokenKind::LParen => {
                 self.eat();
                 let e = self.parse_expr()?;
                 self.expect(TokenKind::RParen)?;
                 Ok(e)
             }
-            TokenKind::LBrace => self.parse_brace_expression(),
+            TokenKind::LBrace => self.parse_brace_expr(),
             TokenKind::LBracket => self.parse_list(),
             TokenKind::Pipe => self.parse_lambda(),
+            
             _ => Err(Error::parse(format!("unexpected token {:?}", tok.kind), tok.span)),
         }
     }
@@ -954,7 +976,203 @@ impl Parser {
         ))
     }
 
-    fn parse_brace_expression(&mut self) -> Result<Expr> {
+    fn parse_match_expr(
+        &mut self,
+    ) -> Result<Expr> {
+        let start =
+            self.expect(
+                TokenKind::Match
+            )?
+            .span;
+
+        let value =
+            self.parse_expr()?;
+
+        self.expect(
+            TokenKind::LBrace
+        )?;
+
+        let mut arms =
+            Vec::new();
+
+        while !self.check(
+            TokenKind::RBrace
+        ) {
+            let pattern =
+                self.parse_pattern()?;
+
+            self.expect(
+                TokenKind::FatArrow
+            )?;
+
+            let body =
+                self.parse_expr()?;
+
+            arms.push(
+                MatchArm {
+                    pattern,
+                    body,
+                }
+            );
+
+            // comma is optional
+            self.eat_if(TokenKind::Comma);
+        }
+
+        let end =
+            self.expect(
+                TokenKind::RBrace
+            )?
+            .span;
+
+        Ok(
+            Expr::new(
+                ExprKind::Match {
+                    value: Box::new(value),
+                    arms,
+                },
+                start.join(end),
+            )
+        )
+    }
+
+    fn parse_pattern(
+        &mut self,
+    ) -> Result<Pattern> {
+        match self.peek().kind.clone() {
+            TokenKind::Underscore => {
+                self.eat();
+
+                Ok(Pattern::Wildcard)
+            }
+
+            TokenKind::Int(value) => {
+                self.eat();
+
+                Ok(Pattern::Int(value))
+            }
+
+            TokenKind::Float(value) => {
+                self.eat();
+
+                Ok(Pattern::Float(value))
+            }
+
+            TokenKind::Bool(true) => {
+                self.eat();
+
+                Ok(Pattern::Bool(true))
+            }
+
+            TokenKind::Bool(false) => {
+                self.eat();
+
+                Ok(Pattern::Bool(false))
+            }
+
+            TokenKind::Str(value) => {
+                self.eat();
+
+                Ok(Pattern::Str(value))
+            }
+
+            TokenKind::Ident(name) => {
+                self.eat();
+
+                self.parse_ident_pattern(
+                    name
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::parse(
+                        "expected pattern",
+                        self.peek().span,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `parse_pattern()`
+    fn parse_ident_pattern(
+        &mut self,
+        first: String,
+    ) -> Result<Pattern> {
+        let mut path = vec![first];
+
+        while self.check(TokenKind::Dot) {
+            self.eat();
+
+            path.push(
+                self.expect_ident()?
+            );
+        }
+
+        if path.len() == 1
+            && !self.check(TokenKind::LParen)
+        {
+            return Ok(
+                Pattern::Ident(
+                    path.remove(0)
+                )
+            );
+        }
+
+        if !self.check(TokenKind::LParen) {
+            return Ok(
+                Pattern::Enum {
+                    path,
+                    fields: Vec::new(),
+                }
+            );
+        }
+
+        self.eat();
+
+        let mut fields =
+            Vec::new();
+
+        if !self.check(
+            TokenKind::RParen
+        ) {
+            loop {
+                fields.push(
+                    self.parse_pattern()?
+                );
+
+                if self.check(
+                    TokenKind::Comma
+                ) {
+                    self.eat();
+
+                    if self.check(
+                        TokenKind::RParen
+                    ) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        self.expect(
+            TokenKind::RParen
+        )?;
+
+        Ok(
+            Pattern::Enum {
+                path,
+                fields,
+            }
+        )
+    }
+
+    fn parse_brace_expr(&mut self) -> Result<Expr> {
         if self.looks_like_dict() {
             self.parse_dict()
         } else {

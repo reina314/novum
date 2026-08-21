@@ -30,6 +30,12 @@ pub struct EnumVariant {
     pub fields: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
@@ -66,6 +72,11 @@ pub enum ExprKind {
     Break,
     Return(Option<Box<Expr>>),
     For(String, IndexExpr, Box<Expr>),
+
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
 
     Block(Vec<Expr>),
     Lambda(Vec<String>, Box<Expr>),
@@ -141,6 +152,22 @@ impl fmt::Display for BinOp {
         };
         write!(f, "{s}")
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum Pattern {
+    Wildcard,
+
+    Ident(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+
+    Enum {
+        path: Vec<String>,
+        fields: Vec<Pattern>,
+    },
 }
 
 pub fn span_of_index(

@@ -207,33 +207,8 @@ impl fmt::Debug for Value {
                 "<enum {}>",
                 definition.name()
             ),
-            Self::EnumValue(value) => {
-                write!(
-                    f,
-                    "{}.{}",
-                    value.enum_name(),
-                    value.variant()
-                )?;
-
-                if !value.fields().is_empty() {
-                    write!(f, "(")?;
-
-                    for (i, field) in
-                        value.fields().iter().enumerate()
-                    {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-
-                        write!(f, "{:?}", field)?;
-                    }
-
-                    write!(f, ")")?;
-                }
-
-                Ok(())
-            }
-            Self::EnumConstructor(..) => write!(f, "<enum constructor>"),
+            Self::EnumValue(value) => write!(f, "{:?}", value),
+            Self::EnumConstructor(constructor) => write!(f, "{:?}", constructor),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             
@@ -344,34 +319,12 @@ impl fmt::Display for Value {
                     definition.name()
                 ),
 
-            Self::EnumValue(value) => {
-                write!(
-                    f,
-                    "{}.{}",
-                    value.enum_name(),
-                    value.variant()
-                )?;
-
-                if !value.fields().is_empty() {
-                    write!(f, "(")?;
-
-                    for (i, field) in
-                        value.fields().iter().enumerate()
-                    {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-
-                        write!(f, "{}", field)?;
-                    }
-
-                    write!(f, ")")?;
-                }
-
-                Ok(())
-            }
-            Self::EnumConstructor(..) =>
-                write!(f, "<enum constructor>"),
+            Self::EnumValue(value) => write!(f, "{}", value),
+            Self::EnumConstructor(constructor) =>
+                write!(f,
+                "{}",
+                constructor
+            ),
 
             Self::Range(
                 start,
