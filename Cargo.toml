@@ -1,10 +1,11 @@
 [package]
 name = "novum"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 
 [dependencies]
-rustyline = "18.0.1"
+reedline = "0.50.0"
+nu-ansi-term = "0.50.3"
 csv = "1.4.0"
 rand = "0.10.2"
 
