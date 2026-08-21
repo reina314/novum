@@ -5,7 +5,7 @@ use crate::{
         Result, 
         StackFrame
     }, interpreter::operator, runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, Function, FuncRef, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
     }, stdlib, syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, ast::{
             EnumDef as AstEnumDef,
@@ -3796,7 +3796,11 @@ impl Interpreter {
                     "next"
                     | "map"
                     | "filter"
-                    | "collect" => {
+                    | "collect"
+                    | "reduce"
+                    | "fold"
+                    | "any"
+                    | "all" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -3836,6 +3840,10 @@ impl Interpreter {
                     | "map"
                     | "filter"
                     | "collect"
+                    | "reduce"
+                    | "fold"
+                    | "any"
+                    | "all"
                     => {
                         Ok(
                             ControlFlow::Value(
@@ -4524,7 +4532,11 @@ impl Interpreter {
 
             "map"
             | "filter"
-            | "collect" => {
+            | "collect"
+            | "reduce"
+            | "fold"
+            | "any"
+            | "all" => {
                 let iterator =
                     self.make_range_iterator(
                         start,
@@ -4670,50 +4682,23 @@ impl Interpreter {
                     );
                 }
 
-                let value =
-                    {
-                        let mut iterator =
-                            iterator.borrow_mut();
+                let next =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?;
 
-                        self.next_iterator_value(
-                            &mut iterator,
-                            whole,
-                        )?
-                    };
+                Ok(
+                    ControlFlow::Value(
+                        match next {
+                            Some(value) =>
+                                option_some(value),
 
-                match value {
-                    Some(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::EnumValue(
-                                    Rc::new(
-                                        EnumValue::new(
-                                            "Option",
-                                            "Some",
-                                            vec![value],
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    }
-
-                    None => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::EnumValue(
-                                    Rc::new(
-                                        EnumValue::new(
-                                            "Option",
-                                            "None",
-                                            vec![],
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    }
-                }
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
             }
 
             // =====================================================
@@ -4883,6 +4868,291 @@ impl Interpreter {
                 )
             }
 
+            // =====================================================
+            // reduce()
+            // =====================================================
+            "reduce" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "reduce() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let function =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "reduce() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let Some(mut accumulator) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                else {
+                    return Ok(
+                        ControlFlow::Value(
+                            option_none()
+                        )
+                    );
+                };
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    accumulator =
+                        self.call_iterator_callback(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                            whole
+                        )?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        option_some(
+                            accumulator
+                        )
+                    )
+                )
+            }
+            
+            // =====================================================
+            // fold()
+            // =====================================================
+            "fold" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "fold() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let mut accumulator =
+                    args.next().unwrap();
+
+                let function =
+                    match args.next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "fold() expects Function as second argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None =>
+                                break,
+                        };
+
+                    accumulator =
+                        self.call_iterator_callback(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                            whole
+                        )?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        accumulator
+                    )
+                )
+            }
+            
+            // =====================================================
+            // any()
+            // =====================================================
+            "any" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "any() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let predicate =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "any() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None => {
+                                return Ok(
+                                    ControlFlow::Value(
+                                        Value::Bool(false)
+                                    )
+                                );
+                            }
+                        };
+
+                    match self.call_iterator_predicate(
+                        predicate.clone(),
+                        value,
+                        whole
+                    )? {
+                        true => return Ok(
+                                ControlFlow::Value(
+                                    Value::Bool(true)
+                                )
+                            ),
+
+                        false => continue,
+                    }
+                }
+            }
+            
+            // =====================================================
+            // fold()
+            // =====================================================
+            "all" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "all() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let predicate =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "all() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None => {
+                                return Ok(
+                                    ControlFlow::Value(
+                                        Value::Bool(true)
+                                    )
+                                );
+                            }
+                        };
+
+                    match self.call_iterator_predicate(
+                        predicate.clone(),
+                        value,
+                        whole
+                    )? {
+                        false => return Ok(
+                                ControlFlow::Value(
+                                    Value::Bool(false)
+                                )
+                            ),
+
+                        true => continue,
+                    }
+                }
+            }
+            
             _ => {
                 Err(
                     self.error(
@@ -4891,6 +5161,83 @@ impl Interpreter {
                             "Iterator has no method '{}'",
                             name
                         ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_iterator_method()`
+    fn call_iterator_predicate(
+        &mut self,
+        function: FuncRef,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<bool> {
+        match self.call_iterator_callback(
+            function,
+            vec![value],
+            whole,
+        )? {
+            Value::Bool(result) =>
+                Ok(result),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "predicate must return Bool, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_iterator_method`
+    fn call_iterator_callback(
+        &mut self,
+        function: FuncRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<Value> {
+        match self.call_function(
+            function,
+            args,
+            whole,
+        )? {
+            ControlFlow::Value(value) =>
+                Ok(value),
+
+            ControlFlow::Return(_) => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot return from outer function",
+                        whole,
+                    )
+                )
+            }
+
+            ControlFlow::Break => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot break",
+                        whole,
+                    )
+                )
+            }
+
+            ControlFlow::Continue => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot continue",
                         whole,
                     )
                 )
@@ -6361,6 +6708,34 @@ impl Interpreter {
         self.eval_program(&program)
     }
 
+}
+
+/// Helper to wrap Value with Option
+fn option_some(
+    value: Value,
+) -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "Some",
+                vec![value],
+            )
+        )
+    )
+}
+
+/// Helper to create Option.None
+fn option_none() -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "None",
+                vec![],
+            )
+        )
+    )
 }
 
 /// Helper for `eval_match()`

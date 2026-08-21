@@ -1845,4 +1845,140 @@ fn string_chars_unicode() {
     }
 }
 
+#[test]
+fn iterator_reduce() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .reduce(|a, b| a + b)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(10)]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Option.Some, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn iterator_reduce_empty() {
+    let result =
+        run(
+            r#"
+            [].iter()
+                .reduce(|a, b| a + b)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+
+            assert!(
+                value.fields().is_empty()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Option.None, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn iterator_fold() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .fold(
+                    10,
+                    |acc, x| acc + x
+                )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn iterator_any() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .any(|x| x > 3)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_all() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .all(|x| x > 0)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_all_false() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .all(|x| x < 4)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(false)
+    );
+}
+
+
 
