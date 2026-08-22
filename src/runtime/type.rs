@@ -17,6 +17,7 @@ pub enum Type {
 
     Tuple,
     List,
+    Set,
     Dict,
 
     Vector,
@@ -52,6 +53,7 @@ impl Type {
 
             Self::Tuple => "Tuple",
             Self::List => "List",
+            Self::Set => "Set",
             Self::Dict => "Dict",
 
             Self::Vector => "Vector",

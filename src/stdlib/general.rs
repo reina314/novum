@@ -3,6 +3,7 @@ use crate::{
         Value,
         IteratorObj,
         Env,
+        Set,
     }
 };
 
@@ -41,6 +42,11 @@ fn builtins()
     map.insert(
         "iter".into(),
         Value::Builtin(iter),
+    );
+
+    map.insert(
+        "set".into(),
+        Value::Builtin(set),
     );
 
     map.insert(
@@ -534,6 +540,44 @@ pub fn iter(
             )
         }
     }
+}
+
+pub fn set(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "set() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let list =
+        match &args[0] {
+            Value::List(list) =>
+                list.borrow(),
+
+            other =>
+                return Err(format!(
+                    "set() expects List, got {}",
+                    other.type_name()
+                )),
+        };
+
+    let set =
+        Set::from_values(
+            list.clone()
+        )?;
+
+    Ok(
+        Value::Set(
+            Rc::new(
+                RefCell::new(
+                    set
+                )
+            )
+        )
+    )
 }
 
 pub fn range(args: Vec<Value>) -> Result<Value, String> {

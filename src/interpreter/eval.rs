@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -3815,6 +3815,37 @@ impl Interpreter {
                 )
             }
 
+            Value::Set(set) => {
+                let receiver =
+                    MethodReceiver::Set(
+                        set.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Set has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Dict(dict) => {
                 let receiver =
                     MethodReceiver::Dict(
@@ -4452,6 +4483,15 @@ impl Interpreter {
             MethodReceiver::List(list) => {
                 self.call_list_method(
                     list.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Set(set) => {
+                self.call_set_method(
+                    set.clone(),
                     method.name(),
                     args,
                     whole,
@@ -5751,6 +5791,266 @@ impl Interpreter {
                         ErrorKind::Runtime,
                         format!(
                             "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_set_method(
+        &mut self,
+        set: SetRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            set.borrow().len() as i64
+                        )
+                    )
+                )
+            }
+
+            "add" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "add() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                set.borrow_mut()
+                    .add(args.remove(0))
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let removed =
+                    set.borrow_mut()
+                        .remove(
+                            &args[0]
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            removed
+                        )
+                    )
+                )
+            }
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let contains =
+                    set.borrow()
+                        .contains(
+                            &args[0]
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            contains
+                        )
+                    )
+                )
+            }
+
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "clear() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                set.borrow_mut()
+                    .clear();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let data =
+                    Rc::new(
+                        RefCell::new(
+                            set.borrow()
+                                .values()
+                                .to_vec()
+                        )
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    IteratorObj::List {
+                                        data,
+                                        index: 0,
+                                    }
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "union"
+            | "intersection"
+            | "difference" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}() expects exactly 1 argument",
+                                name
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    self.expect::<SetRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let result =
+                    match name {
+                        "union" =>
+                            set.borrow()
+                                .union(
+                                    &other.borrow()
+                                ),
+
+                        "intersection" =>
+                            set.borrow()
+                                .intersection(
+                                    &other.borrow()
+                                ),
+
+                        "difference" =>
+                            set.borrow()
+                                .difference(
+                                    &other.borrow()
+                                ),
+
+                        _ =>
+                            unreachable!(),
+                    }
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Set(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Set has no method '{}'",
                             name
                         ),
                         whole,

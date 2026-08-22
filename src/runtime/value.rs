@@ -1,4 +1,5 @@
 use super::{
+    SetRef,
     FuncRef,
     IteratorRef,
     ObjectRef,
@@ -37,6 +38,7 @@ pub enum Value {
 
     Tuple(Tuple),
     List(List),
+    Set(SetRef),
     Dict(Dict),
 
     Vector(VectorRef),
@@ -79,6 +81,7 @@ impl Value {
 
             Self::Tuple(_) => Type::Tuple,
             Self::List(_) => Type::List,
+            Self::Set(_) => Type::Set,
             Self::Dict(_) => Type::Dict,
 
             Self::Vector(_) => Type::Vector,
@@ -178,6 +181,26 @@ impl Value {
                     &y,
                 )?
             },
+
+            (// element-wise, order-insensitive
+                Self::Set(a),
+                Self::Set(b),
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                if a.len() != b.len() {
+                    false
+                } else {
+                    for value in a.values() {
+                        if !b.contains(value)? {
+                            return Ok(false);
+                        }
+                    }
+
+                    true
+                }
+            }
 
             (// recursive key/value-wise
                 Self::Dict(x),
@@ -324,6 +347,9 @@ impl fmt::Debug for Value {
 
             Self::List(v) => write!(f, "{:?}", v.borrow()),
 
+            Self::Set(set) => 
+            write!(f, "{:?}", set.borrow().values()),
+
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Vector(v) => write!(f, "{:?}", v.borrow()),
@@ -417,6 +443,29 @@ impl fmt::Display for Value {
                 }
 
                 write!(f, "]")
+            }
+
+            Self::Set(set) => {
+                let set =
+                    set.borrow();
+
+                write!(f, "{{")?;
+
+                for (i, value)
+                    in set.values().iter().enumerate()
+                {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(
+                        f,
+                        "{}",
+                        value
+                    )?;
+                }
+
+                write!(f, "}}")
             }
 
             Self::Dict(dict) => {
@@ -593,6 +642,24 @@ impl FromValue for List {
 
     fn expected_type() -> Type {
         Type::List
+    }
+}
+
+impl FromValue for SetRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Set(value) =>
+                Ok(value),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Set
     }
 }
 

@@ -2429,3 +2429,122 @@ fn dict_keys_method() {
     );
 }
 
+#[test]
+fn set_constructor_removes_duplicates() {
+    let result =
+        run(
+            r#"
+            set([1,2,2,3])
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn set_contains() {
+    assert_eq!(
+        run(
+            r#"
+            set([1,2,3])
+                .contains(2)
+            "#
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_add_remove() {
+    let result =
+        run(
+            r#"
+            let s = set([1,2])
+
+            s.add(3)
+            s.remove(1)
+
+            s.contains(3)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_union() {
+    let result =
+        run(
+            r#"
+            set([1,2])
+                .union(
+                    set([2,3])
+                )
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn set_intersection() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .intersection(
+                    set([2,3,4])
+                )
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn set_difference() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .difference(
+                    set([2,3])
+                )
+                .contains(1)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_iterator() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+}
+

@@ -1,5 +1,6 @@
 pub mod control;
 pub mod env;
+pub mod set;
 pub mod function;
 pub mod iterator;
 pub mod vector;
@@ -17,6 +18,10 @@ pub mod r#type;
 
 pub use control::ControlFlow;
 pub use env::Env;
+pub use set::{
+    Set,
+    SetRef,
+};
 pub use function::{
     FuncRef,
     Function
