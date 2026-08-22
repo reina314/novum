@@ -587,15 +587,15 @@ impl Interpreter {
             }
             Return(value) 
                 => self.eval_return(value),
-            For(
-                name,
-                index,
+            For {
+                pattern,
+                iterable,
                 body
-            ) => self.eval_for(
-                name,
-                index,
-                body,
-                expr
+            } => self.eval_for(
+                    pattern,
+                    iterable,
+                    body,
+                    expr
                 ),
             Match {
                 value,
@@ -1280,10 +1280,6 @@ impl Interpreter {
         pattern: &Pattern,
         value_expr: &Expr,
     ) -> Result<ControlFlow> {
-        // ---------------------------------------------------------
-        // 1. Evaluate the initializer.
-        // ---------------------------------------------------------
-
         let value =
             match self.eval(value_expr)? {
                 ControlFlow::Value(value) =>
@@ -1293,40 +1289,12 @@ impl Interpreter {
                     return Ok(other),
             };
 
-        // ---------------------------------------------------------
-        // 2. Match the pattern and collect all bindings first.
-        // ---------------------------------------------------------
-
-        let mut bindings =
-            HashMap::new();
-
-        let matched =
-            match_pattern(
+        let bindings =
+            self.match_pattern_bindings(
                 pattern,
                 &value,
-                &mut bindings,
-            )
-            .map_err(|message| {
-                self.error(
-                    ErrorKind::Runtime,
-                    message,
-                    value_expr,
-                )
-            })?;
-
-        if !matched {
-            return Err(
-                self.error(
-                    ErrorKind::Runtime,
-                    "let pattern does not match value",
-                    value_expr,
-                )
-            );
-        }
-
-        // ---------------------------------------------------------
-        // 3. Commit all bindings atomically.
-        // ---------------------------------------------------------
+                value_expr,
+            )?;
 
         self.env
             .declare_all(bindings)
@@ -1339,10 +1307,45 @@ impl Interpreter {
             })?;
 
         Ok(
-            ControlFlow::Value(
-                Value::Unit
-            )
+            ControlFlow::Value(Value::Unit)
         )
+    }
+
+    /// Helper for `eval_let()` and `eval_for()`
+    fn match_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        value: &Value,
+        whole: &Expr,
+    ) -> Result<HashMap<String, Value>> {
+        let mut bindings =
+            HashMap::new();
+
+        let matched =
+            match_pattern(
+                pattern,
+                value,
+                &mut bindings,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Runtime,
+                    message,
+                    whole,
+                )
+            })?;
+
+        if !matched {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    "pattern does not match value",
+                    whole,
+                )
+            );
+        }
+
+        Ok(bindings)
     }
 
     fn eval_assign_index(
@@ -2701,14 +2704,17 @@ impl Interpreter {
 
     fn eval_for(
         &mut self,
-        name: &str,
-        iterable: &IndexExpr,
+        pattern: &Pattern,
+        iterable: &Expr,
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(iterable)?;
+
         let iterator =
-            self.eval_iterable(
-                iterable,
+            self.make_iterator(
+                value,
                 whole,
             )?;
 
@@ -2721,19 +2727,28 @@ impl Interpreter {
         self.loop_depth += 1;
 
         let result = (|| {
-            // Declare loop variable once.
-            self.env
-                .declare(
-                    name.to_owned(),
-                    Value::Unit,
-                )
-                .map_err(|message| {
-                    self.error(
-                        ErrorKind::Name,
-                        message,
-                        whole,
+            let mut names =
+                Vec::new();
+
+            collect_pattern_names(
+                pattern,
+                &mut names,
+            );
+
+            for name in names {
+                self.env
+                    .declare(
+                        name,
+                        Value::Unit,
                     )
-                })?;
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Name,
+                            message,
+                            whole,
+                        )
+                    })?;
+            }
 
             let mut last =
                 Value::Unit;
@@ -2744,43 +2759,36 @@ impl Interpreter {
                     whole,
                 )?
             {
-                let assigned =
-                    self.env.assign_local(
-                        name,
-                        value,
-                    );
+                let bindings =
+                    self.match_pattern_bindings(
+                        pattern,
+                        &value,
+                        whole,
+                    )?;
 
-                if !assigned {
-                    return Err(
-                        self.error(
-                            ErrorKind::Runtime,
-                            format!(
-                                "loop variable '{}' disappeared from scope",
-                                name
-                            ),
-                            whole,
-                        )
+                for (name, value)
+                    in bindings
+                {
+                    self.env.assign_local(
+                        &name,
+                        value,
                     );
                 }
 
                 match self.eval(body)? {
-                    ControlFlow::Value(value) => {
-                        last = value;
-                    }
+                    ControlFlow::Value(value) =>
+                        last = value,
 
-                    ControlFlow::Break => {
-                        break;
-                    }
+                    ControlFlow::Break =>
+                        break,
 
-                    ControlFlow::Return(value) => {
+                    ControlFlow::Continue =>
+                        continue,
+
+                    ControlFlow::Return(value) =>
                         return Ok(
                             ControlFlow::Return(value)
-                        );
-                    }
-
-                    ControlFlow::Continue => {
-                        continue;
-                    }
+                        ),
                 }
             }
 
@@ -2790,8 +2798,7 @@ impl Interpreter {
         })();
 
         self.loop_depth -= 1;
-        self.env =
-            old_env;
+        self.env = old_env;
 
         result
     }
@@ -7010,5 +7017,44 @@ fn match_enum_pattern(
     }
 
     Ok(true)
+}
+
+/// Helper for `eval_for()`
+fn collect_pattern_names(
+    pattern: &Pattern,
+    names: &mut Vec<String>,
+) {
+    match pattern {
+        Pattern::Wildcard
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::Bool(_)
+        | Pattern::Str(_) => {}
+
+        Pattern::Ident(name) => {
+            names.push(name.clone());
+        }
+
+        Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_pattern_names(
+                    pattern,
+                    names,
+                );
+            }
+        }
+
+        Pattern::Enum {
+            fields,
+            ..
+        } => {
+            for pattern in fields {
+                collect_pattern_names(
+                    pattern,
+                    names,
+                );
+            }
+        }
+    }
 }
 

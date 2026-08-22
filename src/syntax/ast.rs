@@ -78,7 +78,11 @@ pub enum ExprKind {
     Break,
     Continue,
     Return(Option<Box<Expr>>),
-    For(String, IndexExpr, Box<Expr>),
+    For {
+        pattern: Pattern,
+        iterable: Box<Expr>, 
+        body: Box<Expr>,
+    },
     Try(Box<Expr>),
 
     Match {

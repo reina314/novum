@@ -2115,5 +2115,78 @@ fn iterator_all_false() {
     );
 }
 
+#[test]
+fn for_tuple_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for (x, y) in [
+                (1, 2),
+                (3, 4),
+            ] {
+                sum = sum + x + y
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
+fn for_nested_tuple_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for ((a, b), c) in [
+                ((1, 2), 3),
+                ((4, 5), 6),
+            ] {
+                sum = sum + a + b + c
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(21)
+    );
+}
+
+#[test]
+fn for_enum_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            let values = [
+                Result.Ok(10),
+                Result.Ok(20),
+            ]
+
+            for Result.Ok(x) in values {
+                sum = sum + x
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
 
 

@@ -670,19 +670,19 @@ impl Parser {
     fn parse_if(&mut self) -> Result<Expr> {
         let start = self.expect(TokenKind::If)?.span;
         let cond = self.parse_expr()?;
-        let then_branch = self.parse_branch()?;
+        let then_branch = self.parse_block()?;
         let else_branch = if self.at_kind(TokenKind::Else) {
             Some(Box::new(if self.peek().kind == TokenKind::If {
                 self.parse_if()?
             } else {
-                self.parse_branch()?
+                self.parse_block()?
             }))
         } else { None };
         let end = else_branch.as_ref().map(|x| x.span).unwrap_or(then_branch.span);
         Ok(Expr::new(ExprKind::If(Box::new(cond), Box::new(then_branch), else_branch), start.join(end)))
     }
 
-    fn parse_branch(&mut self) -> Result<Expr> {
+    fn parse_block(&mut self) -> Result<Expr> {
         if self.at_kind(TokenKind::LBrace) {
             let block = self.parse_block_contents()?;
             self.expect(TokenKind::RBrace)?;
@@ -710,21 +710,38 @@ impl Parser {
     fn parse_while(&mut self) -> Result<Expr> {
         let start = self.expect(TokenKind::While)?.span;
         let condition = self.parse_expr()?;
-        let body = self.parse_branch()?;
+        let body = self.parse_block()?;
         Ok(Expr::new(ExprKind::While(Box::new(condition), Box::new(body.clone())), start.join(body.span)))
     }
 
     fn parse_for(&mut self) -> Result<Expr> {
-        let start = self.expect(TokenKind::For)?.span;
-        let tok = self.peek().clone();
-        let ident = match tok.kind {
-            TokenKind::Ident(name) => { self.eat(); name }
-            _ => return Err(Error::parse("for expects an identifier", tok.span)),
-        };
+        let start =
+            self.expect(TokenKind::For)?.span;
+
+        let pattern =
+            self.parse_pattern()?;
+
         self.expect(TokenKind::In)?;
-        let iter = self.parse_index_expr()?;
-        let body = self.parse_branch()?;
-        Ok(Expr::new(ExprKind::For(ident, iter, Box::new(body.clone())), start.join(body.span)))
+
+        let iterable =
+            self.parse_expr()?;
+
+        let body =
+            self.parse_block()?;
+
+        let end =
+            body.span;
+
+        Ok(
+            Expr::new(
+                ExprKind::For {
+                    pattern,
+                    iterable: Box::new(iterable),
+                    body: Box::new(body),
+                },
+                start.join(end),
+            )
+        )
     }
 
     fn parse_or(&mut self) -> Result<Expr> {
