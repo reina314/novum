@@ -1,4 +1,208 @@
-use crate::runtime::Value;
+use crate::runtime::{
+    Module,
+    ModuleRef,
+    Value,
+};
+
+use std::{
+    cell::RefCell,
+    rc::Rc,
+};
+
+pub fn module() -> ModuleRef {
+    let mut module =
+        Module::new("math");
+
+    module.set(
+        "sqrt",
+        Value::Builtin(sqrt),
+    );
+
+    module.set(
+        "abs",
+        Value::Builtin(abs),
+    );
+
+    module.set(
+        "sign",
+        Value::Builtin(sign),
+    );
+
+    module.set(
+        "floor",
+        Value::Builtin(floor),
+    );
+
+    module.set(
+        "ceil",
+        Value::Builtin(ceil),
+    );
+
+    module.set(
+        "round",
+        Value::Builtin(round),
+    );
+
+    module.set(
+        "trunc",
+        Value::Builtin(trunc),
+    );
+
+    module.set(
+        "fract",
+        Value::Builtin(fract),
+    );
+
+    module.set(
+        "sqrt",
+        Value::Builtin(sqrt),
+    );
+
+    module.set(
+        "cbrt",
+        Value::Builtin(cbrt),
+    );
+
+    module.set(
+        "pow",
+        Value::Builtin(pow),
+    );
+
+    module.set(
+        "exp",
+        Value::Builtin(exp),
+    );
+
+    module.set(
+        "exp2",
+        Value::Builtin(exp2),
+    );
+
+    module.set(
+        "ln",
+        Value::Builtin(ln),
+    );
+
+    module.set(
+        "log",
+        Value::Builtin(log),
+    );
+
+    module.set(
+        "log2",
+        Value::Builtin(log2),
+    );
+
+    module.set(
+        "log10",
+        Value::Builtin(log10),
+    );
+
+    module.set(
+        "sin",
+        Value::Builtin(sin),
+    );
+
+    module.set(
+        "cos",
+        Value::Builtin(cos),
+    );
+
+    module.set(
+        "tan",
+        Value::Builtin(tan),
+    );
+
+    module.set(
+        "asin",
+        Value::Builtin(asin),
+    );
+
+    module.set(
+        "acos",
+        Value::Builtin(acos),
+    );
+
+    module.set(
+        "atan",
+        Value::Builtin(atan),
+    );
+
+    module.set(
+        "atan2",
+        Value::Builtin(atan2),
+    );
+
+    module.set(
+        "sinh",
+        Value::Builtin(sinh),
+    );
+
+    module.set(
+        "cosh",
+        Value::Builtin(cosh),
+    );
+
+    module.set(
+        "tanh",
+        Value::Builtin(tanh),
+    );
+
+    module.set(
+        "asinh",
+        Value::Builtin(asinh),
+    );
+
+    module.set(
+        "acosh",
+        Value::Builtin(acosh),
+    );
+
+    module.set(
+        "atanh",
+        Value::Builtin(atanh),
+    );
+
+    module.set(
+        "hypot",
+        Value::Builtin(hypot),
+    );
+
+    module.set(
+        "min",
+        Value::Builtin(min),
+    );
+
+    module.set(
+        "max",
+        Value::Builtin(max),
+    );
+
+    module.set(
+        "clamp",
+        Value::Builtin(clamp),
+    );
+
+    module.set(
+        "pi",
+        Value::Builtin(pi),
+    );
+
+    module.set(
+        "e",
+        Value::Builtin(e),
+    );
+
+    module.set(
+        "tau",
+        Value::Builtin(tau),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
 
 fn number(value: &Value) -> Result<f64, String> {
     match value {

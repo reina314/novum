@@ -16,6 +16,7 @@ pub enum ErrorKind {
     Overflow,
     Runtime,
     Control,
+    Import,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +87,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Overflow => "Runtime",
             ErrorKind::Runtime => "Runtime",
             ErrorKind::Control => "Control",
+            ErrorKind::Import => "Import",
         };
         write!(f, "{s}")
     }

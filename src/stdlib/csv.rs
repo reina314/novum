@@ -2,12 +2,30 @@ use crate::runtime::{
     DataFrame,
     Series,
     Value,
+    Module,
+    ModuleRef,
 };
 
 use std::{
     fs::File,
     rc::Rc,
+    cell::RefCell,
 };
+
+pub fn module() -> ModuleRef {
+    let mut module =
+        Module::new("csv");
+
+    module.set(
+        "read",
+        Value::Builtin(read),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
 
 fn parse_value(
     text: &str,

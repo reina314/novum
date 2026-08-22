@@ -2,12 +2,80 @@ use crate::runtime::{
     Matrix,
     Object,
     Value,
+    Module,
+    ModuleRef,
 };
 
 use std::{
     cell::RefCell,
     rc::Rc,
 };
+
+pub fn module() -> ModuleRef {
+    let mut module =
+        Module::new("linalg");
+
+    module.set(
+        "matrix",
+        Value::Builtin(
+            matrix
+        ),
+    );
+
+    module.set(
+        "transpose",
+        Value::Builtin(
+            transpose
+        ),
+    );
+
+    module.set(
+        "det",
+        Value::Builtin(
+            det
+        ),
+    );
+
+    module.set(
+        "inverse",
+        Value::Builtin(
+            inverse
+        ),
+    );
+
+    module.set(
+        "shape",
+        Value::Builtin(
+            shape
+        ),
+    );
+
+    module.set(
+        "rows",
+        Value::Builtin(
+            rows
+        ),
+    );
+
+    module.set(
+        "cols",
+        Value::Builtin(
+            cols
+        ),
+    );
+
+    module.set(
+        "linear_regression",
+        Value::Builtin(
+            linear_regression
+        ),
+    );
+
+    Rc::new(
+        RefCell::new(module)
+    )
+}
+
 
 fn value_to_f64(
     value: &Value,

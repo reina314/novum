@@ -1,11 +1,13 @@
 use crate::{
-    Lexer, Parser, error::{
+    error::{
         Error, 
         ErrorKind, 
         Result, 
         StackFrame
-    }, interpreter::operator, runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, Function, FuncRef, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+    }, 
+    interpreter::{ModuleLoader, operator}, 
+    runtime::{
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
     }, stdlib, syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, ast::{
             EnumDef as AstEnumDef,
@@ -15,8 +17,7 @@ use crate::{
     },
 };
 use std::{
-    cell::RefCell, 
-    path::PathBuf, 
+    cell::RefCell,
     rc::Rc,
     collections::HashMap,
 };
@@ -26,97 +27,101 @@ pub struct Interpreter {
     stack: Vec<StackFrame>,
     loop_depth: usize,
     function_depth: usize,
+    module_loader: ModuleLoader,
     module_stack: Vec<ModuleContext>,
-    project_root: PathBuf,
 }
 
 impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
-fn install_builtins(env: &mut Env,) {
-    for (name, value) 
-        in stdlib::builtins() {
-        env.define(name, value);
-    }
-}
-
-fn install_standard_enums(env: &mut Env,) {
-    // ---------------------------------------------------------
-    // Option
-    // ---------------------------------------------------------
-    let mut option =
-        RuntimeEnumDef::new("Option");
-
-    option
-        .add_variant(
-            "Some",
-            1,
-        )
-        .expect("valid Option");
-
-    option
-        .add_variant(
-            "None",
-            0,
-        )
-        .expect("valid Option");
-
-    env.define(
-        "Option",
-        Value::Enum(
-            Rc::new(option)
-        ),
-    );
-
-    // ---------------------------------------------------------
-    // Result
-    // ---------------------------------------------------------
-    let mut result =
-        RuntimeEnumDef::new("Result");
-
-    result
-        .add_variant(
-            "Ok",
-            1,
-        )
-        .expect("valid Result");
-
-    result
-        .add_variant(
-            "Err",
-            1,
-        )
-        .expect("valid Result");
-
-    env.define(
-        "Result",
-        Value::Enum(
-            Rc::new(result)
-        ),
-    );
-}
-
 impl Interpreter {
     pub fn new() -> Self {
-        let mut env = Env::global();
+        let env = Env::global();
 
-        install_builtins(&mut env);
-        install_standard_enums(&mut env);
+        let module_loader = ModuleLoader::new(
+            std::env::current_dir()
+                .expect(
+                    "failed to get current directory"
+                )
+        );
 
-        let project_root = std::env::current_dir()
-            .expect(
-                "failed to determine current directory"
-            );
-
-        return Self { 
+        let mut interpreter = Interpreter { 
             env,
             stack: Vec::new(),
             loop_depth: 0,
             function_depth: 0,
+            module_loader,
             module_stack: Vec::new(),
-            project_root,
-        }
+        };
+
+        // eager loading
+        interpreter.install_builtins();
+        interpreter.install_standard_enums();
+
+        interpreter
+    }
+
+    fn install_builtins(&mut self) {
+        stdlib::install_builtins(
+            &self.env
+        )
+    }
+
+    fn install_standard_enums(&mut self) {
+        // ---------------------------------------------------------
+        // Option
+        // ---------------------------------------------------------
+        let mut option =
+            RuntimeEnumDef::new("Option");
+
+        option
+            .add_variant(
+                "Some",
+                1,
+            )
+            .expect("valid Option");
+
+        option
+            .add_variant(
+                "None",
+                0,
+            )
+            .expect("valid Option");
+
+        self.env.define(
+            "Option",
+            Value::Enum(
+                Rc::new(option)
+            ),
+        );
+
+        // ---------------------------------------------------------
+        // Result
+        // ---------------------------------------------------------
+        let mut result =
+            RuntimeEnumDef::new("Result");
+
+        result
+            .add_variant(
+                "Ok",
+                1,
+            )
+            .expect("valid Result");
+
+        result
+            .add_variant(
+                "Err",
+                1,
+            )
+            .expect("valid Result");
+
+        self.env.define(
+            "Result",
+            Value::Enum(
+                Rc::new(result)
+            ),
+        );
     }
 
     fn next_iterator_value(
@@ -851,80 +856,6 @@ impl Interpreter {
         )
     }
 
-    fn resolve_module_path(
-        &self,
-        requested: &ModulePath,
-        whole: &Expr,
-    ) -> Result<PathBuf> {
-        let path = if let Some(current) =
-            self.module_stack.last()
-        {
-            // Import from another module:
-            //
-            // /project/tests/modules/a.nv
-            //
-            // import b
-            //
-            // -> /project/tests/modules/b.nv
-
-            let parent =
-                current
-                    .file_path
-                    .parent()
-                    .ok_or_else(|| {
-                        self.error(
-                            ErrorKind::Runtime,
-                            "module file has no parent directory",
-                            whole,
-                        )
-                    })?;
-
-            let mut path =
-                parent.to_path_buf();
-
-            for part in requested.parts() {
-                path.push(part);
-            }
-
-            path.set_extension("nv");
-
-            path
-        } else {
-            // Import from main program:
-            //
-            // import tests.modules.a
-            //
-            // -> project/tests/modules/a.nv
-
-            let mut path =
-                self.project_root.clone();
-
-            for part in requested.parts() {
-                path.push(part);
-            }
-
-            path.set_extension("nv");
-
-            path
-        };
-
-        if !path.is_file() {
-            return Err(
-                self.error(
-                    ErrorKind::Name,
-                    format!(
-                        "module '{}' not found at '{}'",
-                        requested.name(),
-                        path.display()
-                    ),
-                    whole,
-                )
-            );
-        }
-
-        Ok(path)
-    }
-
     fn bind_module_path(
         &mut self,
         path: &ModulePath,
@@ -1066,6 +997,10 @@ impl Interpreter {
         parts: &[String],
         whole: &Expr,
     ) -> Result<ControlFlow> {
+        // =========================================================
+        // 1. Validate import path
+        // =========================================================
+
         if parts.is_empty() {
             return Err(
                 self.error(
@@ -1082,7 +1017,10 @@ impl Interpreter {
             );
 
         // =========================================================
-        // Standard library module
+        // 2. Lazy standard-library module
+        //
+        // Only module bodies are lazy.
+        // Builtin functions were already installed in Interpreter::new().
         // =========================================================
 
         if parts.len() == 1 {
@@ -1119,35 +1057,50 @@ impl Interpreter {
         }
 
         // =========================================================
-        // Resolve physical file
+        // 3. Resolve physical file
         // =========================================================
 
-        let path =
-            self.resolve_module_path(
-                &requested,
-                whole,
-            )?;
-
         let canonical =
-            std::fs::canonicalize(&path)
+            self.module_loader
+                .resolve(
+                    &requested
+                )
                 .map_err(|error| {
-                    self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "failed to resolve module '{}': {}",
-                            path.display(),
-                            error
-                        ),
+                    self.attach(
+                        error,
                         whole,
                     )
                 })?;
 
         // =========================================================
-        // Cyclic import detection
+        // 4. Cache lookup
+        //
+        // If this file was already successfully evaluated,
+        // do not execute it again.
         // =========================================================
 
-        if self
-            .module_stack
+        if let Some(module) =
+            self.module_loader
+                .get_cached(&canonical)
+        {
+            self.bind_module_path(
+                &requested,
+                module,
+                whole,
+            )?;
+
+            return Ok(
+                ControlFlow::Value(
+                    Value::Unit
+                )
+            );
+        }
+
+        // =========================================================
+        // 5. Cyclic import detection
+        // =========================================================
+
+        if self.module_stack
             .iter()
             .any(|context| {
                 context.file_path == canonical
@@ -1176,25 +1129,23 @@ impl Interpreter {
         }
 
         // =========================================================
-        // Read source
+        // 6. Load + parse
         // =========================================================
 
-        let source =
-            std::fs::read_to_string(&canonical)
+        let program =
+            self.module_loader
+                .load_program(
+                    &canonical
+                )
                 .map_err(|error| {
-                    self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "failed to read module '{}': {}",
-                            canonical.display(),
-                            error
-                        ),
+                    self.attach(
+                        error,
                         whole,
                     )
                 })?;
 
         // =========================================================
-        // Create module environment
+        // 7. Create module environment
         // =========================================================
 
         let module_env =
@@ -1207,7 +1158,7 @@ impl Interpreter {
             );
 
         // =========================================================
-        // Push module context
+        // 8. Push module context
         // =========================================================
 
         self.module_stack.push(
@@ -1218,25 +1169,29 @@ impl Interpreter {
         );
 
         // =========================================================
-        // Evaluate module
+        // 9. Evaluate module
         // =========================================================
 
         let result =
-            self.execute_source(&source);
+            self.eval_program(
+                &program
+            );
 
-        // Always restore interpreter state.
+        // Always restore module stack.
         self.module_stack.pop();
 
+        // Always restore previous environment.
         let module_env =
             std::mem::replace(
                 &mut self.env,
                 previous_env,
             );
 
-        result?;
+        let _control_flow =
+            result?;
 
         // =========================================================
-        // Build runtime Module
+        // 10. Build runtime Module
         // =========================================================
 
         let mut module =
@@ -1255,11 +1210,23 @@ impl Interpreter {
 
         let module =
             Rc::new(
-                RefCell::new(module)
+                RefCell::new(
+                    module
+                )
             );
 
         // =========================================================
-        // Insert into nested module namespace
+        // 11. Cache fully evaluated module
+        // =========================================================
+
+        self.module_loader
+            .cache(
+                canonical,
+                module.clone(),
+            );
+
+        // =========================================================
+        // 12. Attach nested namespace
         // =========================================================
 
         self.bind_module_path(
@@ -7566,26 +7533,6 @@ impl Interpreter {
             ),
             expr,
         )
-    }
-
-    fn execute_source(
-        &mut self,
-        source: &str,
-    ) -> Result<ControlFlow> {
-        let mut lexer =
-            Lexer::new(source);
-
-        let tokens =
-            lexer.lex()
-                .map_err(|e| e)?;
-
-        let mut parser =
-            Parser::new(tokens);
-
-        let program =
-            parser.parse()?;
-
-        self.eval_program(&program)
     }
 
 }
