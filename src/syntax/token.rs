@@ -64,6 +64,8 @@ pub enum TokenKind {
     DoubleDot,
     DoubleDotEq,
 
+    Pub,
+
     Null,
     Eof,
 }

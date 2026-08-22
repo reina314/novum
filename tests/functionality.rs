@@ -2,6 +2,7 @@ mod common;
 
 use common::{
     run,
+    run_result,
     assert_float_close,
 };
 use novum::{Interpreter, Lexer, Parser};
@@ -192,6 +193,90 @@ fn builtin_is_available_without_import() {
         }
     }
 }
+
+#[test]
+fn public_let_is_exported() {
+    // fixture:
+    //
+    // pub let answer = 42
+    //
+    let result =
+        run(
+            r#"
+            import tests.modules.visibility
+            tests.modules.visibility.answer
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn private_let_is_hidden() {
+    let result =
+        run_result(
+            r#"
+            import tests.modules.visibility
+            tests.modules.visibility.secret
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn public_lambda_is_exported() {
+    let result =
+        run(
+            r#"
+            import tests.modules.visibility
+            tests.modules.visibility.add(2, 3)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn private_lambda_is_hidden() {
+    let result =
+        run_result(
+            r#"
+            import tests.modules.visibility
+            tests.modules.visibility.helper(10)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn pub_local_is_error() {
+    let result =
+        run_result(
+            r#"
+            {
+                pub let x = 10
+                x
+            }
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
 
 
 

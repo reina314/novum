@@ -8,11 +8,14 @@ use crate::{
     interpreter::{ModuleLoader, operator}, 
     runtime::{
         BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
-    }, stdlib, syntax::{
-        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, ast::{
+    }, stdlib, 
+    syntax::{
+        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
+        ast::{
             EnumDef as AstEnumDef,
             MatchArm,
             Pattern,
+            Visibility
         }
     },
 };
@@ -426,17 +429,17 @@ impl Interpreter {
             Dict(entries) => self.eval_dict(entries, expr),
 
             StructDecl {
+                visibility,
                 name,
                 fields,
                 methods,
-            } => {
-                self.eval_struct_decl(
+            } => self.eval_struct_decl(
+                    *visibility,
                     name,
                     fields,
                     methods,
                     expr,
-                )
-            }
+            ),
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -446,7 +449,15 @@ impl Interpreter {
 
             Import(parts) => self.eval_import(parts, expr),
 
-            Let(pattern, rhs) => self.eval_let(pattern, rhs),
+            Let {
+                visibility,
+                pattern,
+                value,
+            } => self.eval_let(
+                *visibility, 
+                pattern, 
+                value
+            ),
             Assign(name, rhs) => {
                 let mut value = self.eval_value(rhs)?;
                 if let Value::Func(func) = &value {
@@ -756,10 +767,11 @@ impl Interpreter {
 
     fn eval_struct_decl(
         &mut self,
+        visibility: Visibility,
         name: &str,
         fields: &[String],
         methods: &[(String, Box<Expr>)],
-        expr: &Expr,
+        whole: &Expr,
     ) -> Result<ControlFlow> {
         if self.env.contains_local(name) {
             return Err(self.error(
@@ -768,11 +780,11 @@ impl Interpreter {
                     "struct '{}' is already defined in this scope",
                     name
                 ),
-                expr,
+                whole,
             ));
         }
 
-        let mut method_map = std::collections::HashMap::new();
+                let mut method_map = std::collections::HashMap::new();
 
         for (method_name, method_expr) in methods {
             let value = self.eval_value(method_expr)?;
@@ -798,18 +810,56 @@ impl Interpreter {
             );
         }
 
-        let definition = StructDefinition::new(
-            name.to_owned(),
-            fields.to_vec(),
-            method_map,
-        );
+        let definition =
+            StructDefinition::new(
+                name,
+                fields.to_vec(),
+                method_map,
+            );
 
-        self.env.define(
-            name.to_owned(),
-            Value::Struct(Rc::new(definition)),
-        );
+        let value =
+            Value::Struct(
+                Rc::new(
+                    definition
+                )
+            );
 
-        Ok(ControlFlow::Value(Value::Unit))
+        self.env
+            .declare(
+                name.to_owned(),
+                value,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Name,
+                    message,
+                    whole,
+                )
+            })?;
+
+        if visibility == Visibility::Public {
+            if let Some(context) =
+                self.module_stack.last_mut()
+            {
+                context.export(
+                    name.to_owned()
+                );
+            } else {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub struct' is only allowed at module scope",
+                        whole,
+                    )
+                );
+            }
+        }
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn eval_enum_decl(
@@ -868,73 +918,96 @@ impl Interpreter {
         if parts.is_empty() {
             return Err(
                 self.error(
-                    ErrorKind::Runtime,
-                    "cannot bind empty module path",
+                    ErrorKind::Import,
+                    "empty module path",
                     whole,
                 )
             );
         }
 
+        // Single component:
+        //
+        // import math
+        //
+        // env["math"] = module
+        if parts.len() == 1 {
+            let name =
+                parts[0].clone();
+
+            if self.env.contains_local(&name) {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "name '{}' is already defined in this scope",
+                            name
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            self.env.define(
+                name,
+                Value::Module(module),
+            );
+
+            return Ok(());
+        }
+
         // ---------------------------------------------------------
-        // Root namespace
+        // Build nested namespace:
+        //
+        // tests
+        //   └── modules
+        //         └── visibility
+        //
+        // Intermediate namespaces are always public/exported.
         // ---------------------------------------------------------
 
         let root_name =
-            &parts[0];
+            parts[0].clone();
 
-        let mut current =
-            match self.env.get(root_name) {
-                Some(Value::Module(module)) => {
-                    module
-                }
-
-                Some(other) => {
-                    return Err(
-                        self.error(
-                            ErrorKind::Name,
-                            format!(
-                                "cannot create module namespace '{}': name already refers to {}",
-                                root_name,
-                                other.type_name()
-                            ),
-                            whole,
+        let root_module =
+            if let Some(Value::Module(existing)) =
+                self.env.get(&root_name)
+            {
+                existing
+            } else {
+                let namespace =
+                    Rc::new(
+                        RefCell::new(
+                            Module::new(
+                                root_name.clone()
+                            )
                         )
                     );
-                }
 
-                None => {
-                    let module =
-                        Rc::new(
-                            RefCell::new(
-                                Module::new(
-                                    root_name.clone()
-                                )
-                            )
-                        );
+                self.env.define(
+                    root_name.clone(),
+                    Value::Module(
+                        namespace.clone()
+                    )
+                );
 
-                    self.env.define(
-                        root_name.clone(),
-                        Value::Module(
-                            module.clone()
-                        ),
-                    );
-
-                    module
-                }
+                namespace
             };
 
-        // ---------------------------------------------------------
-        // Intermediate namespaces
-        // ---------------------------------------------------------
+        let mut current =
+            root_module;
 
-        for part in
-            &parts[1..parts.len() - 1]
-        {
-            let next =
-                current.borrow().get(part);
+        for component in &parts[1..parts.len() - 1] {
+            let child =
+                {
+                    let current_ref =
+                        current.borrow();
 
-            current =
-                match next {
+                    current_ref
+                        .get_internal(component)
+                };
+
+            let child =
+                match child {
                     Some(Value::Module(module)) =>
                         module,
 
@@ -943,9 +1016,8 @@ impl Interpreter {
                             self.error(
                                 ErrorKind::Name,
                                 format!(
-                                    "module namespace '{}' is already occupied by {}",
-                                    part,
-                                    other.type_name()
+                                    "'{}' in module path is not a module",
+                                    component
                                 ),
                                 whole,
                             )
@@ -957,37 +1029,53 @@ impl Interpreter {
                             Rc::new(
                                 RefCell::new(
                                     Module::new(
-                                        part.clone()
+                                        component.clone()
                                     )
                                 )
                             );
 
-                        current
-                            .borrow_mut()
-                            .set(
-                                part.clone(),
+                        {
+                            let mut current_ref =
+                                current.borrow_mut();
+
+                            // IMPORTANT:
+                            // intermediate namespace nodes are public
+                            current_ref.set_exported(
+                                component.clone(),
                                 Value::Module(
                                     module.clone()
-                                ),
+                                )
                             );
+                        }
 
                         module
                     }
                 };
+
+            current =
+                child;
         }
 
         // ---------------------------------------------------------
-        // Final component
+        // Attach final module.
         // ---------------------------------------------------------
 
-        let final_name =
+        let leaf_name =
             parts.last()
-                .unwrap();
+                .expect("non-empty module path")
+                .clone();
 
-        current.borrow_mut().set(
-            final_name.clone(),
-            Value::Module(module),
-        );
+        {
+            let mut current_ref =
+                current.borrow_mut();
+
+            current_ref.set_exported(
+                leaf_name,
+                Value::Module(
+                    module
+                )
+            );
+        }
 
         Ok(())
     }
@@ -1178,7 +1266,16 @@ impl Interpreter {
             );
 
         // Always restore module stack.
-        self.module_stack.pop();
+        let context =
+            self.module_stack
+                .pop()
+                .ok_or_else(|| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        "module stack underflow",
+                        whole,
+                    )
+                })?;
 
         // Always restore previous environment.
         let module_env =
@@ -1187,8 +1284,40 @@ impl Interpreter {
                 previous_env,
             );
 
-        let _control_flow =
-            result?;
+        // Module execution must complete normally.
+        match result? {
+            ControlFlow::Value(_) => {}
+
+            ControlFlow::Return(_) => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "return cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+
+            ControlFlow::Break => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "break cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+
+            ControlFlow::Continue => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "continue cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+        }
 
         // =========================================================
         // 10. Build runtime Module
@@ -1203,9 +1332,15 @@ impl Interpreter {
             in module_env.local_values()
         {
             module.set(
-                name,
+                name.clone(),
                 value,
             );
+
+            if context.is_exported(
+                &name
+            ) {
+                module.export(name);
+            }
         }
 
         let module =
@@ -1244,6 +1379,7 @@ impl Interpreter {
 
     fn eval_let(
         &mut self,
+        visibility: Visibility,
         pattern: &Pattern,
         value_expr: &Expr,
     ) -> Result<ControlFlow> {
@@ -1256,12 +1392,71 @@ impl Interpreter {
                     return Ok(other),
             };
 
-        let bindings =
-            self.match_pattern_bindings(
+        let mut bindings =
+            HashMap::new();
+
+        let matched =
+            match_pattern(
                 pattern,
                 &value,
-                value_expr,
-            )?;
+                &mut bindings,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Runtime,
+                    message,
+                    value_expr,
+                )
+            })?;
+
+        if !matched {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    "let pattern does not match value",
+                    value_expr,
+                )
+            );
+        }
+
+        // ---------------------------------------------------------
+        // For module-level public declarations, record exports.
+        //
+        // Local/block-scoped `pub let` is rejected because `pub`
+        // only makes sense at module scope.
+        // ---------------------------------------------------------
+
+        if visibility == Visibility::Public {
+            if self.module_stack.is_empty() {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub' declaration is only allowed at module scope",
+                        value_expr,
+                    )
+                );
+            }
+
+            for name in bindings.keys() {
+                if name == "_" {
+                    return Err(
+                        self.error(
+                            ErrorKind::Name,
+                            "cannot export wildcard binding",
+                            value_expr,
+                        )
+                    );
+                }
+
+                if let Some(context) =
+                    self.module_stack.last_mut()
+                {
+                    context.export(
+                        name.clone()
+                    );
+                }
+            }
+        }
 
         self.env
             .declare_all(bindings)
@@ -1274,7 +1469,9 @@ impl Interpreter {
             })?;
 
         Ok(
-            ControlFlow::Value(Value::Unit)
+            ControlFlow::Value(
+                Value::Unit
+            )
         )
     }
 
@@ -3624,20 +3821,25 @@ impl Interpreter {
                 let module =
                     module.borrow();
 
-                module
-                    .get(name)
-                    .map(ControlFlow::Value)
-                    .ok_or_else(|| {
-                        self.error(
-                            ErrorKind::Runtime,
-                            format!(
-                                "module '{}' has no member '{}'",
-                                module.name(),
-                                name
-                            ),
-                            whole,
-                        )
-                    })
+                if let Some(value) =
+                    module.get_field(name)
+                {
+                    return Ok(
+                        ControlFlow::Value(value)
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "module '{}' has no exported member '{}'",
+                            module.name(),
+                            name,
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Enum(enum_def) => {

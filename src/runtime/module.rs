@@ -1,9 +1,9 @@
 use std::{
-    cell::RefCell,
-    collections::HashMap,
     fmt,
-    path::PathBuf,
     rc::Rc,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
 };
 
 use super::Value;
@@ -54,6 +54,7 @@ impl ModulePath {
 pub struct ModuleContext {
     pub module_path: ModulePath,
     pub file_path: PathBuf,
+    pub exports: HashSet<String>,
 }
 
 impl ModuleContext {
@@ -64,18 +65,36 @@ impl ModuleContext {
         Self {
             module_path,
             file_path,
+            exports: HashSet::new(),
         }
     }
 
     pub fn name(&self) -> String {
         self.module_path.name()
     }
+
+    pub fn export(
+        &mut self,
+        name: impl Into<String>,
+    ) {
+        self.exports.insert(
+            name.into()
+        );
+    }
+
+    pub fn is_exported(
+        &self,
+        name: &str,
+    ) -> bool {
+        self.exports.contains(name)
+    }
 }
 
 #[derive(Clone)]
 pub struct Module {
     name: String,
-    exports: HashMap<String, Value>,
+    fields: HashMap<String, Value>,
+    exports: HashSet<String>,
 }
 
 impl Module {
@@ -84,7 +103,8 @@ impl Module {
     ) -> Self {
         Self {
             name: name.into(),
-            exports: HashMap::new(),
+            fields: HashMap::new(),
+            exports: HashSet::new(),
         }
     }
 
@@ -97,17 +117,74 @@ impl Module {
         name: impl Into<String>,
         value: Value,
     ) {
-        self.exports.insert(
+        self.fields.insert(
             name.into(),
             value,
         );
     }
 
+    pub fn export(
+        &mut self,
+        name: impl Into<String>,
+    ) {
+        self.exports.insert(
+            name.into()
+        );
+    }
+
+    /// Set a field and make it publicly accessible.
+    pub fn set_exported(
+        &mut self,
+        name: impl Into<String>,
+        value: Value,
+    ) {
+        let name = name.into();
+
+        self.fields.insert(
+            name.clone(),
+            value,
+        );
+
+        self.exports.insert(
+            name,
+        );
+    }
+
+    pub fn is_exported(
+        &self,
+        name: &str,
+    ) -> bool {
+        self.exports.contains(name)
+    }
+
+    /// Alias for `get_internal()`
     pub fn get(
         &self,
         name: &str,
     ) -> Option<Value> {
-        self.exports
+        self.fields
+            .get(name)
+            .cloned()
+    }
+
+    pub fn get_field(
+        &self,
+        name: &str,
+    ) -> Option<Value> {
+        if !self.is_exported(name) {
+            return None;
+        }
+
+        self.fields
+            .get(name)
+            .cloned()
+    }
+
+    pub fn get_internal(
+        &self,
+        name: &str,
+    ) -> Option<Value> {
+        self.fields
             .get(name)
             .cloned()
     }
@@ -116,7 +193,7 @@ impl Module {
         &self,
         name: &str,
     ) -> bool {
-        self.exports.contains_key(name)
+        self.fields.contains_key(name)
     }
 }
 
@@ -128,8 +205,8 @@ impl fmt::Debug for Module {
         f.debug_struct("Module")
             .field("name", &self.name)
             .field(
-                "exports",
-                &self.exports.keys().collect::<Vec<_>>(),
+                "fields",
+                &self.fields.keys().collect::<Vec<_>>(),
             )
             .finish()
     }

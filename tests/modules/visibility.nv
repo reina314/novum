@@ -1,0 +1,5 @@
+pub let answer = 42
+let secret = 56
+
+pub let add = |x, y| x + y
+let helper = |x| x * 2

@@ -240,6 +240,8 @@ impl<'a> Lexer<'a> {
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
 
+            "pub" => TokenKind::Pub,
+
             "null" => TokenKind::Null,
 
             _ => TokenKind::Ident(s),

@@ -15,56 +15,56 @@ pub fn module() -> ModuleRef {
     let mut module =
         Module::new("linalg");
 
-    module.set(
+    module.set_exported(
         "matrix",
         Value::Builtin(
             matrix
         ),
     );
 
-    module.set(
+    module.set_exported(
         "transpose",
         Value::Builtin(
             transpose
         ),
     );
 
-    module.set(
+    module.set_exported(
         "det",
         Value::Builtin(
             det
         ),
     );
 
-    module.set(
+    module.set_exported(
         "inverse",
         Value::Builtin(
             inverse
         ),
     );
 
-    module.set(
+    module.set_exported(
         "shape",
         Value::Builtin(
             shape
         ),
     );
 
-    module.set(
+    module.set_exported(
         "rows",
         Value::Builtin(
             rows
         ),
     );
 
-    module.set(
+    module.set_exported(
         "cols",
         Value::Builtin(
             cols
         ),
     );
 
-    module.set(
+    module.set_exported(
         "linear_regression",
         Value::Builtin(
             linear_regression

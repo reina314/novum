@@ -36,6 +36,12 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Public,
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
@@ -54,6 +60,7 @@ pub enum ExprKind {
     Dict(Vec<(String, Expr)>),
 
     StructDecl {
+        visibility: Visibility,
         name: String,
         fields: Vec<String>,
         methods: Vec<(String, Box<Expr>)>,
@@ -63,7 +70,11 @@ pub enum ExprKind {
     Import(Vec<String>),
 
     // Assignment & Deassignment
-    Let(Pattern, Box<Expr>),
+    Let {
+        visibility: Visibility,
+        pattern: Pattern, 
+        value: Box<Expr>,
+    },
     Assign(String, Box<Expr>),
     AssignIndex(Box<Expr>, IndexExpr, Box<Expr>),
     AssignField(Box<Expr>, String, Box<Expr>),

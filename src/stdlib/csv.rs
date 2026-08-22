@@ -16,7 +16,7 @@ pub fn module() -> ModuleRef {
     let mut module =
         Module::new("csv");
 
-    module.set(
+    module.set_exported(
         "read",
         Value::Builtin(read),
     );

@@ -13,187 +13,187 @@ pub fn module() -> ModuleRef {
     let mut module =
         Module::new("math");
 
-    module.set(
+    module.set_exported(
         "sqrt",
         Value::Builtin(sqrt),
     );
 
-    module.set(
+    module.set_exported(
         "abs",
         Value::Builtin(abs),
     );
 
-    module.set(
+    module.set_exported(
         "sign",
         Value::Builtin(sign),
     );
 
-    module.set(
+    module.set_exported(
         "floor",
         Value::Builtin(floor),
     );
 
-    module.set(
+    module.set_exported(
         "ceil",
         Value::Builtin(ceil),
     );
 
-    module.set(
+    module.set_exported(
         "round",
         Value::Builtin(round),
     );
 
-    module.set(
+    module.set_exported(
         "trunc",
         Value::Builtin(trunc),
     );
 
-    module.set(
+    module.set_exported(
         "fract",
         Value::Builtin(fract),
     );
 
-    module.set(
+    module.set_exported(
         "sqrt",
         Value::Builtin(sqrt),
     );
 
-    module.set(
+    module.set_exported(
         "cbrt",
         Value::Builtin(cbrt),
     );
 
-    module.set(
+    module.set_exported(
         "pow",
         Value::Builtin(pow),
     );
 
-    module.set(
+    module.set_exported(
         "exp",
         Value::Builtin(exp),
     );
 
-    module.set(
+    module.set_exported(
         "exp2",
         Value::Builtin(exp2),
     );
 
-    module.set(
+    module.set_exported(
         "ln",
         Value::Builtin(ln),
     );
 
-    module.set(
+    module.set_exported(
         "log",
         Value::Builtin(log),
     );
 
-    module.set(
+    module.set_exported(
         "log2",
         Value::Builtin(log2),
     );
 
-    module.set(
+    module.set_exported(
         "log10",
         Value::Builtin(log10),
     );
 
-    module.set(
+    module.set_exported(
         "sin",
         Value::Builtin(sin),
     );
 
-    module.set(
+    module.set_exported(
         "cos",
         Value::Builtin(cos),
     );
 
-    module.set(
+    module.set_exported(
         "tan",
         Value::Builtin(tan),
     );
 
-    module.set(
+    module.set_exported(
         "asin",
         Value::Builtin(asin),
     );
 
-    module.set(
+    module.set_exported(
         "acos",
         Value::Builtin(acos),
     );
 
-    module.set(
+    module.set_exported(
         "atan",
         Value::Builtin(atan),
     );
 
-    module.set(
+    module.set_exported(
         "atan2",
         Value::Builtin(atan2),
     );
 
-    module.set(
+    module.set_exported(
         "sinh",
         Value::Builtin(sinh),
     );
 
-    module.set(
+    module.set_exported(
         "cosh",
         Value::Builtin(cosh),
     );
 
-    module.set(
+    module.set_exported(
         "tanh",
         Value::Builtin(tanh),
     );
 
-    module.set(
+    module.set_exported(
         "asinh",
         Value::Builtin(asinh),
     );
 
-    module.set(
+    module.set_exported(
         "acosh",
         Value::Builtin(acosh),
     );
 
-    module.set(
+    module.set_exported(
         "atanh",
         Value::Builtin(atanh),
     );
 
-    module.set(
+    module.set_exported(
         "hypot",
         Value::Builtin(hypot),
     );
 
-    module.set(
+    module.set_exported(
         "min",
         Value::Builtin(min),
     );
 
-    module.set(
+    module.set_exported(
         "max",
         Value::Builtin(max),
     );
 
-    module.set(
+    module.set_exported(
         "clamp",
         Value::Builtin(clamp),
     );
 
-    module.set(
+    module.set_exported(
         "pi",
         Value::Builtin(pi),
     );
 
-    module.set(
+    module.set_exported(
         "e",
         Value::Builtin(e),
     );
 
-    module.set(
+    module.set_exported(
         "tau",
         Value::Builtin(tau),
     );

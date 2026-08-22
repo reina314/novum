@@ -356,6 +356,8 @@ impl Parser {
             TokenKind::Enum => self.parse_enum(),
             TokenKind::Import => self.parse_import(),
 
+            TokenKind::Pub => self.parse_public_declaration(),
+
             _ => self.parse_or(),
         }
     }
@@ -387,8 +389,19 @@ impl Parser {
     }
 
     fn parse_let(&mut self) -> Result<Expr> {
+        self.parse_let_with_visibility(
+            Visibility::Private
+        )
+    }
+
+    fn parse_let_with_visibility(
+        &mut self,
+        visibility: Visibility,
+    ) -> Result<Expr> {
         let start =
-            self.expect(TokenKind::Let)?.span;
+            self.peek().span;
+
+        self.expect(TokenKind::Let)?;
 
         let pattern =
             self.parse_pattern()?;
@@ -400,18 +413,67 @@ impl Parser {
 
         Ok(
             Expr::new(
-                ExprKind::Let(
+                ExprKind::Let {
+                    visibility,
                     pattern,
-                    Box::new(value.clone()),
-                ),
-                start.join(
-                    value.span
-                ),
+                    value: Box::new(value.clone()),
+                },
+                start.join(value.span),
             )
         )
     }
 
+    fn parse_public_declaration(
+        &mut self,
+    ) -> Result<Expr> {
+        self.expect(TokenKind::Pub)?;
+
+        match self.peek().kind {
+            TokenKind::Let => {
+                self.parse_let_with_visibility(
+                    Visibility::Public
+                )
+            }
+
+            TokenKind::Struct => {
+                self.parse_struct_with_visibility(
+                    Visibility::Public
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::parse(
+                        "expected 'let' or 'struct' after 'pub'",
+                        self.peek().span,
+                    )
+                )
+            }
+        }
+    }
+
+    // fn parse_visibility(
+    //     &mut self,
+    // ) -> Visibility {
+    //     if self.check(TokenKind::Pub) {
+    //         self.eat();
+
+    //         Visibility::Public
+    //     } else {
+    //         Visibility::Private
+    //     }
+    // }
+
     fn parse_struct(&mut self) -> Result<Expr> {
+        self.parse_struct_with_visibility(
+            Visibility::Private
+        )
+    }
+
+    fn parse_struct_with_visibility(
+        &mut self,
+        visibility: Visibility,
+    ) -> Result<Expr> {
         let start = self.expect(TokenKind::Struct)?.span;
 
         // struct name
@@ -520,6 +582,7 @@ impl Parser {
 
         Ok(Expr::new(
             ExprKind::StructDecl {
+                visibility,
                 name,
                 fields,
                 methods,
