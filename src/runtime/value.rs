@@ -22,6 +22,7 @@ use std::{
     collections::HashMap, 
 };
 
+pub type StrRef = Rc<String>;
 pub type Tuple = Rc<Vec<Value>>;
 pub type List = Rc<RefCell<Vec<Value>>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
@@ -32,7 +33,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Str(Rc<String>),
+    Str(StrRef),
 
     Tuple(Tuple),
     List(List),
@@ -517,6 +518,13 @@ impl fmt::Display for Value {
     }
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool { 
+        Self::eq_values(self, other)
+            .unwrap_or(false) 
+    }
+}
+
 fn format_float(value: f64) -> String {
     let s = format!("{value:.8}");
 
@@ -525,9 +533,138 @@ fn format_float(value: f64) -> String {
         .to_string()
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool { 
-        Self::eq_values(self, other)
-            .unwrap_or(false) 
+
+pub trait FromValue: Sized {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value>;
+
+    fn expected_type() -> Type;
+}
+
+impl FromValue for i64 {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Int(v) =>
+                Ok(v),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Int
     }
 }
+
+impl FromValue for bool {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Bool(b) =>
+                Ok(b),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Bool
+    }
+}
+
+impl FromValue for List {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::List(list) =>
+                Ok(list),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::List
+    }
+}
+
+impl FromValue for StrRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Str(value) =>
+                Ok(value),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Str
+    }
+}
+
+impl FromValue for VectorRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Vector(vector) =>
+                Ok(vector),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Vector
+    }
+}
+
+impl FromValue for MatrixRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Matrix(matrix) =>
+                Ok(matrix),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Matrix
+    }
+}
+
+impl FromValue for IteratorRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Iterator(iterator) =>
+                Ok(iterator),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Iterator
+    }
+}
+

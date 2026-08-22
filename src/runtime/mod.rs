@@ -71,9 +71,11 @@ pub use bound_method::{
     MethodReceiver,
 };
 pub use value::{
+    StrRef,
     Dict,
     List,
-    Value
+    Value, 
+    FromValue,
 };
 pub use r#type::{
     Type,

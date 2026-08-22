@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, Vector, VectorRef, MatrixRef, Type,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -433,7 +433,7 @@ impl Interpreter {
         )
     }
 
-    /// Helper function to validate data type
+    /// Helper function to validate Value type
     fn expect_type(
         &self,
         actual: &Value,
@@ -457,21 +457,25 @@ impl Interpreter {
         }
     }
 
-    fn expect_list(
+    /// Helper funtion to validate i64 and f64
+    fn expect_number(
         &self,
         value: Value,
         expr: &Expr,
-    ) -> Result<List> {
+    ) -> Result<f64> {
         match value {
-            Value::List(list) =>
-                Ok(list),
+            Value::Int(value) =>
+                Ok(value as f64),
+
+            Value::Float(value) =>
+                Ok(value),
 
             other => {
                 Err(
                     self.error(
                         ErrorKind::Type,
                         format!(
-                            "expected List, got {}",
+                            "expected numeric value, got {}",
                             other.type_name()
                         ),
                         expr,
@@ -481,27 +485,28 @@ impl Interpreter {
         }
     }
 
-    fn expect_iterator(
+    /// Helper function to validate Value type and extract data
+    fn expect<T: FromValue>(
         &self,
         value: Value,
         expr: &Expr,
-    ) -> Result<IteratorRef> {
-        match value {
-            Value::Iterator(iterator) =>
-                Ok(iterator),
+    ) -> Result<T> {
+        match T::from_value(value) {
+            Ok(value) =>
+                Ok(value),
 
-            other => {
+            Err(actual) =>
                 Err(
                     self.error(
                         ErrorKind::Type,
                         format!(
-                            "expected Iterator, got {}",
-                            other.type_name()
+                            "expected {}, got {}",
+                            T::expected_type().name(),
+                            actual.type_name(),
                         ),
                         expr,
                     )
-                )
-            }
+                ),
         }
     }
 
@@ -748,17 +753,31 @@ impl Interpreter {
 
             Not(e) => {
                 let v = self.eval_value(e)?;
-                match v {
-                    Value::Bool(v) => Ok(ControlFlow::Value(Value::Bool(!v))),
-                    v => Err(self.error(ErrorKind::Type, format!("'not' expects Bool, got {}", v.type_name()), expr)),
-                }
+
+                let b: bool = self.expect(
+                    v,
+                    e,
+                )?;
+
+                Ok(ControlFlow::Value(
+                    Value::Bool(!b)
+                ))
             }
 
             If(cond, then_branch, else_branch) => {
-                match self.eval_value(cond)? {
-                    Value::Bool(true) => self.eval(then_branch),
-                    Value::Bool(false) => match else_branch { Some(e) => self.eval(e), None => Ok(ControlFlow::Value(Value::Unit)) },
-                    v => Err(self.error(ErrorKind::Type, format!("'if' expects Bool, got {}", v.type_name()), expr)),
+                let v = self.eval_value(cond)?;
+
+                let b: bool = self.expect(
+                    v,
+                    cond,
+                )?;
+
+                match b {
+                    true => self.eval(then_branch),
+                    false => match else_branch { 
+                        Some(e) => self.eval(e), 
+                        None => Ok(ControlFlow::Value(Value::Unit)) 
+                    }
                 }
             }
 
@@ -1795,24 +1814,12 @@ impl Interpreter {
                 Value::Dict(dict),
                 IndexExpr::Single(index),
             ) => {
-                let key =
-                    match self.eval_value(index)? {
-                        Value::Str(s) =>
-                            s.as_ref().clone(),
+                let v = self.eval_value(index)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "dictionary index expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let key: String = self.expect::<StrRef>(
+                    v,
+                    whole,
+                )?.as_ref().clone();
 
                 let value =
                     self.eval_value(rhs)?;
@@ -1892,27 +1899,8 @@ impl Interpreter {
                 let value =
                     self.eval_value(rhs)?;
 
-                let numeric =
-                    match value {
-                        Value::Int(v) =>
-                            v as f64,
-
-                        Value::Float(v) =>
-                            v,
-
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix value must be numeric, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let numeric = 
+                    self.expect_number(value, whole)?;
 
                 matrix
                     .borrow_mut()
@@ -2063,33 +2051,23 @@ impl Interpreter {
     ) -> Result<usize> {
         match index {
             IndexExpr::Single(expr) => {
-                match self.eval_value(expr)? {
-                    Value::Int(v) if v >= 0 => {
-                        Ok(v as usize)
-                    }
+                let v = self.eval_value(expr)?;
+                
+                let v: i64 = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                    Value::Int(_) => {
-                        Err(self.error(
-                            ErrorKind::Index,
-                            format!(
-                                "negative Matrix {} index",
-                                axis
-                            ),
-                            whole,
-                        ))
-                    }
-
-                    other => {
-                        Err(self.error(
-                            ErrorKind::Type,
-                            format!(
-                                "Matrix {} index must be Int, got {}",
-                                axis,
-                                other.type_name()
-                            ),
-                            whole,
-                        ))
-                    }
+                if v >= 0 { Ok(v as usize) }
+                else {
+                    Err(self.error(
+                        ErrorKind::Index,
+                        format!(
+                            "negative Matrix {} index",
+                            axis
+                        ),
+                        whole,
+                    ))
                 }
             }
 
@@ -2273,24 +2251,12 @@ impl Interpreter {
                 Value::Dict(dict),
                 IndexExpr::Single(index),
             ) => {
-                let key =
-                    match self.eval_value(index)? {
-                        Value::Str(s) =>
-                            s.as_ref().clone(),
+                let v = self.eval_value(index)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "dictionary index expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let key = self.expect::<StrRef>(
+                    v,
+                    whole,
+                )?.as_ref().clone();
 
                 dict.borrow()
                     .get(&key)
@@ -2508,10 +2474,20 @@ impl Interpreter {
     }
 
     fn eval_index_int(&mut self, expr: &Expr, whole: &Expr) -> Result<usize> {
-        match self.eval_value(expr)? {
-            Value::Int(i) if i >= 0 => Ok(i as usize),
-            Value::Int(_) => Err(self.error(ErrorKind::Index, "negative index is not supported", whole)),
-            other => Err(self.error(ErrorKind::Type, format!("index expects Int, got {}", other.type_name()), whole)),
+        let v = self.eval_value(expr)?;
+        
+        let v: i64 = self.expect(
+            v,
+            whole,
+        )?;
+
+        if v >= 0 { Ok(v as usize) }
+        else {
+            Err(self.error(
+                ErrorKind::Index, 
+                "negative index is not supported", 
+                whole,
+            ))
         }
     }
 
@@ -2527,37 +2503,25 @@ impl Interpreter {
         let start_value =
             match start {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            v as usize
-                        }
+                    let v = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} slice start",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    let v: i64 = self.expect(
+                        v,
+                        whole,
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} slice start must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    if v >= 0 { v as usize }
+                    else {
+                        return Err(
+                            self.error(
+                                ErrorKind::Index,
+                                format!(
+                                    "negative Matrix {} slice start",
+                                    axis
+                                ),
+                                whole,
+                            )
+                        );
                     }
                 }
 
@@ -2567,51 +2531,40 @@ impl Interpreter {
         let end_value =
             match end {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            if inclusive {
-                                (v as usize).checked_add(1)
-                                    .ok_or_else(|| {
-                                        self.error(
-                                            ErrorKind::Overflow,
-                                            format!(
-                                                "inclusive Matrix {} slice endpoint overflow",
-                                                axis
-                                            ),
-                                            whole,
-                                        )
-                                    })?
-                            } else {
-                                v as usize
-                            }
-                        }
+                    let v = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} slice end",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    let v: i64 = self.expect(
+                        v,
+                        whole,
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} slice end must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
+                    if v >= 0 {
+                        if inclusive {
+                            (v as usize).checked_add(1)
+                                .ok_or_else(|| {
+                                    self.error(
+                                        ErrorKind::Overflow,
+                                        format!(
+                                            "inclusive Matrix {} slice endpoint overflow",
+                                            axis
+                                        ),
+                                        whole,
+                                    )
+                                })?
+                        } else {
+                            v as usize
                         }
+                    } else {
+                        return Err(
+                            self.error(
+                                ErrorKind::Index,
+                                format!(
+                                    "negative Matrix {} slice end",
+                                    axis
+                                ),
+                                whole,
+                            )
+                        );
                     }
                 }
 
@@ -2674,39 +2627,26 @@ impl Interpreter {
     ) -> Result<(usize, usize)> {
         match index {
             IndexExpr::Single(expr) => {
-                let value =
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            v as usize
-                        }
+                let value = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} index",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                let value: i64 = self.expect::<i64>(
+                    value,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} index must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let value = if value >= 0 { value as usize }
+                else {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "negative Matrix {} index",
+                                axis
+                            ),
+                            whole,
+                        )
+                    );
+                };
 
                 if value >= len {
                     return Err(
@@ -2813,35 +2753,22 @@ impl Interpreter {
                 let start =
                     match start {
                         Some(expr) => {
-                            match self.eval_value(expr)? {
-                                Value::Int(value)
-                                    if value >= 0 =>
-                                {
-                                    value
-                                }
+                            let v = self.eval_value(expr)?;
 
-                                Value::Int(_) => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Index,
-                                            "negative range start",
-                                            whole,
-                                        )
-                                    );
-                                }
+                            let v: i64 = self.expect(
+                                v,
+                                whole,
+                            )?;
 
-                                other => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Type,
-                                            format!(
-                                                "range expects Int, got {}",
-                                                other.type_name()
-                                            ),
-                                            whole,
-                                        )
-                                    );
-                                }
+                            if v >= 0 { v }
+                            else {
+                                return Err(
+                                    self.error(
+                                        ErrorKind::Index,
+                                        "negative range start",
+                                        whole,
+                                    )
+                                );
                             }
                         }
 
@@ -2851,23 +2778,12 @@ impl Interpreter {
                 let mut end =
                     match end {
                         Some(expr) => {
-                            match self.eval_value(expr)? {
-                                Value::Int(value) =>
-                                    value,
+                            let v = self.eval_value(expr)?;
 
-                                other => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Type,
-                                            format!(
-                                                "range expects Int, got {}",
-                                                other.type_name()
-                                            ),
-                                            whole,
-                                        )
-                                    );
-                                }
-                            }
+                            self.expect::<i64>(
+                                v,
+                                whole,
+                            )?
                         }
 
                         None => i64::MAX,
@@ -3019,25 +2935,14 @@ impl Interpreter {
                 let condition =
                     self.eval_value(cond)?;
 
-                match condition {
-                    Value::Bool(true) => {}
+                let b: bool = self.expect(
+                    condition,
+                    whole,
+                )?;
 
-                    Value::Bool(false) => {
-                        break;
-                    }
-
-                    other => {
-                        return Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'while' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        );
-                    }
+                match b {
+                    false => break,
+                    true => (),
                 }
 
                 // -------------------------------------------------
@@ -3442,22 +3347,12 @@ impl Interpreter {
         let start =
             match start {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(value) => value,
+                    let v = self.eval_value(expr)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "range start expects Int, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    }
+                    self.expect::<i64>(
+                        v,
+                        whole,
+                    )?
                 }
 
                 None => 0,
@@ -3466,22 +3361,12 @@ impl Interpreter {
         let end =
             match end {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(value) => value,
+                    let v = self.eval_value(expr)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "range end expects Int, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    }
+                    self.expect::<i64>(
+                        v,
+                        whole,
+                    )?
                 }
 
                 None => i64::MAX,
@@ -3559,28 +3444,15 @@ impl Interpreter {
             }
 
             Value::Bool(true) => {
-                match self.eval_value(rhs)? {
-                    Value::Bool(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::Bool(value)
-                            )
-                        )
-                    }
+                let v = self.eval_value(rhs)?; 
 
-                    other => {
-                        Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'and' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        )
-                    }
-                }
+                Ok(ControlFlow::Value(
+                    Value::Bool(
+                        self.expect::<bool>(
+                            v, whole
+                        )?
+                    )
+                ))
             }
 
             // =====================================================
@@ -3675,28 +3547,15 @@ impl Interpreter {
             }
 
             Value::Bool(false) => {
-                match self.eval_value(rhs)? {
-                    Value::Bool(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::Bool(value)
-                            )
-                        )
-                    }
+                let v = self.eval_value(rhs)?;
 
-                    other => {
-                        Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'or' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        )
-                    }
-                }
+                Ok(ControlFlow::Value(
+                    Value::Bool(
+                        self.expect::<bool>(
+                            v, whole,
+                        )?
+                    )
+                ))
             }
 
             // =====================================================
@@ -4810,24 +4669,13 @@ impl Interpreter {
                     );
                 }
 
-                let needle =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_ref(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "contains() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let needle = str.as_ref();
 
                 Ok(
                     ControlFlow::Value(
@@ -4854,24 +4702,13 @@ impl Interpreter {
                     );
                 }
 
-                let prefix =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_str(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "starts_with() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let prefix = str.as_str();
 
                 Ok(
                     ControlFlow::Value(
@@ -4896,24 +4733,13 @@ impl Interpreter {
                 );
             }
 
-            let suffix =
-                match &args[0] {
-                    Value::Str(value) =>
-                        value.as_str(),
+            let v = args[0].clone();
+            let str: StrRef = self.expect(
+                v,
+                whole,
+            )?;
 
-                    other => {
-                        return Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "ends_with() expects Str, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        );
-                    }
-                };
+            let suffix = str.as_str();
 
             Ok(
                 ControlFlow::Value(
@@ -4938,24 +4764,13 @@ impl Interpreter {
                     );
                 }
 
-                let separator =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_str(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "split() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let separator = str.as_str();
 
                 let values =
                     string
