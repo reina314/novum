@@ -3,6 +3,7 @@ use crate::{
         Value,
         IteratorObj,
         Env,
+        Set,
     }
 };
 
@@ -44,6 +45,11 @@ fn builtins()
     );
 
     map.insert(
+        "set".into(),
+        Value::Builtin(set),
+    );
+
+    map.insert(
         "range".into(),
         Value::Builtin(range),
     );
@@ -79,21 +85,6 @@ fn builtins()
     );
 
     map.insert(
-        "read".into(),
-        Value::Builtin(read),
-    );
-
-    map.insert(
-        "write".into(),
-        Value::Builtin(write),
-    );
-
-    map.insert(
-        "append".into(),
-        Value::Builtin(append),
-    );
-
-    map.insert(
         "str".into(),
         Value::Builtin(str),
     );
@@ -109,18 +100,8 @@ fn builtins()
     );
 
     map.insert(
-        "args".into(),
-        Value::Builtin(args),
-    );
-
-    map.insert(
-        "env".into(),
-        Value::Builtin(env),
-    );
-
-    map.insert(
-        "cwd".into(),
-        Value::Builtin(cwd),
+        "bool".into(),
+        Value::Builtin(bool),
     );
 
     map.insert(
@@ -170,71 +151,6 @@ fn expect_string(
     }
 }
 
-pub fn args(args: Vec<Value>) -> Result<Value, String> {
-    if !args.is_empty() {
-        return Err(
-            "args() expects no arguments".into()
-        );
-    }
-
-    let values = std::env::args()
-        .skip(1)
-        .map(|arg| Value::Str(Rc::new(arg)))
-        .collect();
-
-    Ok(Value::List(
-        Rc::new(std::cell::RefCell::new(values))
-    ))
-}
-
-pub fn env(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err(
-            "env() expects exactly 1 argument".into()
-        );
-    }
-
-    let name = match &args[0] {
-        Value::Str(name) => name,
-
-        other => {
-            return Err(format!(
-                "env() expected Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    match std::env::var(name.as_ref()) {
-        Ok(value) =>
-            Ok(Value::Str(Rc::new(value))),
-
-        Err(std::env::VarError::NotPresent) =>
-            Ok(Value::Null),
-
-        Err(e) =>
-            Err(format!(
-                "failed to read environment variable: {e}"
-            )),
-    }
-}
-
-pub fn cwd(args: Vec<Value>) -> Result<Value, String> {
-    if !args.is_empty() {
-        return Err(
-            "cwd() expects no arguments".into()
-        );
-    }
-
-    let path = std::env::current_dir()
-        .map_err(|e| e.to_string())?;
-
-    Ok(Value::Str(
-        Rc::new(
-            path.to_string_lossy().into_owned()
-        )
-    ))
-}
 
 pub fn print(args: Vec<Value>) -> Result<Value,String> {
     for value in args { println!("{}", value); }
@@ -272,99 +188,6 @@ pub fn input(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Str(Rc::new(line)))
 }
 
-pub fn read(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err(
-            "read() expects exactly 1 argument".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "read() expected Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let text = std::fs::read_to_string(path.as_ref())
-        .map_err(|e| format!("failed to read '{path}': {e}"))?;
-
-    Ok(Value::Str(Rc::new(text)))
-}
-
-pub fn write(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err(
-            "write() expects exactly 2 arguments".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "write() expected path as Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let content = args[1].to_string();
-
-    std::fs::write(path.as_ref(), content)
-        .map_err(|e| format!("failed to write '{path}': {e}"))?;
-
-    Ok(Value::Unit)
-}
-
-pub fn append(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err(
-            "append() expects exactly 2 arguments".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "append() expected path as Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let content = args[1].to_string();
-
-    use std::io::Write;
-
-    let mut file =
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path.as_ref())
-            .map_err(|e| {
-                format!(
-                    "failed to open '{path}': {e}"
-                )
-            })?;
-
-    file.write_all(content.as_bytes())
-        .map_err(|e| {
-            format!(
-                "failed to append to '{path}': {e}"
-            )
-        })?;
-
-    Ok(Value::Unit)
-}
-
 pub fn str(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
@@ -377,54 +200,153 @@ pub fn str(args: Vec<Value>) -> Result<Value, String> {
     ))
 }
 
-pub fn int(args: Vec<Value>) -> Result<Value, String> {
+pub fn int(
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
-            "parse_int() expects exactly 1 argument"
+            "int() expects exactly 1 argument"
                 .into()
         );
     }
 
-    let text = match &args[0] {
-        Value::Str(text) => text,
+    match args.into_iter().next().unwrap() {
+        Value::Int(value) =>
+            Ok(Value::Int(value)),
+
+        Value::Float(value) => {
+            if !value.is_finite() {
+                return Err(
+                    "cannot convert non-finite Float to Int"
+                        .into()
+                );
+            }
+
+            Ok(
+                Value::Int(
+                    value as i64
+                )
+            )
+        }
+
+        Value::Str(text) => {
+            let value =
+                text.trim()
+                    .parse::<i64>()
+                    .map_err(|error| {
+                        format!(
+                            "invalid integer '{}': {}",
+                            text,
+                            error
+                        )
+                    })?;
+
+            Ok(
+                Value::Int(value)
+            )
+        }
 
         other => {
-            return Err(format!(
-                "parse_int() expected Str, got {}",
-                other.type_name()
-            ));
+            Err(
+                format!(
+                    "int() cannot convert {} to Int",
+                    other.type_name()
+                )
+            )
         }
-    };
-
-    let value = text.parse::<i64>()
-        .map_err(|e| format!("invalid integer: {e}"))?;
-
-    Ok(Value::Int(value))
+    }
 }
 
-pub fn float(args: Vec<Value>) -> Result<Value, String> {
+pub fn float(
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
-            "parse_float() expects exactly 1 argument"
+            "float() expects exactly 1 argument"
                 .into()
         );
     }
 
-    let text = match &args[0] {
-        Value::Str(text) => text,
+    match args.into_iter().next().unwrap() {
+        Value::Float(value) =>
+            Ok(Value::Float(value)),
+
+        Value::Int(value) =>
+            Ok(
+                Value::Float(
+                    value as f64
+                )
+            ),
+
+        Value::Str(text) => {
+            let value =
+                text.trim()
+                    .parse::<f64>()
+                    .map_err(|error| {
+                        format!(
+                            "invalid float '{}': {}",
+                            text,
+                            error
+                        )
+                    })?;
+
+            Ok(
+                Value::Float(value)
+            )
+        }
 
         other => {
-            return Err(format!(
-                "parse_float() expected Str, got {}",
-                other.type_name()
-            ));
+            Err(
+                format!(
+                    "float() cannot convert {} to Float",
+                    other.type_name()
+                )
+            )
         }
-    };
+    }
+}
 
-    let value = text.parse::<f64>()
-        .map_err(|e| format!("invalid float: {e}"))?;
+pub fn bool(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "bool() expects exactly 1 argument"
+                .into()
+        );
+    }
 
-    Ok(Value::Float(value))
+    match args.into_iter().next().unwrap() {
+        Value::Bool(value) =>
+            Ok(Value::Bool(value)),
+
+        Value::Str(text) => {
+            match text.trim() {
+                "true" =>
+                    Ok(Value::Bool(true)),
+
+                "false" =>
+                    Ok(Value::Bool(false)),
+
+                other =>
+                    Err(
+                        format!(
+                            "invalid boolean '{}'",
+                            other
+                        )
+                    ),
+            }
+        }
+
+        other => {
+            Err(
+                format!(
+                    "bool() cannot convert {} to Bool",
+                    other.type_name()
+                )
+            )
+        }
+    }
 }
 
 pub fn r#typeof(args: Vec<Value>) -> Result<Value, String> {
@@ -534,6 +456,44 @@ pub fn iter(
             )
         }
     }
+}
+
+pub fn set(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "set() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let list =
+        match &args[0] {
+            Value::List(list) =>
+                list.borrow(),
+
+            other =>
+                return Err(format!(
+                    "set() expects List, got {}",
+                    other.type_name()
+                )),
+        };
+
+    let set =
+        Set::from_values(
+            list.clone()
+        )?;
+
+    Ok(
+        Value::Set(
+            Rc::new(
+                RefCell::new(
+                    set
+                )
+            )
+        )
+    )
 }
 
 pub fn range(args: Vec<Value>) -> Result<Value, String> {
@@ -758,5 +718,4 @@ pub fn panic(args: Vec<Value>) -> Result<Value, String> {
 
     Err(message)
 }
-
 

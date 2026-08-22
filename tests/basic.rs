@@ -2219,4 +2219,394 @@ fn for_enum_pattern() {
     );
 }
 
+#[test]
+fn iterator_enumerate() {
+    let result =
+        run(
+            r#"
+            [10,20,30]
+                .iter()
+                .enumerate()
+                .collect()
+            "#
+        );
 
+    // expected:
+    // [(0,10), (1,20), (2,30)]
+}
+
+#[test]
+fn iterator_zip() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .iter()
+                .zip(
+                    [4,5,6].iter()
+                )
+                .collect()
+            "#
+        );
+
+    // [(1,4), (2,5), (3,6)]
+}
+
+#[test]
+fn iterator_take() {
+    let result =
+        run(
+            r#"
+            (1..100)
+                .take(3)
+                .collect()
+            "#
+        );
+
+    // [1,2,3]
+}
+
+#[test]
+fn iterator_skip() {
+    let result =
+        run(
+            r#"
+            (1..6)
+                .skip(3)
+                .collect()
+            "#
+        );
+
+    // [4,5]
+}
+
+#[test]
+fn iterator_zip_map() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .iter()
+                .zip(
+                    [10,20,30].iter()
+                )
+                .map(
+                    |pair| pair.0 + pair.1
+                )
+                .collect()
+            "#
+        );
+
+    // [11,22,33]
+}
+
+#[test]
+fn dict_len_method() {
+    let result =
+        run(
+            r#"
+            {"a": 1, "b": 2}.len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn dict_get_method() {
+    let result =
+        run(
+            r#"
+            {"a": 10}.get("a")
+            "#
+        );
+
+    // 既存の option_some helper / equality test に
+    // 合わせて検証
+}
+
+#[test]
+fn dict_get_missing_returns_none() {
+    let result =
+        run(
+            r#"
+            {"a": 10}.get("b")
+            "#
+        );
+
+    // Option.None
+}
+
+#[test]
+fn dict_set_method() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.set("b", 2)
+
+            d["b"]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn dict_remove_method() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.remove("a")
+            "#
+        );
+
+    // Option.Some(1)
+}
+
+#[test]
+fn dict_remove_missing_returns_none() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.remove("b")
+            "#
+        );
+
+    // Option.None
+}
+
+#[test]
+fn dict_contains_method() {
+    assert_eq!(
+        run(
+            r#"
+            {"a": 1}.contains("a")
+            "#
+        ),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(
+            r#"
+            {"a": 1}.contains("b")
+            "#
+        ),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn dict_keys_method() {
+    let result =
+        run(
+            r#"
+            {"a": 1, "b": 2}
+                .keys()
+                .iter()
+                .all(|key|
+                    key == "a"
+                    or key == "b"
+                )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_constructor_removes_duplicates() {
+    let result =
+        run(
+            r#"
+            set([1,2,2,3])
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn set_contains() {
+    assert_eq!(
+        run(
+            r#"
+            set([1,2,3])
+                .contains(2)
+            "#
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_add_remove() {
+    let result =
+        run(
+            r#"
+            let s = set([1,2])
+
+            s.add(3)
+            s.remove(1)
+
+            s.contains(3)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_union() {
+    let result =
+        run(
+            r#"
+            set([1,2])
+                .union(
+                    set([2,3])
+                )
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn set_intersection() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .intersection(
+                    set([2,3,4])
+                )
+                .len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn set_difference() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .difference(
+                    set([2,3])
+                )
+                .contains(1)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn set_iterator() {
+    let result =
+        run(
+            r#"
+            set([1,2,3])
+                .iter()
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+}
+
+#[test]
+fn int_float_conversion() {
+    assert_eq!(
+        run("int(3.9)"),
+        Value::Int(3)
+    );
+
+    assert_eq!(
+        run("int(-3.9)"),
+        Value::Int(-3)
+    );
+}
+
+#[test]
+fn int_from_invalid_string() {
+    assert!(
+        run_result(
+            r#"int("hello")"#
+        ).is_err()
+    );
+}
+
+#[test]
+fn str_conversion() {
+    assert_eq!(
+        run(r#"str(123)"#),
+        Value::Str(
+            Rc::new("123".into())
+        )
+    );
+
+    assert_eq!(
+        run(r#"str(true)"#),
+        Value::Str(
+            Rc::new("true".into())
+        )
+    );
+}
+
+#[test]
+fn float_from_int() {
+    assert_eq!(
+        run("float(10)"),
+        Value::Float(10.0)
+    );
+}
+
+#[test]
+fn int_from_string() {
+    assert_eq!(
+        run(r#"int("42")"#),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn float_from_string() {
+    assert_eq!(
+        run(r#"float("3.14")"#),
+        Value::Float(3.14)
+    );
+}

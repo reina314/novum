@@ -8,17 +8,20 @@ use std::{
     collections::HashMap,
 };
 
-pub mod general;
+pub mod builtin;
 pub mod math;
 pub mod linalg;
+pub mod process;
+pub mod fs;
 pub mod csv;
+pub mod json;
 pub mod stats;
 
 /// Defines eager stdlib module
 pub fn install_builtins(
     env: &Env
 ) {
-    general::install_builtins(env);
+    builtin::install_builtins(env);
 
     for (name, value) 
         in builtins() {
@@ -37,11 +40,20 @@ pub fn load_module(
         "linalg" =>
             Some(linalg::module()),
 
+        "process" =>
+            Some(process::module()),
+
+        "fs" =>
+            Some(fs::module()),
+
         "math" =>
             Some(math::module()),
 
         "csv" =>
             Some(csv::module()),
+
+        "json" =>
+            Some(json::module()),
 
         _ => None,
     }

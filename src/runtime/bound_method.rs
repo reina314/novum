@@ -2,6 +2,10 @@ use super::{
     DataFrameRef,
     GroupedDataFrameRef,
     List,
+    Dict,
+    SetRef,
+    VectorRef,
+    MatrixRef,
     ObjectRef,
     SeriesRef,
     IteratorRef,
@@ -16,7 +20,11 @@ use std::{
 pub enum MethodReceiver {
     Str(Rc<String>),
     List(List),
-    
+    Set(SetRef),
+    Dict(Dict),
+    Vector(VectorRef),
+    Matrix(MatrixRef),
+
     Range {
         start: i64,
         end: i64,
@@ -51,6 +59,7 @@ impl MethodReceiver {
                     | "clear"
                     | "extend"
                     | "join"
+                    | "vector"
             ),
 
             Self::Str(_) => matches!(
@@ -68,6 +77,48 @@ impl MethodReceiver {
                     | "repeat"
             ),
 
+            Self::Set(_) => matches!(
+                name,
+                "len"
+                    | "add"
+                    | "remove"
+                    | "contains"
+                    | "clear"
+                    | "iter"
+                    | "union"
+                    | "intersection"
+                    | "difference"
+            ),
+
+            Self::Dict(_) => matches!(
+                name,
+                "get"
+                    | "set"
+                    | "remove"
+                    | "contains"
+                    | "keys"
+                    | "values"
+                    | "len"
+                    | "items"
+                    | "iter"
+            ),
+
+            Self::Vector(_) => matches!(
+                name,
+                "len"
+                    | "shape"
+                    | "norm"
+                    | "dot"
+                    | "to_matrix"
+            ),
+
+            Self::Matrix(_) => matches!(
+                name,
+                "shape"
+                    | "transpose"
+                    | "trace"
+            ),
+
             Self::Iterator(_) => matches!(
                 name,
                 "next"
@@ -78,6 +129,10 @@ impl MethodReceiver {
                     | "fold"
                     | "any"
                     | "all"
+                    | "enumerate"
+                    | "zip"
+                    | "take"
+                    | "skip"
             ),
 
             Self::Range { .. } => matches!(
@@ -90,6 +145,10 @@ impl MethodReceiver {
                     | "fold"
                     | "any"
                     | "all"
+                    | "enumerate"
+                    | "zip"
+                    | "take"
+                    | "skip"
             ),
 
             // Existing cases...

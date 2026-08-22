@@ -4,8 +4,7 @@ use std::{
     cell::RefCell,
 };
 
-pub type MatrixRef =
-    Rc<RefCell<Matrix>>;
+pub type MatrixRef = Rc<RefCell<Matrix>>;
 
 #[derive(Clone)]
 pub struct Matrix {
@@ -81,6 +80,30 @@ impl Matrix {
         )
     }
 
+    pub fn from_vec(
+        rows: usize,
+        cols: usize,
+        data: Vec<f64>,
+    ) -> Result<Self, String> {
+        if rows.checked_mul(cols) != Some(data.len()) {
+            return Err(format!(
+                "matrix data length mismatch: shape ({}, {}) requires {} elements, got {}",
+                rows,
+                cols,
+                rows.saturating_mul(cols),
+                data.len(),
+            ));
+        }
+
+        Ok(
+            Self {
+                rows,
+                cols,
+                data,
+            }
+        )
+    }
+
     pub fn rows(&self) -> usize {
         self.rows
     }
@@ -91,6 +114,35 @@ impl Matrix {
 
     pub fn shape(&self) -> (usize, usize) {
         (self.rows, self.cols)
+    }
+
+    pub fn trace(
+        &self,
+    ) -> Result<f64, String> {
+        if self.rows() != self.cols() {
+            return Err(format!(
+                "trace requires a square matrix, got shape ({}, {})",
+                self.rows(),
+                self.cols(),
+            ));
+        }
+
+        let mut result =
+            0.0;
+
+        for i in 0..self.rows() {
+            result +=
+                self.get(i, i)
+                    .expect(
+                        "matrix index out of bounds"
+                    );
+        }
+
+        Ok(result)
+    }
+
+    pub fn as_slice(&self) -> &[f64] {
+        &self.data
     }
 
     pub fn slice(
@@ -583,71 +635,117 @@ impl Matrix {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        let rows = self.rows();
-        let cols = self.cols();
+        let rows =
+            self.rows();
+
+        let cols =
+            self.cols();
 
         // --------------------------------------------------
-        // Convert every value to its display representation
+        // Empty matrix
         // --------------------------------------------------
 
-        let mut values = Vec::with_capacity(rows);
+        if rows == 0 {
+            return write!(
+                f,
+                "()"
+            );
+        }
+
+        // --------------------------------------------------
+        // Convert values to strings
+        // --------------------------------------------------
+
+        let mut values =
+            Vec::with_capacity(rows);
 
         for r in 0..rows {
-            let mut row = Vec::with_capacity(cols);
+            let mut row =
+                Vec::with_capacity(cols);
 
             for c in 0..cols {
-                let value = self
-                    .get(r, c)
-                    .expect("matrix index out of bounds");
+                let value =
+                    self.get(r, c)
+                        .expect(
+                            "matrix index out of bounds"
+                        );
 
-                row.push(value.to_string());
+                row.push(
+                    value.to_string()
+                );
             }
 
             values.push(row);
         }
 
         // --------------------------------------------------
-        // Calculate the width of each column
+        // Calculate column widths
         // --------------------------------------------------
 
-        let mut widths = vec![0; cols];
+        let mut widths =
+            vec![0usize; cols];
 
         for c in 0..cols {
             for r in 0..rows {
                 widths[c] =
-                    widths[c].max(values[r][c].len());
+                    widths[c]
+                        .max(
+                            values[r][c].len()
+                        );
             }
         }
 
         // --------------------------------------------------
-        // Display
+        // Outer structure
+        //
+        // (
+        //     [ 1,  2 ],
+        //     [ 30, 4 ],
+        // )
         // --------------------------------------------------
 
-        for r in 0..rows {
-            if r > 0 {
-                writeln!(f)?;
-            }
+        writeln!(f, "(")?;
 
-            write!(f, "[")?;
+        for r in 0..rows {
+            write!(
+                f,
+                "    ["
+            )?;
 
             for c in 0..cols {
                 if c > 0 {
-                    write!(f, ", ")?;
+                    write!(
+                        f,
+                        ", "
+                    )?;
                 }
 
                 write!(
                     f,
                     "{:>width$}",
                     values[r][c],
-                    width = widths[c]
+                    width = widths[c],
                 )?;
             }
 
-            write!(f, "]")?;
+            write!(
+                f,
+                "]"
+            )?;
+
+            if r + 1 < rows {
+                writeln!(f, ",")?;
+            } else {
+                writeln!(f)?;
+            }
         }
 
-        Ok(())
+        write!(
+            f,
+            ")"
+        )
     }
+
 }
 
 impl fmt::Debug for Matrix {

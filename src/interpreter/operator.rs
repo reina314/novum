@@ -1,6 +1,7 @@
 use crate::{
     runtime::{
         Value,
+        Vector,
         Series,
         SeriesRef,
     },
@@ -406,7 +407,27 @@ fn add(
             ))
         }
 
-        // Matrix
+        (
+            Value::Vector(a),
+            Value::Vector(b),
+        ) => {
+            let result =
+                a.borrow()
+                    .add(
+                        &b.borrow()
+                    )?;
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
         (
             Value::Matrix(a),
             Value::Matrix(b),
@@ -475,6 +496,27 @@ fn sub(
         }
 
         (
+            Value::Vector(a),
+            Value::Vector(b),
+        ) => {
+            let result =
+                a.borrow()
+                    .sub(
+                        &b.borrow()
+                    )?;
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (
             Value::Matrix(a),
             Value::Matrix(b),
         ) => {
@@ -539,6 +581,86 @@ fn mul(
             Ok(Value::Float(
                 a * b as f64
             ))
+        }
+
+        (
+            Value::Vector(vector),
+            Value::Int(scalar),
+        ) => {
+            let result =
+                vector.borrow()
+                    .scale(
+                        scalar as f64
+                    );
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            Value::Vector(vector),
+            Value::Float(scalar),
+        ) => {
+            let result =
+                vector.borrow()
+                    .scale(scalar);
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            Value::Int(scalar),
+            Value::Vector(vector),
+        ) => {
+            let result =
+                vector.borrow()
+                    .scale(
+                        scalar as f64
+                    );
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            Value::Float(scalar),
+            Value::Vector(vector),
+        ) => {
+            let result =
+                vector.borrow()
+                    .scale(scalar);
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
         }
 
         // Matrix * Matrix = element-wise
@@ -851,6 +973,21 @@ fn matmul(
 ) -> Result<Value, String> {
     match (lhs, rhs) {
         (
+            Value::Vector(a),
+            Value::Vector(b),
+        ) => {
+            let result =
+                a.borrow()
+                    .dot(
+                        &b.borrow()
+                    )?;
+
+            Ok(
+                Value::Float(result)
+            )
+        }
+        
+        (
             Value::Matrix(a),
             Value::Matrix(b),
         ) => {
@@ -867,9 +1004,135 @@ fn matmul(
             ))
         }
 
+        (
+            Value::Vector(vector),
+            Value::Matrix(matrix),
+        ) => {
+            let vector =
+                vector.borrow();
+
+            let matrix =
+                matrix.borrow();
+
+            if vector.len()
+                != matrix.rows()
+            {
+                return Err(format!(
+                    "vector-matrix multiplication dimension mismatch: vector length {}, matrix shape ({}, {})",
+                    vector.len(),
+                    matrix.rows(),
+                    matrix.cols(),
+                ));
+            }
+
+            let mut result =
+                vec![
+                    0.0;
+                    matrix.cols()
+                ];
+
+            for c in 0..matrix.cols() {
+                let mut sum =
+                    0.0;
+
+                for r in 0..matrix.rows() {
+                    let v =
+                        vector
+                            .get(r)
+                            .expect(
+                                "vector index out of bounds"
+                            );
+
+                    let m =
+                        matrix
+                            .get(r, c)
+                            .expect(
+                                "matrix index out of bounds"
+                            );
+
+                    sum += v * m;
+                }
+
+                result[c] = sum;
+            }
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            Vector::new(result)
+                        )
+                    )
+                )
+            )
+        }
+
+        (
+            Value::Matrix(matrix),
+            Value::Vector(vector),
+        ) => {
+            let matrix =
+                matrix.borrow();
+
+            let vector =
+                vector.borrow();
+
+            if matrix.cols()
+                != vector.len()
+            {
+                return Err(format!(
+                    "matrix-vector multiplication dimension mismatch: matrix shape ({}, {}), vector length {}",
+                    matrix.rows(),
+                    matrix.cols(),
+                    vector.len(),
+                ));
+            }
+
+            let mut result =
+                vec![
+                    0.0;
+                    matrix.rows()
+                ];
+
+            for r in 0..matrix.rows() {
+                let mut sum =
+                    0.0;
+
+                for c in 0..matrix.cols() {
+                    let m =
+                        matrix
+                            .get(r, c)
+                            .expect(
+                                "matrix index out of bounds"
+                            );
+
+                    let v =
+                        vector
+                            .get(c)
+                            .expect(
+                                "vector index out of bounds"
+                            );
+
+                    sum += m * v;
+                }
+
+                result[r] = sum;
+            }
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            Vector::new(result)
+                        )
+                    )
+                )
+            )
+        }
+
         (a, b) => {
             Err(format!(
-                "'@' expects Matrix @ Matrix, got {} and {}",
+                "'@' expects Matrix or Vector, got {} and {}",
                 a.type_name(),
                 b.type_name()
             ))

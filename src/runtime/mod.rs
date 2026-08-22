@@ -1,7 +1,9 @@
 pub mod control;
 pub mod env;
+pub mod set;
 pub mod function;
 pub mod iterator;
+pub mod vector;
 pub mod matrix;
 pub mod series;
 pub mod dataframe;
@@ -12,9 +14,14 @@ pub mod r#struct;
 pub mod r#enum;
 pub mod bound_method;
 pub mod value;
+pub mod r#type;
 
 pub use control::ControlFlow;
 pub use env::Env;
+pub use set::{
+    Set,
+    SetRef,
+};
 pub use function::{
     FuncRef,
     Function
@@ -22,6 +29,10 @@ pub use function::{
 pub use iterator::{
     IteratorObj,
     IteratorRef,
+};
+pub use vector::{
+    Vector,
+    VectorRef,
 };
 pub use matrix::{
     Matrix,
@@ -65,7 +76,12 @@ pub use bound_method::{
     MethodReceiver,
 };
 pub use value::{
+    StrRef,
     Dict,
     List,
-    Value
+    Value, 
+    FromValue,
+};
+pub use r#type::{
+    Type,
 };

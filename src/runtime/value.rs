@@ -1,4 +1,5 @@
 use super::{
+    SetRef,
     FuncRef,
     IteratorRef,
     ObjectRef,
@@ -6,12 +7,14 @@ use super::{
     EnumRef,
     EnumValueRef,
     EnumConstructor,
+    VectorRef,
     MatrixRef,
     SeriesRef,
     DataFrameRef,
     GroupedDataFrameRef,
     ModuleRef,
     BoundMethod,
+    Type,
 };
 use std::{
     fmt, 
@@ -20,6 +23,7 @@ use std::{
     collections::HashMap, 
 };
 
+pub type StrRef = Rc<String>;
 pub type Tuple = Rc<Vec<Value>>;
 pub type List = Rc<RefCell<Vec<Value>>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
@@ -30,12 +34,16 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Str(Rc<String>),
+    Str(StrRef),
 
     Tuple(Tuple),
     List(List),
+    Set(SetRef),
     Dict(Dict),
+
+    Vector(VectorRef),
     Matrix(MatrixRef),
+
     Series(SeriesRef),
     DataFrame(DataFrameRef),
     GroupedDataFrame(GroupedDataFrameRef),
@@ -61,40 +69,47 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn type_name(&self) -> &'static str {
+    pub fn value_type(&self) -> Type {
         match self {
-            Self::Int(_) => "Int",
-            Self::Float(_) => "Float",
-            Self::Bool(_) => "Bool",
-            Self::Str(_) => "Str",
+            Self::Unit => Type::Unit,
+            Self::Null => Type::Null,
 
-            Self::Tuple(_) => "Tuple",
-            Self::List(_) => "List",
-            Self::Dict(_) => "Dict",
-            Self::Matrix(_) => "Matrix",
-            Self::Series(_) => "Series",
-            Self::DataFrame(_) => "DataFrame",
-            Self::GroupedDataFrame(_) => "GroupedDataFrame",
+            Self::Int(_) => Type::Int,
+            Self::Float(_) => Type::Float,
+            Self::Bool(_) => Type::Bool,
+            Self::Str(_) => Type::Str,
 
-            Self::Object(_) => "Object",
-            Self::Struct(_) => "Struct",
-            Self::Module(_) => "Module",
+            Self::Tuple(_) => Type::Tuple,
+            Self::List(_) => Type::List,
+            Self::Set(_) => Type::Set,
+            Self::Dict(_) => Type::Dict,
 
-            Self::Enum(_) => "Enum",
-            Self::EnumValue(_) => "EnumValue",
-            Self::EnumConstructor(_) => "EnumConstructor",
+            Self::Vector(_) => Type::Vector,
+            Self::Matrix(_) => Type::Matrix,
 
-            Self::Range(..) => "Range",
+            Self::Series(_) => Type::Series,
+            Self::DataFrame(_) => Type::DataFrame,
+            Self::GroupedDataFrame(_) => Type::GroupedDataFrame,
 
-            Self::Func(_) => "Function",
-            Self::Iterator(_) => "Iterator",
-            Self::Builtin(_) => "Builtin",
+            Self::Object(_) => Type::Object,
+            Self::Struct(_) => Type::Struct,
+            Self::Module(_) => Type::Module,
 
-            Self::BoundMethod(_) => "Method",
+            Self::Enum(_) => Type::Enum,
+            Self::EnumValue(_) => Type::EnumValue,
+            Self::EnumConstructor(_) => Type::EnumConstructor,
+            
+            Self::Range(..) => Type::Range,
 
-            Self::Unit => "Unit",
-            Self::Null => "Null",
+            Self::Func(_) => Type::Function,
+            Self::Builtin(_) => Type::Builtin,
+            Self::Iterator(_) => Type::Iterator,
+            Self::BoundMethod(_) => Type::BoundMethod,
         }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        self.value_type().name()
     }
 
     pub fn truthy_bool(&self) -> Option<bool> {
@@ -167,6 +182,26 @@ impl Value {
                 )?
             },
 
+            (// element-wise, order-insensitive
+                Self::Set(a),
+                Self::Set(b),
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                if a.len() != b.len() {
+                    false
+                } else {
+                    for value in a.values() {
+                        if !b.contains(value)? {
+                            return Ok(false);
+                        }
+                    }
+
+                    true
+                }
+            }
+
             (// recursive key/value-wise
                 Self::Dict(x),
                 Self::Dict(y),
@@ -194,10 +229,27 @@ impl Value {
                 }
             }
 
+            (// element-wise
+                Self::Vector(a),
+                Self::Vector(b)    
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                a.as_slice() == b.as_slice()
+            },
+
             (// recursive element-wise
                 Self::Matrix(a),
                 Self::Matrix(b)
-            ) => Rc::ptr_eq(a, b),
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                a.rows() == b.rows()
+                    && a.cols() == b.cols()
+                    && a.as_slice() == b.as_slice()
+            },
 
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
             (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
@@ -295,7 +347,12 @@ impl fmt::Debug for Value {
 
             Self::List(v) => write!(f, "{:?}", v.borrow()),
 
+            Self::Set(set) => 
+            write!(f, "{:?}", set.borrow().values()),
+
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
+
+            Self::Vector(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
 
@@ -386,6 +443,29 @@ impl fmt::Display for Value {
                 }
 
                 write!(f, "]")
+            }
+
+            Self::Set(set) => {
+                let set =
+                    set.borrow();
+
+                write!(f, "{{")?;
+
+                for (i, value)
+                    in set.values().iter().enumerate()
+                {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(
+                        f,
+                        "{}",
+                        value
+                    )?;
+                }
+
+                write!(f, "}}")
             }
 
             Self::Dict(dict) => {
@@ -487,6 +567,13 @@ impl fmt::Display for Value {
     }
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool { 
+        Self::eq_values(self, other)
+            .unwrap_or(false) 
+    }
+}
+
 fn format_float(value: f64) -> String {
     let s = format!("{value:.8}");
 
@@ -495,9 +582,156 @@ fn format_float(value: f64) -> String {
         .to_string()
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool { 
-        Self::eq_values(self, other)
-            .unwrap_or(false) 
+
+pub trait FromValue: Sized {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value>;
+
+    fn expected_type() -> Type;
+}
+
+impl FromValue for i64 {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Int(v) =>
+                Ok(v),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Int
     }
 }
+
+impl FromValue for bool {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Bool(b) =>
+                Ok(b),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Bool
+    }
+}
+
+impl FromValue for List {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::List(list) =>
+                Ok(list),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::List
+    }
+}
+
+impl FromValue for SetRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Set(value) =>
+                Ok(value),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Set
+    }
+}
+
+impl FromValue for StrRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Str(value) =>
+                Ok(value),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Str
+    }
+}
+
+impl FromValue for VectorRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Vector(vector) =>
+                Ok(vector),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Vector
+    }
+}
+
+impl FromValue for MatrixRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Matrix(matrix) =>
+                Ok(matrix),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Matrix
+    }
+}
+
+impl FromValue for IteratorRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Iterator(iterator) =>
+                Ok(iterator),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Iterator
+    }
+}
+

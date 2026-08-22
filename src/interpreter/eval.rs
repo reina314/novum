@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -289,6 +289,133 @@ impl Interpreter {
                     }
                 }
             }
+        
+            IteratorObj::Enumerate { 
+                source,
+                index 
+            } => {
+                let value =
+                    self.next_from_iterator(
+                        source,
+                        whole,
+                    )?;
+
+                match value {
+                    Some(value) => {
+                        let current = *index;
+
+                        *index = index
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Overflow,
+                                    "iterator index overflow",
+                                    whole,
+                                )
+                            })?;
+
+                        Ok(Some(
+                            Value::Tuple(Rc::new(
+                                vec![
+                                    Value::Int(
+                                        current as i64
+                                    ),
+                                    value,
+                                ]
+                            ))
+                        ))
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+        
+            IteratorObj::Zip {
+                left,
+                right,
+            } => {
+                let l =
+                    self.next_from_iterator(
+                        left,
+                        whole,
+                    )?;
+
+                let l = match l {
+                    Some(value) => value,
+                    None => return Ok(None),
+                };
+
+                let r = 
+                    self.next_from_iterator(
+                            right,
+                            whole,
+                        )?;
+
+                let r = match r {
+                    Some(value) => value,
+                    None => return Ok(None),
+                };
+
+                Ok(Some(
+                    Value::Tuple(Rc::new(
+                        vec![
+                            l,
+                            r,
+                        ]
+                    ))
+                ))
+            }
+        
+            IteratorObj::Take {
+                source,
+                remaining,
+            } => {
+                if *remaining == 0 {
+                    return Ok(None);
+                }
+
+                let value =
+                    self.next_from_iterator(
+                        source,
+                        whole,
+                    )?;
+
+                match value {
+                    Some(value) => {
+                        *remaining -= 1;
+
+                        Ok(Some(value))
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+        
+            IteratorObj::Skip {
+                source,
+                remaining,
+            } => {
+                while *remaining > 0 {
+                    match self.next_from_iterator(
+                        source,
+                        whole,
+                    )? {
+                        Some(_) => {
+                            *remaining -= 1;
+                        }
+
+                        None =>
+                            return Ok(None),
+                    }
+                }
+
+                self.next_from_iterator(
+                    source,
+                    whole,
+                )
+            }
         }
     }
 
@@ -304,6 +431,83 @@ impl Interpreter {
             &mut iterator,
             whole,
         )
+    }
+
+    /// Helper function to validate Value type
+    fn expect_type(
+        &self,
+        actual: &Value,
+        expected: Type,
+        expr: &Expr,
+    ) -> Result<()> {
+        if actual.value_type() == expected {
+            Ok(())
+        } else {
+            Err(
+                self.error(
+                    ErrorKind::Type,
+                    format!(
+                        "expected {}, got {}",
+                        expected.name(),
+                        actual.type_name()
+                    ),
+                    expr,
+                )
+            )
+        }
+    }
+
+    /// Helper funtion to validate i64 and f64
+    fn expect_number(
+        &self,
+        value: Value,
+        expr: &Expr,
+    ) -> Result<f64> {
+        match value {
+            Value::Int(value) =>
+                Ok(value as f64),
+
+            Value::Float(value) =>
+                Ok(value),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "expected numeric value, got {}",
+                            other.type_name()
+                        ),
+                        expr,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper function to validate Value type and extract data
+    fn expect<T: FromValue>(
+        &self,
+        value: Value,
+        expr: &Expr,
+    ) -> Result<T> {
+        match T::from_value(value) {
+            Ok(value) =>
+                Ok(value),
+
+            Err(actual) =>
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "expected {}, got {}",
+                            T::expected_type().name(),
+                            actual.type_name(),
+                        ),
+                        expr,
+                    )
+                ),
+        }
     }
 
     pub fn eval_program(
@@ -549,17 +753,31 @@ impl Interpreter {
 
             Not(e) => {
                 let v = self.eval_value(e)?;
-                match v {
-                    Value::Bool(v) => Ok(ControlFlow::Value(Value::Bool(!v))),
-                    v => Err(self.error(ErrorKind::Type, format!("'not' expects Bool, got {}", v.type_name()), expr)),
-                }
+
+                let b: bool = self.expect(
+                    v,
+                    e,
+                )?;
+
+                Ok(ControlFlow::Value(
+                    Value::Bool(!b)
+                ))
             }
 
             If(cond, then_branch, else_branch) => {
-                match self.eval_value(cond)? {
-                    Value::Bool(true) => self.eval(then_branch),
-                    Value::Bool(false) => match else_branch { Some(e) => self.eval(e), None => Ok(ControlFlow::Value(Value::Unit)) },
-                    v => Err(self.error(ErrorKind::Type, format!("'if' expects Bool, got {}", v.type_name()), expr)),
+                let v = self.eval_value(cond)?;
+
+                let b: bool = self.expect(
+                    v,
+                    cond,
+                )?;
+
+                match b {
+                    true => self.eval(then_branch),
+                    false => match else_branch { 
+                        Some(e) => self.eval(e), 
+                        None => Ok(ControlFlow::Value(Value::Unit)) 
+                    }
                 }
             }
 
@@ -1596,24 +1814,12 @@ impl Interpreter {
                 Value::Dict(dict),
                 IndexExpr::Single(index),
             ) => {
-                let key =
-                    match self.eval_value(index)? {
-                        Value::Str(s) =>
-                            s.as_ref().clone(),
+                let v = self.eval_value(index)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "dictionary index expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let key: String = self.expect::<StrRef>(
+                    v,
+                    whole,
+                )?.as_ref().clone();
 
                 let value =
                     self.eval_value(rhs)?;
@@ -1693,27 +1899,8 @@ impl Interpreter {
                 let value =
                     self.eval_value(rhs)?;
 
-                let numeric =
-                    match value {
-                        Value::Int(v) =>
-                            v as f64,
-
-                        Value::Float(v) =>
-                            v,
-
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix value must be numeric, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let numeric = 
+                    self.expect_number(value, whole)?;
 
                 matrix
                     .borrow_mut()
@@ -1864,33 +2051,23 @@ impl Interpreter {
     ) -> Result<usize> {
         match index {
             IndexExpr::Single(expr) => {
-                match self.eval_value(expr)? {
-                    Value::Int(v) if v >= 0 => {
-                        Ok(v as usize)
-                    }
+                let v = self.eval_value(expr)?;
+                
+                let v: i64 = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                    Value::Int(_) => {
-                        Err(self.error(
-                            ErrorKind::Index,
-                            format!(
-                                "negative Matrix {} index",
-                                axis
-                            ),
-                            whole,
-                        ))
-                    }
-
-                    other => {
-                        Err(self.error(
-                            ErrorKind::Type,
-                            format!(
-                                "Matrix {} index must be Int, got {}",
-                                axis,
-                                other.type_name()
-                            ),
-                            whole,
-                        ))
-                    }
+                if v >= 0 { Ok(v as usize) }
+                else {
+                    Err(self.error(
+                        ErrorKind::Index,
+                        format!(
+                            "negative Matrix {} index",
+                            axis
+                        ),
+                        whole,
+                    ))
                 }
             }
 
@@ -2074,24 +2251,12 @@ impl Interpreter {
                 Value::Dict(dict),
                 IndexExpr::Single(index),
             ) => {
-                let key =
-                    match self.eval_value(index)? {
-                        Value::Str(s) =>
-                            s.as_ref().clone(),
+                let v = self.eval_value(index)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "dictionary index expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let key = self.expect::<StrRef>(
+                    v,
+                    whole,
+                )?.as_ref().clone();
 
                 dict.borrow()
                     .get(&key)
@@ -2309,10 +2474,20 @@ impl Interpreter {
     }
 
     fn eval_index_int(&mut self, expr: &Expr, whole: &Expr) -> Result<usize> {
-        match self.eval_value(expr)? {
-            Value::Int(i) if i >= 0 => Ok(i as usize),
-            Value::Int(_) => Err(self.error(ErrorKind::Index, "negative index is not supported", whole)),
-            other => Err(self.error(ErrorKind::Type, format!("index expects Int, got {}", other.type_name()), whole)),
+        let v = self.eval_value(expr)?;
+        
+        let v: i64 = self.expect(
+            v,
+            whole,
+        )?;
+
+        if v >= 0 { Ok(v as usize) }
+        else {
+            Err(self.error(
+                ErrorKind::Index, 
+                "negative index is not supported", 
+                whole,
+            ))
         }
     }
 
@@ -2328,37 +2503,25 @@ impl Interpreter {
         let start_value =
             match start {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            v as usize
-                        }
+                    let v = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} slice start",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    let v: i64 = self.expect(
+                        v,
+                        whole,
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} slice start must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    if v >= 0 { v as usize }
+                    else {
+                        return Err(
+                            self.error(
+                                ErrorKind::Index,
+                                format!(
+                                    "negative Matrix {} slice start",
+                                    axis
+                                ),
+                                whole,
+                            )
+                        );
                     }
                 }
 
@@ -2368,51 +2531,40 @@ impl Interpreter {
         let end_value =
             match end {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            if inclusive {
-                                (v as usize).checked_add(1)
-                                    .ok_or_else(|| {
-                                        self.error(
-                                            ErrorKind::Overflow,
-                                            format!(
-                                                "inclusive Matrix {} slice endpoint overflow",
-                                                axis
-                                            ),
-                                            whole,
-                                        )
-                                    })?
-                            } else {
-                                v as usize
-                            }
-                        }
+                    let v = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} slice end",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                    let v: i64 = self.expect(
+                        v,
+                        whole,
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} slice end must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
+                    if v >= 0 {
+                        if inclusive {
+                            (v as usize).checked_add(1)
+                                .ok_or_else(|| {
+                                    self.error(
+                                        ErrorKind::Overflow,
+                                        format!(
+                                            "inclusive Matrix {} slice endpoint overflow",
+                                            axis
+                                        ),
+                                        whole,
+                                    )
+                                })?
+                        } else {
+                            v as usize
                         }
+                    } else {
+                        return Err(
+                            self.error(
+                                ErrorKind::Index,
+                                format!(
+                                    "negative Matrix {} slice end",
+                                    axis
+                                ),
+                                whole,
+                            )
+                        );
                     }
                 }
 
@@ -2475,39 +2627,26 @@ impl Interpreter {
     ) -> Result<(usize, usize)> {
         match index {
             IndexExpr::Single(expr) => {
-                let value =
-                    match self.eval_value(expr)? {
-                        Value::Int(v) if v >= 0 => {
-                            v as usize
-                        }
+                let value = self.eval_value(expr)?;
 
-                        Value::Int(_) => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Index,
-                                    format!(
-                                        "negative Matrix {} index",
-                                        axis
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
+                let value: i64 = self.expect::<i64>(
+                    value,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "Matrix {} index must be Int, got {}",
-                                        axis,
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let value = if value >= 0 { value as usize }
+                else {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "negative Matrix {} index",
+                                axis
+                            ),
+                            whole,
+                        )
+                    );
+                };
 
                 if value >= len {
                     return Err(
@@ -2614,35 +2753,22 @@ impl Interpreter {
                 let start =
                     match start {
                         Some(expr) => {
-                            match self.eval_value(expr)? {
-                                Value::Int(value)
-                                    if value >= 0 =>
-                                {
-                                    value
-                                }
+                            let v = self.eval_value(expr)?;
 
-                                Value::Int(_) => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Index,
-                                            "negative range start",
-                                            whole,
-                                        )
-                                    );
-                                }
+                            let v: i64 = self.expect(
+                                v,
+                                whole,
+                            )?;
 
-                                other => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Type,
-                                            format!(
-                                                "range expects Int, got {}",
-                                                other.type_name()
-                                            ),
-                                            whole,
-                                        )
-                                    );
-                                }
+                            if v >= 0 { v }
+                            else {
+                                return Err(
+                                    self.error(
+                                        ErrorKind::Index,
+                                        "negative range start",
+                                        whole,
+                                    )
+                                );
                             }
                         }
 
@@ -2652,23 +2778,12 @@ impl Interpreter {
                 let mut end =
                     match end {
                         Some(expr) => {
-                            match self.eval_value(expr)? {
-                                Value::Int(value) =>
-                                    value,
+                            let v = self.eval_value(expr)?;
 
-                                other => {
-                                    return Err(
-                                        self.error(
-                                            ErrorKind::Type,
-                                            format!(
-                                                "range expects Int, got {}",
-                                                other.type_name()
-                                            ),
-                                            whole,
-                                        )
-                                    );
-                                }
-                            }
+                            self.expect::<i64>(
+                                v,
+                                whole,
+                            )?
                         }
 
                         None => i64::MAX,
@@ -2820,25 +2935,14 @@ impl Interpreter {
                 let condition =
                     self.eval_value(cond)?;
 
-                match condition {
-                    Value::Bool(true) => {}
+                let b: bool = self.expect(
+                    condition,
+                    whole,
+                )?;
 
-                    Value::Bool(false) => {
-                        break;
-                    }
-
-                    other => {
-                        return Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'while' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        );
-                    }
+                match b {
+                    false => break,
+                    true => (),
                 }
 
                 // -------------------------------------------------
@@ -3243,22 +3347,12 @@ impl Interpreter {
         let start =
             match start {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(value) => value,
+                    let v = self.eval_value(expr)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "range start expects Int, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    }
+                    self.expect::<i64>(
+                        v,
+                        whole,
+                    )?
                 }
 
                 None => 0,
@@ -3267,22 +3361,12 @@ impl Interpreter {
         let end =
             match end {
                 Some(expr) => {
-                    match self.eval_value(expr)? {
-                        Value::Int(value) => value,
+                    let v = self.eval_value(expr)?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "range end expects Int, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    }
+                    self.expect::<i64>(
+                        v,
+                        whole,
+                    )?
                 }
 
                 None => i64::MAX,
@@ -3360,28 +3444,15 @@ impl Interpreter {
             }
 
             Value::Bool(true) => {
-                match self.eval_value(rhs)? {
-                    Value::Bool(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::Bool(value)
-                            )
-                        )
-                    }
+                let v = self.eval_value(rhs)?; 
 
-                    other => {
-                        Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'and' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        )
-                    }
-                }
+                Ok(ControlFlow::Value(
+                    Value::Bool(
+                        self.expect::<bool>(
+                            v, whole
+                        )?
+                    )
+                ))
             }
 
             // =====================================================
@@ -3476,28 +3547,15 @@ impl Interpreter {
             }
 
             Value::Bool(false) => {
-                match self.eval_value(rhs)? {
-                    Value::Bool(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::Bool(value)
-                            )
-                        )
-                    }
+                let v = self.eval_value(rhs)?;
 
-                    other => {
-                        Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "'or' expects Bool, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        )
-                    }
-                }
+                Ok(ControlFlow::Value(
+                    Value::Bool(
+                        self.expect::<bool>(
+                            v, whole,
+                        )?
+                    )
+                ))
             }
 
             // =====================================================
@@ -3757,6 +3815,68 @@ impl Interpreter {
                 )
             }
 
+            Value::Set(set) => {
+                let receiver =
+                    MethodReceiver::Set(
+                        set.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Set has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
+            Value::Dict(dict) => {
+                let receiver =
+                    MethodReceiver::Dict(
+                        dict.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Dict has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Object(object) => {
                 if object.borrow()
                     .get_method(name)
@@ -3865,6 +3985,68 @@ impl Interpreter {
                                 name,
                             )
                         )
+                    )
+                )
+            }
+
+            Value::Vector(vector) => {
+                let receiver =
+                    MethodReceiver::Vector(
+                        vector.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Vector has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
+            Value::Matrix(matrix) => {
+                let receiver =
+                    MethodReceiver::Matrix(
+                        matrix.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Matrix has no method '{}'",
+                            name
+                        ),
+                        whole,
                     )
                 )
             }
@@ -4307,6 +4489,42 @@ impl Interpreter {
                 )
             }
 
+            MethodReceiver::Set(set) => {
+                self.call_set_method(
+                    set.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Dict(dict) => {
+                self.call_dict_method(
+                    dict.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Vector(vector) => {
+                self.call_vector_method(
+                    vector.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Matrix(matrix) => {
+                self.call_matrix_method(
+                    matrix.clone(), 
+                    method.name(), 
+                    args, 
+                    whole
+                )
+            }
+
             MethodReceiver::Range {
                 start,
                 end,
@@ -4531,24 +4749,13 @@ impl Interpreter {
                     );
                 }
 
-                let needle =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_ref(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "contains() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let needle = str.as_ref();
 
                 Ok(
                     ControlFlow::Value(
@@ -4575,24 +4782,13 @@ impl Interpreter {
                     );
                 }
 
-                let prefix =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_str(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "starts_with() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let prefix = str.as_str();
 
                 Ok(
                     ControlFlow::Value(
@@ -4617,24 +4813,13 @@ impl Interpreter {
                 );
             }
 
-            let suffix =
-                match &args[0] {
-                    Value::Str(value) =>
-                        value.as_str(),
+            let v = args[0].clone();
+            let str: StrRef = self.expect(
+                v,
+                whole,
+            )?;
 
-                    other => {
-                        return Err(
-                            self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "ends_with() expects Str, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            )
-                        );
-                    }
-                };
+            let suffix = str.as_str();
 
             Ok(
                 ControlFlow::Value(
@@ -4659,24 +4844,13 @@ impl Interpreter {
                     );
                 }
 
-                let separator =
-                    match &args[0] {
-                        Value::Str(value) =>
-                            value.as_str(),
+                let v = args[0].clone();
+                let str: StrRef = self.expect(
+                    v,
+                    whole,
+                )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "split() expects Str, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
+                let separator = str.as_str();
 
                 let values =
                     string
@@ -5547,12 +5721,971 @@ impl Interpreter {
                 )
             }
 
+            // =====================================================
+            // vector()
+            // =====================================================
+            "vector" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "vector() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    list.borrow();
+
+                let mut data =
+                    Vec::with_capacity(
+                        values.len()
+                    );
+
+                for value in values.iter() {
+                    match value {
+                        Value::Int(n) => {
+                            data.push(*n as f64);
+                        }
+
+                        Value::Float(x) => {
+                            data.push(*x);
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "vector() expects numeric elements, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                let vector =
+                    Vector::new(data);
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Vector(
+                            Rc::new(
+                                RefCell::new(
+                                    vector
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+
             _ => {
                 Err(
                     self.error(
                         ErrorKind::Runtime,
                         format!(
                             "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_set_method(
+        &mut self,
+        set: SetRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            set.borrow().len() as i64
+                        )
+                    )
+                )
+            }
+
+            "add" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "add() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                set.borrow_mut()
+                    .add(args.remove(0))
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let removed =
+                    set.borrow_mut()
+                        .remove(
+                            &args[0]
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            removed
+                        )
+                    )
+                )
+            }
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let contains =
+                    set.borrow()
+                        .contains(
+                            &args[0]
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            contains
+                        )
+                    )
+                )
+            }
+
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "clear() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                set.borrow_mut()
+                    .clear();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let data =
+                    Rc::new(
+                        RefCell::new(
+                            set.borrow()
+                                .values()
+                                .to_vec()
+                        )
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    IteratorObj::List {
+                                        data,
+                                        index: 0,
+                                    }
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "union"
+            | "intersection"
+            | "difference" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}() expects exactly 1 argument",
+                                name
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    self.expect::<SetRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let result =
+                    match name {
+                        "union" =>
+                            set.borrow()
+                                .union(
+                                    &other.borrow()
+                                ),
+
+                        "intersection" =>
+                            set.borrow()
+                                .intersection(
+                                    &other.borrow()
+                                ),
+
+                        "difference" =>
+                            set.borrow()
+                                .difference(
+                                    &other.borrow()
+                                ),
+
+                        _ =>
+                            unreachable!(),
+                    }
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Set(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Set has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_dict_method(
+        &mut self,
+        dict: Dict,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            dict.borrow().len()
+                                as i64
+                        )
+                    )
+                )
+            }
+
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    dict.borrow()
+                        .get(key.as_str())
+                        .cloned();
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            "set" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "set() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    args.remove(0);
+
+                dict.borrow_mut()
+                    .insert(
+                        key.as_str().to_owned(),
+                        value,
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    dict.borrow_mut()
+                        .remove(
+                            key.as_str()
+                        );
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let contains =
+                    dict.borrow()
+                        .contains_key(
+                            key.as_str()
+                        );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(contains)
+                    )
+                )
+            }
+
+            "keys" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "keys() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .keys()
+                        .map(|key| {
+                            Value::Str(
+                                Rc::new(
+                                    key.clone()
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "values" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "values() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "items" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "items() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .iter()
+                        .map(|(key, value)| {
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Str(
+                                        Rc::new(
+                                            key.clone()
+                                        )
+                                    ),
+                                    value.clone(),
+                                ])
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                // We deliberately snapshot the entries.
+                //
+                // This avoids holding a RefCell borrow for the
+                // lifetime of the iterator.
+                let items =
+                    dict.borrow()
+                        .iter()
+                        .map(|(key, value)| {
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Str(
+                                        Rc::new(
+                                            key.clone()
+                                        )
+                                    ),
+                                    value.clone(),
+                                ])
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                let iterator =
+                    IteratorObj::List {
+                        data: Rc::new(
+                            RefCell::new(items)
+                        ),
+                        index: 0,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    iterator
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Dict has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_vector_method(
+        &mut self,
+        vector: VectorRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            vector.borrow().len()
+                                as i64
+                        )
+                    )
+                )
+            }
+
+            "shape" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "shape() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let vector =
+                    vector.borrow();
+
+                let (rows, _) =
+                    vector.shape();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Tuple(
+                            Rc::new(
+                                vec![
+                                    Value::Int(
+                                        rows as i64
+                                    ),
+                                ]
+                            )
+                        )
+                    )
+                )
+            }
+
+            "norm" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "norm() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(
+                            vector.borrow().norm()
+                        )
+                    )
+                )
+            }
+
+            "dot" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "dot() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match args.remove(0) {
+                        Value::Vector(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "dot() expects Vector, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    vector
+                        .borrow()
+                        .dot(
+                            &other.borrow()
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Shape,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(result)
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_matrix() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let matrix =
+                    vector
+                        .borrow()
+                        .to_column_matrix();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(
+                                    matrix
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Vector has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_matrix_method(
+        &mut self,
+        matrix: MatrixRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "shape" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "shape() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let matrix =
+                    matrix.borrow();
+
+                let (rows, cols) =
+                    matrix.shape();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Tuple(
+                            Rc::new(
+                                vec![
+                                    Value::Int(
+                                        rows as i64
+                                    ),
+                                    Value::Int(
+                                        cols as i64
+                                    ),
+                                ]
+                            )
+                        )
+                    )
+                )
+            }
+
+            "transpose" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "transpose() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    matrix
+                        .borrow()
+                        .transpose();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "trace" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "trace() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    matrix
+                        .borrow()
+                        .trace()
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Shape,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(result)
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Matrix has no method '{}'",
                             name
                         ),
                         whole,
@@ -5603,7 +6736,11 @@ impl Interpreter {
             | "reduce"
             | "fold"
             | "any"
-            | "all" => {
+            | "all"
+            | "enumerate"
+            | "zip"
+            | "take"
+            | "skip" => {
                 let iterator =
                     self.make_range_iterator(
                         start,
@@ -5735,9 +6872,6 @@ impl Interpreter {
         whole: &Expr,
     ) -> Result<ControlFlow> {
         match name {
-            // =====================================================
-            // next()
-            // =====================================================
             "next" => {
                 if !args.is_empty() {
                     return Err(
@@ -5768,9 +6902,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // map(fn)
-            // =====================================================
             "map" => {
                 if args.len() != 1 {
                     return Err(
@@ -5826,9 +6957,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // filter(fn)
-            // =====================================================
             "filter" => {
                 if args.len() != 1 {
                     return Err(
@@ -5884,9 +7012,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // collect()
-            // =====================================================
             "collect" => {
                 if !args.is_empty() {
                     return Err(
@@ -5935,9 +7060,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // reduce()
-            // =====================================================
             "reduce" => {
                 if args.len() != 1 {
                     return Err(
@@ -6007,9 +7129,6 @@ impl Interpreter {
                 )
             }
             
-            // =====================================================
-            // fold()
-            // =====================================================
             "fold" => {
                 if args.len() != 2 {
                     return Err(
@@ -6080,9 +7199,6 @@ impl Interpreter {
                 )
             }
             
-            // =====================================================
-            // any()
-            // =====================================================
             "any" => {
                 if args.len() != 1 {
                     return Err(
@@ -6150,9 +7266,6 @@ impl Interpreter {
                 }
             }
             
-            // =====================================================
-            // fold()
-            // =====================================================
             "all" => {
                 if args.len() != 1 {
                     return Err(
@@ -6220,6 +7333,209 @@ impl Interpreter {
                 }
             }
             
+            "enumerate" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "enumerate() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    IteratorObj::Enumerate {
+                        source: iterator.clone(),
+                        index: 0,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "zip" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "zip() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match &args[0] {
+                        Value::Iterator(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "zip() expects Iterator, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Zip {
+                        left: iterator.clone(),
+                        right: other.clone(),
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "take" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "take() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let remaining =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Range,
+                                    "take() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "take() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Take {
+                        source: iterator.clone(),
+                        remaining,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "skip" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "skip() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let remaining =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Range,
+                                    "skip() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "skip() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Skip {
+                        source: iterator.clone(),
+                        remaining,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
             _ => {
                 Err(
                     self.error(
