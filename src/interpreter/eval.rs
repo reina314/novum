@@ -3540,7 +3540,9 @@ impl Interpreter {
                     | "contains"
                     | "starts_with"
                     | "ends_with"
-                    | "split" => {
+                    | "split"
+                    | "replace"
+                    | "repeat" => {
                         Ok(
                             ControlFlow::Value(
                                 Value::BoundMethod(
@@ -3571,16 +3573,47 @@ impl Interpreter {
             }
 
             Value::List(list) => {
-                Ok(ControlFlow::Value(
-                    Value::BoundMethod(
-                        BoundMethod::new(
-                            MethodReceiver::List(
-                                list.clone()
-                            ),
-                            name,
+                match name {
+                    "push"
+                    | "pop"
+                    | "remove"
+                    | "len"
+                    | "iter"
+                    | "get"
+                    | "set"
+                    | "insert"
+                    | "contains"
+                    | "reverse"
+                    | "clear"
+                    | "extend"
+                    | "join" => {
+                        Ok(
+                            ControlFlow::Value(
+                                Value::BoundMethod(
+                                    BoundMethod::new(
+                                        MethodReceiver::List(
+                                            list.clone()
+                                        ),
+                                        name,
+                                    )
+                                )
+                            )
                         )
-                    )
-                ))
+                    }
+
+                    _ => {
+                        Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "List has no field or method '{}'",
+                                    name
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
             }
 
             Value::Object(object) => {
@@ -4402,6 +4435,279 @@ impl Interpreter {
                 )
             }
 
+            // =========================================================
+            // starts_with(prefix)
+            // =========================================================
+
+            "starts_with" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "starts_with() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let prefix =
+                    match &args[0] {
+                        Value::Str(value) =>
+                            value.as_str(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "starts_with() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            string.starts_with(prefix)
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // ends_with(suffix)
+            // =========================================================
+
+            "ends_with" => {
+            if args.len() != 1 {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        "ends_with() takes exactly 1 argument",
+                        whole,
+                    )
+                );
+            }
+
+            let suffix =
+                match &args[0] {
+                    Value::Str(value) =>
+                        value.as_str(),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "ends_with() expects Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                };
+
+            Ok(
+                ControlFlow::Value(
+                    Value::Bool(
+                        string.ends_with(suffix)
+                    )
+                )
+            )
+        }
+
+            // =========================================================
+            // split(separator)
+            // =========================================================
+
+            "split" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "split() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let separator =
+                    match &args[0] {
+                        Value::Str(value) =>
+                            value.as_str(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "split() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let values =
+                    string
+                        .split(separator)
+                        .map(|part| {
+                            Value::Str(
+                                Rc::new(
+                                    part.to_owned()
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(values)
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // replace(Str, Str)
+            // =========================================================
+
+            "replace" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "replace() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let from =
+                    match args.next().unwrap() {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "replace() expects Str as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let to =
+                    match args.next().unwrap() {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "replace() expects Str as second argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    string.replace(
+                        from.as_str(),
+                        to.as_str(),
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // repeat(Int)
+            // =========================================================
+
+            "repeat" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "repeat() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let count =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "repeat() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "repeat() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                string.repeat(count)
+                            )
+                        )
+                    )
+                )
+            }
+
+
             _ => {
                 Err(
                     self.error(
@@ -4428,19 +4734,22 @@ impl Interpreter {
             // =====================================================
             // push(value)
             // =====================================================
+
             "push" => {
                 if args.len() != 1 {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "push() takes exactly 1 argument",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "push() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    args.pop().unwrap();
-
-                list.borrow_mut().push(value);
+                list.borrow_mut()
+                    .push(
+                        args.remove(0)
+                    );
 
                 Ok(
                     ControlFlow::Value(
@@ -4452,62 +4761,73 @@ impl Interpreter {
             // =====================================================
             // pop()
             // =====================================================
+
             "pop" => {
                 if !args.is_empty() {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "pop() takes no arguments",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "pop() takes no arguments",
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    list.borrow_mut()
-                        .pop()
-                        .unwrap_or(Value::Unit);
-
                 Ok(
-                    ControlFlow::Value(value)
+                    ControlFlow::Value(
+                        list.borrow_mut()
+                            .pop()
+                            .unwrap_or(
+                                Value::Unit
+                            )
+                    )
                 )
             }
 
             // =====================================================
             // remove(index)
             // =====================================================
+
             "remove" => {
                 if args.len() != 1 {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "remove() takes exactly 1 argument",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
                 }
 
                 let index =
-                    match args.pop().unwrap() {
-                        Value::Int(index)
-                            if index >= 0 =>
+                    match args.remove(0) {
+                        Value::Int(i)
+                            if i >= 0 =>
                         {
-                            index as usize
+                            i as usize
                         }
 
                         Value::Int(_) => {
-                            return Err(self.error(
-                                ErrorKind::Index,
-                                "remove() does not accept negative indices",
-                                whole,
-                            ));
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "remove() does not accept negative indices",
+                                    whole,
+                                )
+                            );
                         }
 
                         other => {
-                            return Err(self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "remove() expects Int, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            ));
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "remove() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
                         }
                     };
 
@@ -4515,43 +4835,44 @@ impl Interpreter {
                     list.borrow_mut();
 
                 if index >= list.len() {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "index out of range: {}",
-                            index
-                        ),
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    list.remove(index);
-
                 Ok(
-                    ControlFlow::Value(value)
+                    ControlFlow::Value(
+                        list.remove(index)
+                    )
                 )
             }
 
             // =====================================================
             // len()
             // =====================================================
+
             "len" => {
                 if !args.is_empty() {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "len() takes no arguments",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() takes no arguments",
+                            whole,
+                        )
+                    );
                 }
-
-                let len =
-                    list.borrow().len();
 
                 Ok(
                     ControlFlow::Value(
                         Value::Int(
-                            len as i64
+                            list.borrow().len() as i64
                         )
                     )
                 )
@@ -4560,41 +4881,496 @@ impl Interpreter {
             // =====================================================
             // iter()
             // =====================================================
+
             "iter" => {
                 if !args.is_empty() {
                     return Err(
                         self.error(
                             ErrorKind::Arity,
-                            "iter() expects no arguments",
+                            "iter() takes no arguments",
                             whole,
                         )
                     );
                 }
 
+                let iterator =
+                    IteratorObj::List {
+                        data: list.clone(),
+                        index: 0,
+                    };
+
                 Ok(
                     ControlFlow::Value(
                         Value::Iterator(
-                            Rc::new(RefCell::new(IteratorObj::List {
-                                data: list.clone(),
-                                index: 0,
-                            }))
+                            Rc::new(
+                                RefCell::new(
+                                    iterator
+                                )
+                            )
                         )
                     )
                 )
             }
 
             // =====================================================
-            // Unknown method
+            // get(index)
+            //
+            // xs.get(i)
+            //   -> Some(value)
+            //   -> None
             // =====================================================
+
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let index =
+                    match args.remove(0) {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Ok(
+                                ControlFlow::Value(
+                                    option_none()
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "get() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    list.borrow()
+                        .get(index)
+                        .cloned();
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            // =====================================================
+            // set(index, value)
+            // =====================================================
+
+            "set" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "set() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let index =
+                    match args.next().unwrap() {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "set() does not accept negative indices",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "set() expects Int as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    args.next().unwrap();
+
+                let mut list =
+                    list.borrow_mut();
+
+                if index >= list.len() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                list[index] =
+                    value;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // insert(index, value)
+            // =====================================================
+
+            "insert" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "insert() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let index =
+                    match args.next().unwrap() {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "insert() does not accept negative indices",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "insert() expects Int as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    args.next().unwrap();
+
+                let mut list =
+                    list.borrow_mut();
+
+                if index > list.len() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                list.insert(
+                    index,
+                    value,
+                );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // contains(value)
+            // =====================================================
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let needle =
+                    &args[0];
+
+                let values =
+                    list.borrow();
+
+                for value in values.iter() {
+                    if Value::eq_values(
+                        value,
+                        needle,
+                    )
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?
+                    {
+                        return Ok(
+                            ControlFlow::Value(
+                                Value::Bool(true)
+                            )
+                        );
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(false)
+                    )
+                )
+            }
+
+            // =====================================================
+            // reverse()
+            // =====================================================
+
+            "reverse" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "reverse() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                list.borrow_mut()
+                    .reverse();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // clear()
+            // =====================================================
+
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "clear() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                list.borrow_mut()
+                    .clear();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // extend(other_list)
+            // =====================================================
+
+            "extend" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "extend() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match args.remove(0) {
+                        Value::List(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "extend() expects List, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                // Clone first so that extending a list with itself
+                // does not create a borrow conflict.
+                let values =
+                    other.borrow().clone();
+
+                list.borrow_mut()
+                    .extend(values);
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // join(separator)
+            // =====================================================
+
+            "join" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "join() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let separator =
+                    match args.remove(0) {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "join() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let values =
+                    list.borrow();
+
+                let mut result =
+                    String::new();
+
+                for (i, value)
+                    in values.iter().enumerate()
+                {
+                    if i > 0 {
+                        result.push_str(
+                            separator.as_str()
+                        );
+                    }
+
+                    match value {
+                        Value::Str(value) =>
+                            result.push_str(
+                                value.as_str()
+                            ),
+
+                        other =>
+                            result.push_str(
+                                &other.to_string()
+                            ),
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
             _ => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "unknown list method '{}'",
-                        name
-                    ),
-                    whole,
-                ))
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
         }
     }
