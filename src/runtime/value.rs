@@ -13,6 +13,7 @@ use super::{
     GroupedDataFrameRef,
     ModuleRef,
     BoundMethod,
+    Type,
 };
 use std::{
     fmt, 
@@ -65,43 +66,46 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn type_name(&self) -> &'static str {
+    pub fn value_type(&self) -> Type {
         match self {
-            Self::Int(_) => "Int",
-            Self::Float(_) => "Float",
-            Self::Bool(_) => "Bool",
-            Self::Str(_) => "Str",
+            Self::Unit => Type::Unit,
+            Self::Null => Type::Null,
 
-            Self::Tuple(_) => "Tuple",
-            Self::List(_) => "List",
-            Self::Dict(_) => "Dict",
+            Self::Int(_) => Type::Int,
+            Self::Float(_) => Type::Float,
+            Self::Bool(_) => Type::Bool,
+            Self::Str(_) => Type::Str,
 
-            Self::Vector(_) => "Vector",
-            Self::Matrix(_) => "Matrix",
+            Self::Tuple(_) => Type::Tuple,
+            Self::List(_) => Type::List,
+            Self::Dict(_) => Type::Dict,
+
+            Self::Vector(_) => Type::Vector,
+            Self::Matrix(_) => Type::Matrix,
+
+            Self::Series(_) => Type::Series,
+            Self::DataFrame(_) => Type::DataFrame,
+            Self::GroupedDataFrame(_) => Type::GroupedDataFrame,
+
+            Self::Object(_) => Type::Object,
+            Self::Struct(_) => Type::Struct,
+            Self::Module(_) => Type::Module,
+
+            Self::Enum(_) => Type::Enum,
+            Self::EnumValue(_) => Type::EnumValue,
+            Self::EnumConstructor(_) => Type::EnumConstructor,
             
-            Self::Series(_) => "Series",
-            Self::DataFrame(_) => "DataFrame",
-            Self::GroupedDataFrame(_) => "GroupedDataFrame",
+            Self::Range(..) => Type::Range,
 
-            Self::Object(_) => "Object",
-            Self::Struct(_) => "Struct",
-            Self::Module(_) => "Module",
-
-            Self::Enum(_) => "Enum",
-            Self::EnumValue(_) => "EnumValue",
-            Self::EnumConstructor(_) => "EnumConstructor",
-
-            Self::Range(..) => "Range",
-
-            Self::Func(_) => "Function",
-            Self::Iterator(_) => "Iterator",
-            Self::Builtin(_) => "Builtin",
-
-            Self::BoundMethod(_) => "Method",
-
-            Self::Unit => "Unit",
-            Self::Null => "Null",
+            Self::Func(_) => Type::Function,
+            Self::Builtin(_) => Type::Builtin,
+            Self::Iterator(_) => Type::Iterator,
+            Self::BoundMethod(_) => Type::BoundMethod,
         }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        self.value_type().name()
     }
 
     pub fn truthy_bool(&self) -> Option<bool> {

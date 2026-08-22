@@ -2219,4 +2219,84 @@ fn for_enum_pattern() {
     );
 }
 
+#[test]
+fn iterator_enumerate() {
+    let result =
+        run(
+            r#"
+            [10,20,30]
+                .iter()
+                .enumerate()
+                .collect()
+            "#
+        );
+
+    // expected:
+    // [(0,10), (1,20), (2,30)]
+}
+
+#[test]
+fn iterator_zip() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .iter()
+                .zip(
+                    [4,5,6].iter()
+                )
+                .collect()
+            "#
+        );
+
+    // [(1,4), (2,5), (3,6)]
+}
+
+#[test]
+fn iterator_take() {
+    let result =
+        run(
+            r#"
+            (1..100)
+                .take(3)
+                .collect()
+            "#
+        );
+
+    // [1,2,3]
+}
+
+#[test]
+fn iterator_skip() {
+    let result =
+        run(
+            r#"
+            (1..6)
+                .skip(3)
+                .collect()
+            "#
+        );
+
+    // [4,5]
+}
+
+#[test]
+fn iterator_zip_map() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .iter()
+                .zip(
+                    [10,20,30].iter()
+                )
+                .map(
+                    |pair| pair.0 + pair.1
+                )
+                .collect()
+            "#
+        );
+
+    // [11,22,33]
+}
 

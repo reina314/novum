@@ -13,6 +13,7 @@ pub mod r#struct;
 pub mod r#enum;
 pub mod bound_method;
 pub mod value;
+pub mod r#type;
 
 pub use control::ControlFlow;
 pub use env::Env;
@@ -73,4 +74,7 @@ pub use value::{
     Dict,
     List,
     Value
+};
+pub use r#type::{
+    Type,
 };

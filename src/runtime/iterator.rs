@@ -36,6 +36,26 @@ pub enum IteratorObj {
         source: IteratorRef,
         predicate: FuncRef,
     },
+
+    Enumerate {
+        source: IteratorRef,
+        index: usize,
+    },
+
+    Zip {
+        left: IteratorRef,
+        right: IteratorRef,
+    },
+
+    Take {
+        source: IteratorRef,
+        remaining: usize,
+    },
+
+    Skip {
+        source: IteratorRef,
+        remaining: usize,
+    },
 }
 
 impl IteratorObj {

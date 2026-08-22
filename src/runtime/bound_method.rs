@@ -99,6 +99,10 @@ impl MethodReceiver {
                     | "fold"
                     | "any"
                     | "all"
+                    | "enumerate"
+                    | "zip"
+                    | "take"
+                    | "skip"
             ),
 
             Self::Range { .. } => matches!(
@@ -111,6 +115,10 @@ impl MethodReceiver {
                     | "fold"
                     | "any"
                     | "all"
+                    | "enumerate"
+                    | "zip"
+                    | "take"
+                    | "skip"
             ),
 
             // Existing cases...

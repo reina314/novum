@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, Vector, VectorRef, MatrixRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, Vector, VectorRef, MatrixRef, Type,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -289,6 +289,133 @@ impl Interpreter {
                     }
                 }
             }
+        
+            IteratorObj::Enumerate { 
+                source,
+                index 
+            } => {
+                let value =
+                    self.next_from_iterator(
+                        source,
+                        whole,
+                    )?;
+
+                match value {
+                    Some(value) => {
+                        let current = *index;
+
+                        *index = index
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Overflow,
+                                    "iterator index overflow",
+                                    whole,
+                                )
+                            })?;
+
+                        Ok(Some(
+                            Value::Tuple(Rc::new(
+                                vec![
+                                    Value::Int(
+                                        current as i64
+                                    ),
+                                    value,
+                                ]
+                            ))
+                        ))
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+        
+            IteratorObj::Zip {
+                left,
+                right,
+            } => {
+                let l =
+                    self.next_from_iterator(
+                        left,
+                        whole,
+                    )?;
+
+                let l = match l {
+                    Some(value) => value,
+                    None => return Ok(None),
+                };
+
+                let r = 
+                    self.next_from_iterator(
+                            right,
+                            whole,
+                        )?;
+
+                let r = match r {
+                    Some(value) => value,
+                    None => return Ok(None),
+                };
+
+                Ok(Some(
+                    Value::Tuple(Rc::new(
+                        vec![
+                            l,
+                            r,
+                        ]
+                    ))
+                ))
+            }
+        
+            IteratorObj::Take {
+                source,
+                remaining,
+            } => {
+                if *remaining == 0 {
+                    return Ok(None);
+                }
+
+                let value =
+                    self.next_from_iterator(
+                        source,
+                        whole,
+                    )?;
+
+                match value {
+                    Some(value) => {
+                        *remaining -= 1;
+
+                        Ok(Some(value))
+                    }
+
+                    None =>
+                        Ok(None),
+                }
+            }
+        
+            IteratorObj::Skip {
+                source,
+                remaining,
+            } => {
+                while *remaining > 0 {
+                    match self.next_from_iterator(
+                        source,
+                        whole,
+                    )? {
+                        Some(_) => {
+                            *remaining -= 1;
+                        }
+
+                        None =>
+                            return Ok(None),
+                    }
+                }
+
+                self.next_from_iterator(
+                    source,
+                    whole,
+                )
+            }
         }
     }
 
@@ -304,6 +431,78 @@ impl Interpreter {
             &mut iterator,
             whole,
         )
+    }
+
+    /// Helper function to validate data type
+    fn expect_type(
+        &self,
+        actual: &Value,
+        expected: Type,
+        expr: &Expr,
+    ) -> Result<()> {
+        if actual.value_type() == expected {
+            Ok(())
+        } else {
+            Err(
+                self.error(
+                    ErrorKind::Type,
+                    format!(
+                        "expected {}, got {}",
+                        expected.name(),
+                        actual.type_name()
+                    ),
+                    expr,
+                )
+            )
+        }
+    }
+
+    fn expect_list(
+        &self,
+        value: Value,
+        expr: &Expr,
+    ) -> Result<List> {
+        match value {
+            Value::List(list) =>
+                Ok(list),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "expected List, got {}",
+                            other.type_name()
+                        ),
+                        expr,
+                    )
+                )
+            }
+        }
+    }
+
+    fn expect_iterator(
+        &self,
+        value: Value,
+        expr: &Expr,
+    ) -> Result<IteratorRef> {
+        match value {
+            Value::Iterator(iterator) =>
+                Ok(iterator),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "expected Iterator, got {}",
+                            other.type_name()
+                        ),
+                        expr,
+                    )
+                )
+            }
+        }
     }
 
     pub fn eval_program(
@@ -6040,7 +6239,11 @@ impl Interpreter {
             | "reduce"
             | "fold"
             | "any"
-            | "all" => {
+            | "all"
+            | "enumerate"
+            | "zip"
+            | "take"
+            | "skip" => {
                 let iterator =
                     self.make_range_iterator(
                         start,
@@ -6172,9 +6375,6 @@ impl Interpreter {
         whole: &Expr,
     ) -> Result<ControlFlow> {
         match name {
-            // =====================================================
-            // next()
-            // =====================================================
             "next" => {
                 if !args.is_empty() {
                     return Err(
@@ -6205,9 +6405,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // map(fn)
-            // =====================================================
             "map" => {
                 if args.len() != 1 {
                     return Err(
@@ -6263,9 +6460,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // filter(fn)
-            // =====================================================
             "filter" => {
                 if args.len() != 1 {
                     return Err(
@@ -6321,9 +6515,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // collect()
-            // =====================================================
             "collect" => {
                 if !args.is_empty() {
                     return Err(
@@ -6372,9 +6563,6 @@ impl Interpreter {
                 )
             }
 
-            // =====================================================
-            // reduce()
-            // =====================================================
             "reduce" => {
                 if args.len() != 1 {
                     return Err(
@@ -6444,9 +6632,6 @@ impl Interpreter {
                 )
             }
             
-            // =====================================================
-            // fold()
-            // =====================================================
             "fold" => {
                 if args.len() != 2 {
                     return Err(
@@ -6517,9 +6702,6 @@ impl Interpreter {
                 )
             }
             
-            // =====================================================
-            // any()
-            // =====================================================
             "any" => {
                 if args.len() != 1 {
                     return Err(
@@ -6587,9 +6769,6 @@ impl Interpreter {
                 }
             }
             
-            // =====================================================
-            // fold()
-            // =====================================================
             "all" => {
                 if args.len() != 1 {
                     return Err(
@@ -6657,6 +6836,209 @@ impl Interpreter {
                 }
             }
             
+            "enumerate" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "enumerate() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    IteratorObj::Enumerate {
+                        source: iterator.clone(),
+                        index: 0,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "zip" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "zip() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match &args[0] {
+                        Value::Iterator(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "zip() expects Iterator, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Zip {
+                        left: iterator.clone(),
+                        right: other.clone(),
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "take" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "take() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let remaining =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Range,
+                                    "take() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "take() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Take {
+                        source: iterator.clone(),
+                        remaining,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "skip" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "skip() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let remaining =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Range,
+                                    "skip() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "skip() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    IteratorObj::Skip {
+                        source: iterator.clone(),
+                        remaining,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
             _ => {
                 Err(
                     self.error(
