@@ -195,6 +195,7 @@ pub enum Pattern {
     Str(String),
 
     Tuple(Vec<Pattern>),
+    List(Vec<Pattern>),
 
     Enum {
         path: Vec<String>,

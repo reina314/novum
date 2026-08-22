@@ -452,18 +452,6 @@ impl Parser {
         }
     }
 
-    // fn parse_visibility(
-    //     &mut self,
-    // ) -> Visibility {
-    //     if self.check(TokenKind::Pub) {
-    //         self.eat();
-
-    //         Visibility::Public
-    //     } else {
-    //         Visibility::Private
-    //     }
-    // }
-
     fn parse_struct(&mut self) -> Result<Expr> {
         self.parse_struct_with_visibility(
             Visibility::Private
@@ -1203,19 +1191,6 @@ impl Parser {
         }
     }
 
-    fn looks_like_dict(&self) -> bool {
-        matches!(
-            (
-                self.peek_n(1).kind.clone(),
-                self.peek_n(2).kind.clone(),
-            ),
-            (
-                TokenKind::Str(_) | TokenKind::Ident(_),
-                TokenKind::Colon
-            )
-        )
-    }
-
     fn parse_dict(&mut self) -> Result<Expr> {
         let open = self.expect(TokenKind::LBrace)?.span;
 
@@ -1274,334 +1249,6 @@ impl Parser {
             ExprKind::Dict(entries),
             open.join(close),
         ))
-    }
-
-    fn parse_match_expr(
-        &mut self,
-    ) -> Result<Expr> {
-        let start =
-            self.expect(
-                TokenKind::Match
-            )?
-            .span;
-
-        let value =
-            self.parse_expr()?;
-
-        self.expect(
-            TokenKind::LBrace
-        )?;
-
-        let mut arms =
-            Vec::new();
-
-        while !self.check(
-            TokenKind::RBrace
-        ) {
-            let pattern =
-                self.parse_pattern()?;
-
-            self.expect(
-                TokenKind::FatArrow
-            )?;
-
-            let body =
-                self.parse_expr()?;
-
-            arms.push(
-                MatchArm {
-                    pattern,
-                    body,
-                }
-            );
-
-            // comma is optional
-            self.eat_if(TokenKind::Comma);
-        }
-
-        let end =
-            self.expect(
-                TokenKind::RBrace
-            )?
-            .span;
-
-        Ok(
-            Expr::new(
-                ExprKind::Match {
-                    value: Box::new(value),
-                    arms,
-                },
-                start.join(end),
-            )
-        )
-    }
-
-    fn parse_paren_expr(&mut self) -> Result<Expr> {
-        let start = self.expect(TokenKind::LParen)?.span;
-
-        if self.check(TokenKind::RParen) {
-            let end = self.eat().span;
-
-            return Ok(
-                Expr::new(
-                    ExprKind::Unit,
-                    start.join(end),
-                )
-            );
-        }
-
-        let first =
-            self.parse_expr()?;
-
-        if !self.check(TokenKind::Comma) {
-            self.expect(TokenKind::RParen)?;
-
-            return Ok(first);
-        }
-
-        let mut elements =
-            vec![first];
-
-        while self.check(TokenKind::Comma) {
-            self.eat();
-
-            if self.check(TokenKind::RParen) {
-                break;
-            }
-
-            elements.push(
-                self.parse_expr()?
-            );
-        }
-
-        let end =
-            self.expect(TokenKind::RParen)?.span;
-
-        Ok(
-            Expr::new(
-                ExprKind::Tuple(elements),
-                start.join(end),
-            )
-        )
-    }
-
-    fn parse_pattern(&mut self) -> Result<Pattern> {
-        match self.peek().kind.clone() {
-            // =====================================================
-            // Tuple / grouping pattern
-            // =====================================================
-            TokenKind::LParen => {
-                self.parse_tuple_pattern()
-            }
-
-            // =====================================================
-            // Integer literal
-            // =====================================================
-            TokenKind::Int(value) => {
-                self.eat();
-
-                Ok(Pattern::Int(value))
-            }
-
-            // =====================================================
-            // Float literal
-            // =====================================================
-            TokenKind::Float(value) => {
-                self.eat();
-
-                Ok(Pattern::Float(value))
-            }
-
-            // =====================================================
-            // Bool
-            // =====================================================
-            TokenKind::Bool(true) => {
-                self.eat();
-
-                Ok(Pattern::Bool(true))
-            }
-
-            TokenKind::Bool(false) => {
-                self.eat();
-
-                Ok(Pattern::Bool(false))
-            }
-
-            // =====================================================
-            // String
-            // =====================================================
-            TokenKind::Str(value) => {
-                self.eat();
-
-                Ok(Pattern::Str(value))
-            }
-
-            // =====================================================
-            // Identifier / enum pattern
-            // =====================================================
-            TokenKind::Ident(name) => {
-                self.eat();
-
-
-                self.parse_ident_pattern(name)
-            }
-
-            TokenKind::Underscore => {
-                self.eat();
-
-                return Ok(
-                    Pattern::Wildcard
-                );
-            }
-
-            _ => {
-                Err(
-                    Error::parse(
-                        "expected pattern",
-                        self.peek().span,
-                    )
-                )
-            }
-        }
-    }
-
-    /// Helper for `parse_pattern()`
-    fn parse_ident_pattern(
-        &mut self,
-        first: String,
-    ) -> Result<Pattern> {
-        let mut path = vec![first];
-
-        while self.check(TokenKind::Dot) {
-            self.eat();
-
-            path.push(
-                self.expect_ident()?
-            );
-        }
-
-        if path.len() == 1
-            && !self.check(TokenKind::LParen)
-        {
-            return Ok(
-                Pattern::Ident(
-                    path.remove(0)
-                )
-            );
-        }
-
-        if !self.check(TokenKind::LParen) {
-            return Ok(
-                Pattern::Enum {
-                    path,
-                    fields: Vec::new(),
-                }
-            );
-        }
-
-        self.eat();
-
-        let mut fields =
-            Vec::new();
-
-        if !self.check(
-            TokenKind::RParen
-        ) {
-            loop {
-                fields.push(
-                    self.parse_pattern()?
-                );
-
-                if self.check(
-                    TokenKind::Comma
-                ) {
-                    self.eat();
-
-                    if self.check(
-                        TokenKind::RParen
-                    ) {
-                        break;
-                    }
-
-                    continue;
-                }
-
-                break;
-            }
-        }
-
-        self.expect(
-            TokenKind::RParen
-        )?;
-
-        Ok(
-            Pattern::Enum {
-                path,
-                fields,
-            }
-        )
-    }
-
-    /// Helper for `parse_tuple_pattern()`
-    fn parse_tuple_pattern(
-        &mut self,
-    ) -> Result<Pattern> {
-        self.expect(TokenKind::LParen)?;
-
-        let first =
-            self.parse_pattern()?;
-
-        // `(x)` = grouping
-        if !self.check(TokenKind::Comma) {
-            self.expect(
-                TokenKind::RParen
-            )?;
-
-            return Ok(first);
-        }
-
-        // `(x, ...)` = tuple pattern
-        let mut patterns =
-            vec![first];
-
-        while self.check(
-            TokenKind::Comma
-        ) {
-            self.eat();
-
-            // trailing comma
-            if self.check(
-                TokenKind::RParen
-            ) {
-                break;
-            }
-
-            patterns.push(
-                self.parse_pattern()?
-            );
-        }
-
-        self.expect(
-            TokenKind::RParen
-        )?;
-
-        Ok(
-            Pattern::Tuple(patterns)
-        )
-    }
-
-    fn parse_brace_expr(&mut self) -> Result<Expr> {
-        if self.looks_like_dict() {
-            self.parse_dict()
-        } else {
-            self.eat();
-
-            let block = self.parse_block_contents()?;
-
-            self.expect(TokenKind::RBrace)?;
-
-            Ok(block)
-        }
     }
 
     fn parse_list(
@@ -1723,4 +1370,379 @@ impl Parser {
         };
         Ok(Expr::new(ExprKind::Lambda(params, Box::new(body.clone())), start.join(body.span)))
     }
+
+    fn parse_match_expr(
+        &mut self,
+    ) -> Result<Expr> {
+        let start =
+            self.expect(
+                TokenKind::Match
+            )?
+            .span;
+
+        let value =
+            self.parse_expr()?;
+
+        self.expect(
+            TokenKind::LBrace
+        )?;
+
+        let mut arms =
+            Vec::new();
+
+        while !self.check(
+            TokenKind::RBrace
+        ) {
+            let pattern =
+                self.parse_pattern()?;
+
+            self.expect(
+                TokenKind::FatArrow
+            )?;
+
+            let body =
+                self.parse_expr()?;
+
+            arms.push(
+                MatchArm {
+                    pattern,
+                    body,
+                }
+            );
+
+            // comma is optional
+            self.eat_if(TokenKind::Comma);
+        }
+
+        let end =
+            self.expect(
+                TokenKind::RBrace
+            )?
+            .span;
+
+        Ok(
+            Expr::new(
+                ExprKind::Match {
+                    value: Box::new(value),
+                    arms,
+                },
+                start.join(end),
+            )
+        )
+    }
+
+    fn parse_brace_expr(&mut self) -> Result<Expr> {
+        if self.looks_like_dict() {
+            self.parse_dict()
+        } else {
+            self.eat();
+
+            let block = self.parse_block_contents()?;
+
+            self.expect(TokenKind::RBrace)?;
+
+            Ok(block)
+        }
+    }
+
+    /// Helper for `parse_brace_expr()`
+    fn looks_like_dict(&self) -> bool {
+        matches!(
+            (
+                self.peek_n(1).kind.clone(),
+                self.peek_n(2).kind.clone(),
+            ),
+            (
+                TokenKind::Str(_) | TokenKind::Ident(_),
+                TokenKind::Colon
+            )
+        )
+    }
+
+    fn parse_paren_expr(&mut self) -> Result<Expr> {
+        let start = self.expect(TokenKind::LParen)?.span;
+
+        if self.check(TokenKind::RParen) {
+            let end = self.eat().span;
+
+            return Ok(
+                Expr::new(
+                    ExprKind::Unit,
+                    start.join(end),
+                )
+            );
+        }
+
+        let first =
+            self.parse_expr()?;
+
+        if !self.check(TokenKind::Comma) {
+            self.expect(TokenKind::RParen)?;
+
+            return Ok(first);
+        }
+
+        let mut elements =
+            vec![first];
+
+        while self.check(TokenKind::Comma) {
+            self.eat();
+
+            if self.check(TokenKind::RParen) {
+                break;
+            }
+
+            elements.push(
+                self.parse_expr()?
+            );
+        }
+
+        let end =
+            self.expect(TokenKind::RParen)?.span;
+
+        Ok(
+            Expr::new(
+                ExprKind::Tuple(elements),
+                start.join(end),
+            )
+        )
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        match self.peek().kind.clone() {
+            TokenKind::LParen => {
+                self.parse_tuple_pattern()
+            }
+
+            TokenKind::LBracket => {
+                self.parse_list_pattern()
+            }
+
+            TokenKind::Int(value) => {
+                self.eat();
+
+                Ok(Pattern::Int(value))
+            }
+
+            TokenKind::Float(value) => {
+                self.eat();
+
+                Ok(Pattern::Float(value))
+            }
+
+            TokenKind::Bool(true) => {
+                self.eat();
+
+                Ok(Pattern::Bool(true))
+            }
+
+            TokenKind::Bool(false) => {
+                self.eat();
+
+                Ok(Pattern::Bool(false))
+            }
+
+            TokenKind::Str(value) => {
+                self.eat();
+
+                Ok(Pattern::Str(value))
+            }
+
+            TokenKind::Ident(name) => {
+                self.eat();
+
+
+                self.parse_ident_pattern(name)
+            }
+
+            TokenKind::Underscore => {
+                self.eat();
+
+                return Ok(
+                    Pattern::Wildcard
+                );
+            }
+
+            _ => {
+                Err(
+                    Error::parse(
+                        "expected pattern",
+                        self.peek().span,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `parse_pattern()`
+    fn parse_ident_pattern(
+        &mut self,
+        first: String,
+    ) -> Result<Pattern> {
+        let mut path = vec![first];
+
+        while self.check(TokenKind::Dot) {
+            self.eat();
+
+            path.push(
+                self.expect_ident()?
+            );
+        }
+
+        if path.len() == 1
+            && !self.check(TokenKind::LParen)
+        {
+            return Ok(
+                Pattern::Ident(
+                    path.remove(0)
+                )
+            );
+        }
+
+        if !self.check(TokenKind::LParen) {
+            return Ok(
+                Pattern::Enum {
+                    path,
+                    fields: Vec::new(),
+                }
+            );
+        }
+
+        self.eat();
+
+        let mut fields =
+            Vec::new();
+
+        if !self.check(
+            TokenKind::RParen
+        ) {
+            loop {
+                fields.push(
+                    self.parse_pattern()?
+                );
+
+                if self.check(
+                    TokenKind::Comma
+                ) {
+                    self.eat();
+
+                    if self.check(
+                        TokenKind::RParen
+                    ) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        self.expect(
+            TokenKind::RParen
+        )?;
+
+        Ok(
+            Pattern::Enum {
+                path,
+                fields,
+            }
+        )
+    }
+
+    /// Helper for `parse_pattern()`
+    fn parse_tuple_pattern(
+        &mut self,
+    ) -> Result<Pattern> {
+        self.expect(TokenKind::LParen)?;
+
+        let first =
+            self.parse_pattern()?;
+
+        // `(x)` = grouping
+        if !self.check(TokenKind::Comma) {
+            self.expect(
+                TokenKind::RParen
+            )?;
+
+            return Ok(first);
+        }
+
+        // `(x, ...)` = tuple pattern
+        let mut patterns =
+            vec![first];
+
+        while self.check(
+            TokenKind::Comma
+        ) {
+            self.eat();
+
+            // trailing comma
+            if self.check(
+                TokenKind::RParen
+            ) {
+                break;
+            }
+
+            patterns.push(
+                self.parse_pattern()?
+            );
+        }
+
+        self.expect(
+            TokenKind::RParen
+        )?;
+
+        Ok(
+            Pattern::Tuple(patterns)
+        )
+    }
+
+    /// Helper for `parse_pattern()`
+    fn parse_list_pattern(
+        &mut self,
+    ) -> Result<Pattern> {
+        self.expect(
+            TokenKind::LBracket
+        )?;
+
+        let mut patterns =
+            Vec::new();
+
+        if !self.check(
+            TokenKind::RBracket
+        ) {
+            loop {
+                patterns.push(
+                    self.parse_pattern()?
+                );
+
+                if self.check(
+                    TokenKind::Comma
+                ) {
+                    self.eat();
+
+                    if self.check(
+                        TokenKind::RBracket
+                    ) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        self.expect(
+            TokenKind::RBracket
+        )?;
+
+        Ok(
+            Pattern::List(patterns)
+        )
+    }
+
 }

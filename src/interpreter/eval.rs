@@ -458,22 +458,15 @@ impl Interpreter {
                 pattern, 
                 value
             ),
-            Assign(name, rhs) => {
-                let mut value = self.eval_value(rhs)?;
-                if let Value::Func(func) = &value {
-                    if func.name.is_none() {
-                        value = Value::Func(Rc::new(Function {
-                            name: Some(name.clone()),
-                            params: func.params.clone(),
-                            body: func.body.clone(),
-                            closure: func.closure.clone(),
-                        }));
-                    }
-                }
-                if !self.env.assign(name, value.clone()) {
-                    self.env.define(name.clone(), value.clone());
-                }
-                Ok(ControlFlow::Value(value))
+
+            Assign(
+                name, 
+                value
+            ) => {
+                self.eval_assign(
+                    name, 
+                    value, 
+                )
             }
 
             AssignIndex(obj, index, rhs) => self.eval_assign_index(obj, index, rhs, expr),
@@ -495,7 +488,8 @@ impl Interpreter {
                 operator::apply_binop(*op, l, r)
                     .map(ControlFlow::Value)
                     .map_err(|e| {
-                        self.attach_runtime_error(
+                        self.error(
+                            ErrorKind::Runtime,
                             e,
                             expr,
                         )
@@ -518,12 +512,9 @@ impl Interpreter {
                                     value => value
                                         .negate()
                                         .map_err(|msg| {
-                                            self.attach(
-                                                Error::new(
-                                                    ErrorKind::Type,
-                                                    msg,
-                                                    None,
-                                                ),
+                                            self.error(
+                                                ErrorKind::Type,
+                                                msg,
                                                 expr,
                                             )
                                         }),
@@ -546,12 +537,9 @@ impl Interpreter {
                             .negate()
                             .map(ControlFlow::Value)
                             .map_err(|msg| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Type,
-                                        msg,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Type,
+                                    msg,
                                     expr,
                                 )
                             })
@@ -1011,7 +999,7 @@ impl Interpreter {
                     Some(Value::Module(module)) =>
                         module,
 
-                    Some(other) => {
+                    Some(_) => {
                         return Err(
                             self.error(
                                 ErrorKind::Name,
@@ -1153,11 +1141,15 @@ impl Interpreter {
                 .resolve(
                     &requested
                 )
-                .map_err(|error| {
-                    self.attach(
-                        error,
-                        whole,
-                    )
+                .map_err(|mut error| {
+                    if error.span.is_none() { 
+                        error.span = Some(whole.span); 
+                    }
+                    if error.stack.is_empty() { 
+                        error.stack = self.stack.clone(); 
+                    }
+
+                    error
                 })?;
 
         // =========================================================
@@ -1225,11 +1217,15 @@ impl Interpreter {
                 .load_program(
                     &canonical
                 )
-                .map_err(|error| {
-                    self.attach(
-                        error,
-                        whole,
-                    )
+                .map_err(|mut error| {
+                    if error.span.is_none() { 
+                        error.span = Some(whole.span); 
+                    }
+                    if error.stack.is_empty() { 
+                        error.stack = self.stack.clone(); 
+                    }
+
+                    error
                 })?;
 
         // =========================================================
@@ -1512,6 +1508,26 @@ impl Interpreter {
         Ok(bindings)
     }
 
+    fn eval_assign(
+        &mut self,
+        name: &str,
+        value_expr: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(value_expr)?;
+
+        self.env.assign_or_define(
+            name,
+            value,
+        );
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
+    }
+
     fn eval_assign_index(
         &mut self,
         obj: &Expr,
@@ -1707,12 +1723,9 @@ impl Interpreter {
                         numeric,
                     )
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -2186,12 +2199,9 @@ impl Interpreter {
                             col_end,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -3393,12 +3403,9 @@ impl Interpreter {
                                 false,
                             )
                             .map_err(|message| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        message,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
                                     whole,
                                 )
                             })?;
@@ -3512,12 +3519,9 @@ impl Interpreter {
                                 true,
                             )
                             .map_err(|message| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        message,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
                                     whole,
                                 )
                             })?;
@@ -3590,12 +3594,9 @@ impl Interpreter {
                 function(values)
                     .map(ControlFlow::Value)
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })
@@ -3695,89 +3696,65 @@ impl Interpreter {
 
         match value {
             Value::Str(string) => {
-                match name {
-                    "chars"
-                    | "len"
-                    | "trim"
-                    | "to_upper"
-                    | "to_lower"
-                    | "contains"
-                    | "starts_with"
-                    | "ends_with"
-                    | "split"
-                    | "replace"
-                    | "repeat" => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Str(
-                                            string.clone()
-                                        ),
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Str(
+                        string
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Str has no field or method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Str has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::List(list) => {
-                match name {
-                    "push"
-                    | "pop"
-                    | "remove"
-                    | "len"
-                    | "iter"
-                    | "get"
-                    | "set"
-                    | "insert"
-                    | "contains"
-                    | "reverse"
-                    | "clear"
-                    | "extend"
-                    | "join" => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::List(
-                                            list.clone()
-                                        ),
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::List(
+                        list.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "List has no field or method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Object(object) => {
@@ -4094,42 +4071,34 @@ impl Interpreter {
             }
 
             Value::Iterator(iterator) => {
-                match name {
-                    "next"
-                    | "map"
-                    | "filter"
-                    | "collect"
-                    | "reduce"
-                    | "fold"
-                    | "any"
-                    | "all" => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Iterator(
-                                            iterator.clone()
-                                        ),
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Iterator(
+                        iterator
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Iterator has no method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Iterator has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Range(
@@ -4137,45 +4106,36 @@ impl Interpreter {
                 end,
                 inclusive,
             ) => {
-                match name {
-                    "iter"
-                    | "map"
-                    | "filter"
-                    | "collect"
-                    | "reduce"
-                    | "fold"
-                    | "any"
-                    | "all"
-                    => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Range {
-                                            start,
-                                            end,
-                                            inclusive,
-                                        },
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Range {
+                        start,
+                        end,
+                        inclusive,
+                    };
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Range has no method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Range has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
             
             other => Err(self.error(
@@ -4210,12 +4170,9 @@ impl Interpreter {
                     function(vec![argument])
                         .map(ControlFlow::Value)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?
@@ -4607,7 +4564,6 @@ impl Interpreter {
             // =========================================================
             // starts_with(prefix)
             // =========================================================
-
             "starts_with" => {
                 if args.len() != 1 {
                     return Err(
@@ -4650,7 +4606,6 @@ impl Interpreter {
             // =========================================================
             // ends_with(suffix)
             // =========================================================
-
             "ends_with" => {
             if args.len() != 1 {
                 return Err(
@@ -4693,7 +4648,6 @@ impl Interpreter {
             // =========================================================
             // split(separator)
             // =========================================================
-
             "split" => {
                 if args.len() != 1 {
                     return Err(
@@ -4750,7 +4704,6 @@ impl Interpreter {
             // =========================================================
             // replace(Str, Str)
             // =========================================================
-
             "replace" => {
                 if args.len() != 2 {
                     return Err(
@@ -4821,7 +4774,6 @@ impl Interpreter {
             // =========================================================
             // repeat(Int)
             // =========================================================
-
             "repeat" => {
                 if args.len() != 1 {
                     return Err(
@@ -4876,6 +4828,72 @@ impl Interpreter {
                 )
             }
 
+            // =========================================================
+            // get(Int)
+            // =========================================================
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let index =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) =>
+                            return Ok(
+                                ControlFlow::Value(
+                                    option_none()
+                                )
+                            ),
+
+                        other =>
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "get() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            ),
+                    };
+
+                let value =
+                    string
+                        .chars()
+                        .nth(index)
+                        .map(|ch| {
+                            Value::Str(
+                                Rc::new(
+                                    ch.to_string()
+                                )
+                            )
+                        });
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(value),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
 
             _ => {
                 Err(
@@ -6342,12 +6360,9 @@ impl Interpreter {
                     series
                         .to_matrix()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6419,12 +6434,9 @@ impl Interpreter {
                 let value =
                     series.mean()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6446,12 +6458,9 @@ impl Interpreter {
                 let value =
                     series.std()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6473,12 +6482,9 @@ impl Interpreter {
                 let value =
                     series.median()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6500,12 +6506,9 @@ impl Interpreter {
                 let value =
                     series.sum()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6527,12 +6530,9 @@ impl Interpreter {
                 let value =
                     series.min()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6554,12 +6554,9 @@ impl Interpreter {
                 let value =
                     series.max()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6603,12 +6600,9 @@ impl Interpreter {
                 let value =
                     series.quantile(q)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Value,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Value,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6654,12 +6648,9 @@ impl Interpreter {
                 let result =
                     series.unique()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6685,12 +6676,9 @@ impl Interpreter {
                 let result =
                     series.value_counts()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6797,12 +6785,9 @@ impl Interpreter {
                     dataframe
                         .select(&names)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6830,12 +6815,9 @@ impl Interpreter {
                     dataframe
                         .to_matrix()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6887,12 +6869,9 @@ impl Interpreter {
                     dataframe
                         .head(n)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6979,12 +6958,9 @@ impl Interpreter {
                             dataframe
                                 .filter_rows(&keep)
                                 .map_err(|message| {
-                                    self.attach(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            message,
-                                            None,
-                                        ),
+                                    self.error(
+                                        ErrorKind::Runtime,
+                                        message,
                                         whole,
                                     )
                                 })?;
@@ -7056,12 +7032,9 @@ impl Interpreter {
                             dataframe
                                 .filter_rows(&keep)
                                 .map_err(|message| {
-                                    self.attach(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            message,
-                                            None,
-                                        ),
+                                    self.error(
+                                        ErrorKind::Runtime,
+                                        message,
                                         whole,
                                     )
                                 })?;
@@ -7112,12 +7085,9 @@ impl Interpreter {
                         column_name,
                     )
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -7153,12 +7123,9 @@ impl Interpreter {
                     dataframe
                         .drop_columns(&names)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7196,12 +7163,9 @@ impl Interpreter {
                     dataframe
                         .rename(&mapping)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7278,12 +7242,9 @@ impl Interpreter {
                             ascending,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7315,12 +7276,9 @@ impl Interpreter {
                     dataframe
                         .describe()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7393,12 +7351,9 @@ impl Interpreter {
                             column_column,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7559,12 +7514,9 @@ impl Interpreter {
                     grouped
                         .count()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7619,12 +7571,9 @@ impl Interpreter {
                             unreachable!(),
                     }
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -7679,12 +7628,9 @@ impl Interpreter {
                             &functions,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -7711,32 +7657,18 @@ impl Interpreter {
         }
     }
 
-    fn error(&self, kind: ErrorKind, message: impl Into<String>, expr: &Expr) -> Error {
-        Error::new(kind, message, Some(expr.span)).with_stack(&self.stack)
-    }
-
-    fn attach(&self, mut error: Error, expr: &Expr) -> Error {
-        if error.span.is_none() { error.span = Some(expr.span); }
-        if error.stack.is_empty() { error.stack = self.stack.clone(); }
-        error
-    }
-
-    /// Helper to convert String to Error
-    fn attach_runtime_error(
+    fn error(
         &self,
+        kind: ErrorKind,
         message: impl Into<String>,
-        expr: &Expr,
+        expr: &Expr
     ) -> Error {
-        self.attach(
-            Error::new(
-                ErrorKind::Runtime,
-                message,
-                None,
-            ),
-            expr,
-        )
+        Error::new(
+            kind,
+            message, 
+            Some(expr.span))
+                .with_stack(&self.stack)
     }
-
 }
 
 /// Helper to wrap Value with Option
@@ -7881,6 +7813,39 @@ fn match_pattern(
                 _ => Ok(false),
             }
         }
+    
+        Pattern::List(patterns) => {
+            let Value::List(list) =
+                value
+            else {
+                return Ok(false);
+            };
+
+            let values =
+                list.borrow();
+
+            if patterns.len()
+                != values.len()
+            {
+                return Ok(false);
+            }
+
+            for (pattern, value)
+                in patterns.iter()
+                    .zip(values.iter())
+            {
+                if !match_pattern(
+                    pattern,
+                    value,
+                    bindings,
+                )? {
+                    return Ok(false);
+                }
+            }
+
+            Ok(true)
+        }
+
     }
 }
 
@@ -7960,7 +7925,8 @@ fn collect_pattern_names(
             names.push(name.clone());
         }
 
-        Pattern::Tuple(patterns) => {
+        Pattern::Tuple(patterns) |
+        Pattern::List(patterns) => {
             for pattern in patterns {
                 collect_pattern_names(
                     pattern,

@@ -131,8 +131,7 @@ pub struct EnumValue {
     fields: Vec<Value>,
 }
 
-pub type EnumValueRef =
-    Rc<EnumValue>;
+pub type EnumValueRef = Rc<EnumValue>;
 
 impl EnumValue {
     pub fn new(

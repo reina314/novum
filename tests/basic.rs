@@ -1575,6 +1575,36 @@ fn let_nested_tuple_destructuring() {
 }
 
 #[test]
+fn list_pattern() {
+    let result = run(
+        r#"
+        let [x, y] = [10, 20]
+        x + y
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn nested_list_pattern() {
+    let result = run(
+        r#"
+        let [[a, b], c] = [[1, 2], 3]
+        a + b + c
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
 fn let_enum_destructuring() {
     let result =
         run(
