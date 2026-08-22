@@ -85,21 +85,6 @@ fn builtins()
     );
 
     map.insert(
-        "read".into(),
-        Value::Builtin(read),
-    );
-
-    map.insert(
-        "write".into(),
-        Value::Builtin(write),
-    );
-
-    map.insert(
-        "append".into(),
-        Value::Builtin(append),
-    );
-
-    map.insert(
         "str".into(),
         Value::Builtin(str),
     );
@@ -281,99 +266,6 @@ pub fn input(args: Vec<Value>) -> Result<Value, String> {
     }
 
     Ok(Value::Str(Rc::new(line)))
-}
-
-pub fn read(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err(
-            "read() expects exactly 1 argument".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "read() expected Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let text = std::fs::read_to_string(path.as_ref())
-        .map_err(|e| format!("failed to read '{path}': {e}"))?;
-
-    Ok(Value::Str(Rc::new(text)))
-}
-
-pub fn write(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err(
-            "write() expects exactly 2 arguments".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "write() expected path as Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let content = args[1].to_string();
-
-    std::fs::write(path.as_ref(), content)
-        .map_err(|e| format!("failed to write '{path}': {e}"))?;
-
-    Ok(Value::Unit)
-}
-
-pub fn append(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err(
-            "append() expects exactly 2 arguments".into()
-        );
-    }
-
-    let path = match &args[0] {
-        Value::Str(path) => path,
-
-        other => {
-            return Err(format!(
-                "append() expected path as Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    let content = args[1].to_string();
-
-    use std::io::Write;
-
-    let mut file =
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path.as_ref())
-            .map_err(|e| {
-                format!(
-                    "failed to open '{path}': {e}"
-                )
-            })?;
-
-    file.write_all(content.as_bytes())
-        .map_err(|e| {
-            format!(
-                "failed to append to '{path}': {e}"
-            )
-        })?;
-
-    Ok(Value::Unit)
 }
 
 pub fn str(args: Vec<Value>) -> Result<Value, String> {

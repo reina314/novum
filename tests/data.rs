@@ -2,11 +2,11 @@ mod common;
 
 use common::{
     run,
+    run_result,
     assert_float_close,
 };
 use novum::runtime::{Value};
-use std::{collections::HashMap, rc::Rc};
-use serde_json::Value as JsonValue;
+use std::{rc::Rc};
 
 #[test]
 fn csv_read() {
@@ -1539,6 +1539,77 @@ fn json_round_trip() {
                 )
             )
         )
+    );
+}
+
+#[test]
+fn fs_read_err() {
+    let result =
+        run(
+            r#"
+            import fs
+            fs.read("does-not-exist.txt")
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Err"
+            );
+        }
+
+        other => panic!(
+            "expected Result, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn fs_read_propagates_error() {
+    let result =
+        run_result(
+            r#"
+            import fs
+
+            fn_not_real = || {
+                fs.read(
+                    "does-not-exist.txt"
+                )?
+            }
+
+            fn_not_real()
+            "#
+        );
+
+    assert!(
+        result.is_ok()
+    );
+}
+
+#[test]
+fn fs_exists() {
+    let result =
+        run(
+            r#"
+            import fs
+
+            fs.exists(
+                "Cargo.toml"
+            )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
     );
 }
 

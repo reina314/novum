@@ -11,6 +11,7 @@ use std::{
 pub mod builtin;
 pub mod math;
 pub mod linalg;
+pub mod fs;
 pub mod csv;
 pub mod json;
 pub mod stats;
@@ -37,6 +38,9 @@ pub fn load_module(
 
         "linalg" =>
             Some(linalg::module()),
+
+        "fs" =>
+            Some(fs::module()),
 
         "math" =>
             Some(math::module()),
