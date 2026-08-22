@@ -12,6 +12,7 @@ pub mod builtin;
 pub mod math;
 pub mod linalg;
 pub mod csv;
+pub mod json;
 pub mod stats;
 
 /// Defines eager stdlib module
@@ -42,6 +43,9 @@ pub fn load_module(
 
         "csv" =>
             Some(csv::module()),
+
+        "json" =>
+            Some(json::module()),
 
         _ => None,
     }
