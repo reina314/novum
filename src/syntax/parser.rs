@@ -345,6 +345,10 @@ impl Parser {
                 let t = self.eat();
                 Ok(Expr::new(ExprKind::Break, t.span))
             }
+            TokenKind::Continue => {
+                let t = self.eat();
+                Ok(Expr::new(ExprKind::Continue, t.span))
+            }
 
             TokenKind::Return => self.parse_return(),
             TokenKind::Let => self.parse_let(),

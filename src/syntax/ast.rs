@@ -76,6 +76,7 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     While(Box<Expr>, Box<Expr>),
     Break,
+    Continue,
     Return(Option<Box<Expr>>),
     For(String, IndexExpr, Box<Expr>),
     Try(Box<Expr>),

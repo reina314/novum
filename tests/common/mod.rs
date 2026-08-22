@@ -59,8 +59,15 @@ pub fn run_result(
                     None,
                 )
             ),
-
-        ControlFlow::Continue => todo!(),
+            
+        ControlFlow::Continue =>
+            Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "unexpected top-level continue",
+                    None,
+                )
+            ),
     }
 }
 

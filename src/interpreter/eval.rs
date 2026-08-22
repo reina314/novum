@@ -206,27 +206,14 @@ impl Interpreter {
 
                 match input {
                     Some(value) => {
-                        match self.call_function(
+                        let value =
+                        self.call_iterator_callback(
                             function.clone(),
                             vec![value],
                             whole,
-                        )? {
-                            ControlFlow::Value(value) =>
-                                Ok(Some(value)),
+                        )?;
 
-                            ControlFlow::Return(_) |
-                            ControlFlow::Break => {
-                                Err(
-                                    self.error(
-                                        ErrorKind::Runtime,
-                                        "iterator map callback produced invalid control flow",
-                                        whole,
-                                    )
-                                )
-                            }
-
-                            ControlFlow::Continue => todo!()
-                        }
+                        Ok(Some(value))
                     }
 
                     None =>
@@ -259,8 +246,8 @@ impl Interpreter {
                                 return Ok(None),
                         };
 
-                    let result =
-                        self.call_function(
+                    let result = 
+                        self.call_iterator_callback(
                             predicate.clone(),
                             vec![
                                 value.clone()
@@ -269,23 +256,17 @@ impl Interpreter {
                         )?;
 
                     match result {
-                        ControlFlow::Value(
-                            Value::Bool(true)
-                        ) => {
+                        Value::Bool(true) => {
                             return Ok(
                                 Some(value)
                             );
                         }
 
-                        ControlFlow::Value(
-                            Value::Bool(false)
-                        ) => {
+                        Value::Bool(false) => {
                             continue;
                         }
 
-                        ControlFlow::Value(
-                            other
-                        ) => {
+                        other => {
                             return Err(
                                 self.error(
                                     ErrorKind::Type,
@@ -297,19 +278,6 @@ impl Interpreter {
                                 )
                             );
                         }
-
-                        ControlFlow::Return(_) |
-                        ControlFlow::Break => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Runtime,
-                                    "iterator filter callback produced invalid control flow",
-                                    whole,
-                                )
-                            );
-                        }
-
-                        ControlFlow::Continue => todo!(),
                     }
                 }
             }
@@ -340,24 +308,33 @@ impl Interpreter {
             match self.eval(expr)? {
                 ControlFlow::Value(v) 
                     => last = v,
-                ControlFlow::Return(_) 
+                ControlFlow::Return(value) 
                     => return Err(
                         self.error(
                             ErrorKind::Control,
-                            "return outside function", 
-                            expr
+                            format!(
+                                "unexpected top-level return: {}",
+                                value
+                            ), 
+                            expr,
                         )
                     ),
                 ControlFlow::Break 
                     => return Err(
                         self.error(
                             ErrorKind::Control,
-                            "break outside loop",
-                            expr
+                            "unexpected top-level break",
+                            expr,
                         )
                     ),
-                ControlFlow::Continue => 
-                    todo!(),
+                ControlFlow::Continue
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "unexpected top-level continue",
+                            expr,
+                        )
+                    )
             }
         }
 
@@ -582,23 +559,34 @@ impl Interpreter {
                 }
             }
 
-            While(cond, body) => self.eval_while(cond, body, expr),
+            While(cond, body) 
+                => self.eval_while(cond, body, expr),
             Break => {
-                if self.loop_depth == 0 { Err(self.error(ErrorKind::Control, "break outside loop", expr)) } else { Ok(ControlFlow::Break) }
-            }
-            Return(value) => {
-                if self.function_depth == 0 { 
-                    return Err(self.error(ErrorKind::Control, "return outside function", expr)); 
+                if self.loop_depth == 0 { 
+                    Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "break outside loop", expr
+                        )
+                    ) 
+                } else { 
+                    Ok(ControlFlow::Break) 
                 }
-
-                let v = 
-                match value { 
-                    Some(v) => self.eval_value(v)?,
-                    None => Value::Unit 
-                };
-
-                Ok(ControlFlow::Return(v))
             }
+            Continue => {
+                if self.loop_depth == 0 { 
+                    Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "continue outside loop", expr
+                        )
+                    ) 
+                } else { 
+                    Ok(ControlFlow::Continue) 
+                }
+            }
+            Return(value) 
+                => self.eval_return(value),
             For(
                 name,
                 index,
@@ -656,14 +644,30 @@ impl Interpreter {
     fn eval_value(&mut self, expr: &Expr) -> Result<Value> {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
-            ControlFlow::Return(v) => Ok(v),
-            ControlFlow::Break => 
-                Err(self.error(
-                    ErrorKind::Control,
-                    "break cannot appear here",
-                    expr
-                )),
-            ControlFlow::Continue => todo!()
+            ControlFlow::Return(_) =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "return cannot be used where a value is required",
+                        expr,
+                    )
+                ),
+            ControlFlow::Break =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "break cannot be used where a value is required",
+                        expr,
+                    )
+                ),
+            ControlFlow::Continue =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "continue cannot be used where a value is required",
+                        expr,
+                    )
+                )
         }
     }
 
@@ -2623,30 +2627,75 @@ impl Interpreter {
         &mut self,
         cond: &Expr,
         body: &Expr,
-        whole: &Expr
+        whole: &Expr,
     ) -> Result<ControlFlow> {
-        let mut last = Value::Bool(false);
         self.loop_depth += 1;
+
         let result = (|| {
+            let mut last =
+                Value::Unit;
+
             loop {
-                match self.eval_value(cond)? {
-                    Value::Bool(true) => match self.eval(body)? {
-                        ControlFlow::Value(v) 
-                            => last=v,
-                        ControlFlow::Break 
-                            => break,
-                        ControlFlow::Return(v) 
-                            => return Ok(ControlFlow::Return(v)),
-                        ControlFlow::Continue 
-                            => todo!(),
+                // -------------------------------------------------
+                // Evaluate condition.
+                // -------------------------------------------------
+
+                let condition =
+                    self.eval_value(cond)?;
+
+                match condition {
+                    Value::Bool(true) => {}
+
+                    Value::Bool(false) => {
+                        break;
                     }
-                    Value::Bool(false) => break,
-                    other => return Err(self.error(ErrorKind::Type, format!("'while' expects Bool, got {}",other.type_name()),whole)),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'while' expects Bool, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                }
+
+                // -------------------------------------------------
+                // Execute body.
+                // -------------------------------------------------
+
+                match self.eval(body)? {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
+
+                    ControlFlow::Break => {
+                        break;
+                    }
+
+                    ControlFlow::Continue => {
+                        continue;
+                    }
+
+                    ControlFlow::Return(value) => {
+                        return Ok(
+                            ControlFlow::Return(value)
+                        );
+                    }
                 }
             }
-            Ok(ControlFlow::Value(last))
+
+            Ok(
+                ControlFlow::Value(last)
+            )
         })();
+
         self.loop_depth -= 1;
+
         result
     }
 
@@ -2745,6 +2794,50 @@ impl Interpreter {
             old_env;
 
         result
+    }
+
+    fn eval_return(
+        &mut self,
+        value: &Option<Box<Expr>>,
+    ) -> Result<ControlFlow> {
+        match value {
+            Some(value) => {
+                match self.eval(value)? {
+                    ControlFlow::Value(value) =>
+                        Ok(
+                            ControlFlow::Return(value)
+                        ),
+
+                    ControlFlow::Return(value) =>
+                        Ok(
+                            ControlFlow::Return(value)
+                        ),
+
+                    ControlFlow::Break =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "break cannot be used in a return expression",
+                                value,
+                            )
+                        ),
+
+                    ControlFlow::Continue =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "continue cannot be used in a return expression",
+                                value,
+                            )
+                        ),
+                }
+            }
+            
+
+            None => Ok(
+                ControlFlow::Return(Value::Unit)
+            )
+        }
     }
 
     fn eval_match(
@@ -4003,13 +4096,23 @@ impl Interpreter {
                 Ok(ControlFlow::Value(value))
             }
 
-            ControlFlow::Break => Err(self.error(
-                ErrorKind::Control,
-                "break outside loop",
-                call_site,
-            )),
+            ControlFlow::Break 
+            => Err(
+                self.error(
+                    ErrorKind::Control,
+                    "break escaped function boundary",
+                    call_site,
+                )
+            ),
 
-            ControlFlow::Continue => todo!(),
+            ControlFlow::Continue
+            => Err(
+                self.error(
+                    ErrorKind::Control,
+                    "continue escaped function boundary",
+                    call_site,
+                )
+            ),
         }
     }
 
@@ -4111,7 +4214,6 @@ impl Interpreter {
             // =====================================================
             // chars()
             // =====================================================
-
             "chars" => {
                 if !args.is_empty() {
                     return Err(
@@ -4150,7 +4252,6 @@ impl Interpreter {
             // =====================================================
             // len()
             // =====================================================
-
             "len" => {
                 if !args.is_empty() {
                     return Err(
@@ -4175,7 +4276,6 @@ impl Interpreter {
             // =====================================================
             // trim()
             // =====================================================
-
             "trim" => {
                 if !args.is_empty() {
                     return Err(
@@ -4202,7 +4302,6 @@ impl Interpreter {
             // =====================================================
             // to_upper()
             // =====================================================
-
             "to_upper" => {
                 if !args.is_empty() {
                     return Err(
@@ -4229,7 +4328,6 @@ impl Interpreter {
             // =====================================================
             // to_lower()
             // =====================================================
-
             "to_lower" => {
                 if !args.is_empty() {
                     return Err(
@@ -4256,7 +4354,6 @@ impl Interpreter {
             // =====================================================
             // contains()
             // =====================================================
-
             "contains" => {
                 if args.len() != 1 {
                     return Err(
@@ -5217,7 +5314,7 @@ impl Interpreter {
                 Err(
                     self.error(
                         ErrorKind::Runtime,
-                        "iterator callback cannot return from outer function",
+                        "iterator callback cannot return",
                         whole,
                     )
                 )

@@ -259,6 +259,122 @@ fn assignment_updates_outer_binding() {
 }
 
 #[test]
+fn while_continue() {
+    let result =
+        run(
+            r#"
+            let x = 0
+
+            while x < 5 {
+                x = x + 1
+
+                if x < 5 {
+                    continue
+                }
+
+                x
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn while_continue_skips_remaining_body() {
+    let result =
+        run(
+            r#"
+            let x = 0
+            let y = 0
+
+            while x < 5 {
+                x = x + 1
+
+                if x < 5 {
+                    continue
+                }
+
+                y = 100
+            }
+
+            y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(100)
+    );
+}
+
+#[test]
+fn continue_outside_loop_is_error() {
+    let result =
+        run_result(
+            r#"
+            continue
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn function_cannot_continue_caller_loop() {
+    let result =
+        run_result(
+            r#"
+            foo = || {
+                continue
+            }
+
+            while true {
+                foo()
+            }
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn function_local_continue() {
+    let result =
+        run(
+            r#"
+            foo = || {
+                let x = 0
+
+                while x < 3 {
+                    x = x + 1
+
+                    if x < 3 {
+                        continue
+                    }
+                }
+
+                x
+            }
+
+            foo()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
 fn dict_literal() {
     assert_eq!(
         run(
@@ -1184,6 +1300,25 @@ fn result_match() {
                 Result.Err(error) =>
                     0
             }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn return_value() {
+    let result =
+        run(
+            r#"
+            get_value = || {
+                return 42
+            }
+
+            get_value()
             "#
         );
 
