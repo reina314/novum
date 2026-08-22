@@ -115,6 +115,11 @@ fn builtins()
     );
 
     map.insert(
+        "bool".into(),
+        Value::Builtin(bool),
+    );
+
+    map.insert(
         "args".into(),
         Value::Builtin(args),
     );
@@ -383,54 +388,153 @@ pub fn str(args: Vec<Value>) -> Result<Value, String> {
     ))
 }
 
-pub fn int(args: Vec<Value>) -> Result<Value, String> {
+pub fn int(
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
-            "parse_int() expects exactly 1 argument"
+            "int() expects exactly 1 argument"
                 .into()
         );
     }
 
-    let text = match &args[0] {
-        Value::Str(text) => text,
+    match args.into_iter().next().unwrap() {
+        Value::Int(value) =>
+            Ok(Value::Int(value)),
+
+        Value::Float(value) => {
+            if !value.is_finite() {
+                return Err(
+                    "cannot convert non-finite Float to Int"
+                        .into()
+                );
+            }
+
+            Ok(
+                Value::Int(
+                    value as i64
+                )
+            )
+        }
+
+        Value::Str(text) => {
+            let value =
+                text.trim()
+                    .parse::<i64>()
+                    .map_err(|error| {
+                        format!(
+                            "invalid integer '{}': {}",
+                            text,
+                            error
+                        )
+                    })?;
+
+            Ok(
+                Value::Int(value)
+            )
+        }
 
         other => {
-            return Err(format!(
-                "parse_int() expected Str, got {}",
-                other.type_name()
-            ));
+            Err(
+                format!(
+                    "int() cannot convert {} to Int",
+                    other.type_name()
+                )
+            )
         }
-    };
-
-    let value = text.parse::<i64>()
-        .map_err(|e| format!("invalid integer: {e}"))?;
-
-    Ok(Value::Int(value))
+    }
 }
 
-pub fn float(args: Vec<Value>) -> Result<Value, String> {
+pub fn float(
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
-            "parse_float() expects exactly 1 argument"
+            "float() expects exactly 1 argument"
                 .into()
         );
     }
 
-    let text = match &args[0] {
-        Value::Str(text) => text,
+    match args.into_iter().next().unwrap() {
+        Value::Float(value) =>
+            Ok(Value::Float(value)),
+
+        Value::Int(value) =>
+            Ok(
+                Value::Float(
+                    value as f64
+                )
+            ),
+
+        Value::Str(text) => {
+            let value =
+                text.trim()
+                    .parse::<f64>()
+                    .map_err(|error| {
+                        format!(
+                            "invalid float '{}': {}",
+                            text,
+                            error
+                        )
+                    })?;
+
+            Ok(
+                Value::Float(value)
+            )
+        }
 
         other => {
-            return Err(format!(
-                "parse_float() expected Str, got {}",
-                other.type_name()
-            ));
+            Err(
+                format!(
+                    "float() cannot convert {} to Float",
+                    other.type_name()
+                )
+            )
         }
-    };
+    }
+}
 
-    let value = text.parse::<f64>()
-        .map_err(|e| format!("invalid float: {e}"))?;
+pub fn bool(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "bool() expects exactly 1 argument"
+                .into()
+        );
+    }
 
-    Ok(Value::Float(value))
+    match args.into_iter().next().unwrap() {
+        Value::Bool(value) =>
+            Ok(Value::Bool(value)),
+
+        Value::Str(text) => {
+            match text.trim() {
+                "true" =>
+                    Ok(Value::Bool(true)),
+
+                "false" =>
+                    Ok(Value::Bool(false)),
+
+                other =>
+                    Err(
+                        format!(
+                            "invalid boolean '{}'",
+                            other
+                        )
+                    ),
+            }
+        }
+
+        other => {
+            Err(
+                format!(
+                    "bool() cannot convert {} to Bool",
+                    other.type_name()
+                )
+            )
+        }
+    }
 }
 
 pub fn r#typeof(args: Vec<Value>) -> Result<Value, String> {
@@ -802,5 +906,4 @@ pub fn panic(args: Vec<Value>) -> Result<Value, String> {
 
     Err(message)
 }
-
 

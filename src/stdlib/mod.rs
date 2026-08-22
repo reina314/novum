@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
 };
 
-pub mod general;
+pub mod builtin;
 pub mod math;
 pub mod linalg;
 pub mod csv;
@@ -18,7 +18,7 @@ pub mod stats;
 pub fn install_builtins(
     env: &Env
 ) {
-    general::install_builtins(env);
+    builtin::install_builtins(env);
 
     for (name, value) 
         in builtins() {

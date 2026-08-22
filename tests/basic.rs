@@ -2548,3 +2548,65 @@ fn set_iterator() {
         );
 }
 
+#[test]
+fn int_float_conversion() {
+    assert_eq!(
+        run("int(3.9)"),
+        Value::Int(3)
+    );
+
+    assert_eq!(
+        run("int(-3.9)"),
+        Value::Int(-3)
+    );
+}
+
+#[test]
+fn int_from_invalid_string() {
+    assert!(
+        run_result(
+            r#"int("hello")"#
+        ).is_err()
+    );
+}
+
+#[test]
+fn str_conversion() {
+    assert_eq!(
+        run(r#"str(123)"#),
+        Value::Str(
+            Rc::new("123".into())
+        )
+    );
+
+    assert_eq!(
+        run(r#"str(true)"#),
+        Value::Str(
+            Rc::new("true".into())
+        )
+    );
+}
+
+#[test]
+fn float_from_int() {
+    assert_eq!(
+        run("float(10)"),
+        Value::Float(10.0)
+    );
+}
+
+#[test]
+fn int_from_string() {
+    assert_eq!(
+        run(r#"int("42")"#),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn float_from_string() {
+    assert_eq!(
+        run(r#"float("3.14")"#),
+        Value::Float(3.14)
+    );
+}
