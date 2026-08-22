@@ -1,5 +1,3 @@
-use std::todo;
-
 use novum::{
     Interpreter,
     Lexer,
@@ -60,7 +58,14 @@ pub fn run_result(
                 )
             ),
 
-        ControlFlow::Continue => todo!(),
+        ControlFlow::Continue =>
+            Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "unexpected top-level continue",
+                    None,
+                )
+            ),
     }
 }
 

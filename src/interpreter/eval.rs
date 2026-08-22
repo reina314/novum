@@ -1,22 +1,26 @@
 use crate::{
-    Lexer, Parser, error::{
+    error::{
         Error, 
         ErrorKind, 
         Result, 
         StackFrame
-    }, interpreter::operator, runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
-    }, stdlib, syntax::{
-        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, ast::{
+    }, 
+    interpreter::{ModuleLoader, operator}, 
+    runtime::{
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+    }, stdlib, 
+    syntax::{
+        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
+        ast::{
             EnumDef as AstEnumDef,
             MatchArm,
             Pattern,
+            Visibility
         }
     },
 };
 use std::{
-    cell::RefCell, 
-    path::PathBuf, 
+    cell::RefCell,
     rc::Rc,
     collections::HashMap,
 };
@@ -26,97 +30,101 @@ pub struct Interpreter {
     stack: Vec<StackFrame>,
     loop_depth: usize,
     function_depth: usize,
+    module_loader: ModuleLoader,
     module_stack: Vec<ModuleContext>,
-    project_root: PathBuf,
 }
 
 impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
-fn install_builtins(env: &mut Env,) {
-    for (name, value) 
-        in stdlib::builtins() {
-        env.define(name, value);
-    }
-}
-
-fn install_standard_enums(env: &mut Env,) {
-    // ---------------------------------------------------------
-    // Option
-    // ---------------------------------------------------------
-    let mut option =
-        RuntimeEnumDef::new("Option");
-
-    option
-        .add_variant(
-            "Some",
-            1,
-        )
-        .expect("valid Option");
-
-    option
-        .add_variant(
-            "None",
-            0,
-        )
-        .expect("valid Option");
-
-    env.define(
-        "Option",
-        Value::Enum(
-            Rc::new(option)
-        ),
-    );
-
-    // ---------------------------------------------------------
-    // Result
-    // ---------------------------------------------------------
-    let mut result =
-        RuntimeEnumDef::new("Result");
-
-    result
-        .add_variant(
-            "Ok",
-            1,
-        )
-        .expect("valid Result");
-
-    result
-        .add_variant(
-            "Err",
-            1,
-        )
-        .expect("valid Result");
-
-    env.define(
-        "Result",
-        Value::Enum(
-            Rc::new(result)
-        ),
-    );
-}
-
 impl Interpreter {
     pub fn new() -> Self {
-        let mut env = Env::global();
+        let env = Env::global();
 
-        install_builtins(&mut env);
-        install_standard_enums(&mut env);
+        let module_loader = ModuleLoader::new(
+            std::env::current_dir()
+                .expect(
+                    "failed to get current directory"
+                )
+        );
 
-        let project_root = std::env::current_dir()
-            .expect(
-                "failed to determine current directory"
-            );
-
-        return Self { 
+        let mut interpreter = Interpreter { 
             env,
             stack: Vec::new(),
             loop_depth: 0,
             function_depth: 0,
+            module_loader,
             module_stack: Vec::new(),
-            project_root,
-        }
+        };
+
+        // eager loading
+        interpreter.install_builtins();
+        interpreter.install_standard_enums();
+
+        interpreter
+    }
+
+    fn install_builtins(&mut self) {
+        stdlib::install_builtins(
+            &self.env
+        )
+    }
+
+    fn install_standard_enums(&mut self) {
+        // ---------------------------------------------------------
+        // Option
+        // ---------------------------------------------------------
+        let mut option =
+            RuntimeEnumDef::new("Option");
+
+        option
+            .add_variant(
+                "Some",
+                1,
+            )
+            .expect("valid Option");
+
+        option
+            .add_variant(
+                "None",
+                0,
+            )
+            .expect("valid Option");
+
+        self.env.define(
+            "Option",
+            Value::Enum(
+                Rc::new(option)
+            ),
+        );
+
+        // ---------------------------------------------------------
+        // Result
+        // ---------------------------------------------------------
+        let mut result =
+            RuntimeEnumDef::new("Result");
+
+        result
+            .add_variant(
+                "Ok",
+                1,
+            )
+            .expect("valid Result");
+
+        result
+            .add_variant(
+                "Err",
+                1,
+            )
+            .expect("valid Result");
+
+        self.env.define(
+            "Result",
+            Value::Enum(
+                Rc::new(result)
+            ),
+        );
     }
 
     fn next_iterator_value(
@@ -206,27 +214,14 @@ impl Interpreter {
 
                 match input {
                     Some(value) => {
-                        match self.call_function(
+                        let value =
+                        self.call_iterator_callback(
                             function.clone(),
                             vec![value],
                             whole,
-                        )? {
-                            ControlFlow::Value(value) =>
-                                Ok(Some(value)),
+                        )?;
 
-                            ControlFlow::Return(_) |
-                            ControlFlow::Break => {
-                                Err(
-                                    self.error(
-                                        ErrorKind::Runtime,
-                                        "iterator map callback produced invalid control flow",
-                                        whole,
-                                    )
-                                )
-                            }
-
-                            ControlFlow::Continue => todo!()
-                        }
+                        Ok(Some(value))
                     }
 
                     None =>
@@ -259,8 +254,8 @@ impl Interpreter {
                                 return Ok(None),
                         };
 
-                    let result =
-                        self.call_function(
+                    let result = 
+                        self.call_iterator_callback(
                             predicate.clone(),
                             vec![
                                 value.clone()
@@ -269,23 +264,17 @@ impl Interpreter {
                         )?;
 
                     match result {
-                        ControlFlow::Value(
-                            Value::Bool(true)
-                        ) => {
+                        Value::Bool(true) => {
                             return Ok(
                                 Some(value)
                             );
                         }
 
-                        ControlFlow::Value(
-                            Value::Bool(false)
-                        ) => {
+                        Value::Bool(false) => {
                             continue;
                         }
 
-                        ControlFlow::Value(
-                            other
-                        ) => {
+                        other => {
                             return Err(
                                 self.error(
                                     ErrorKind::Type,
@@ -297,19 +286,6 @@ impl Interpreter {
                                 )
                             );
                         }
-
-                        ControlFlow::Return(_) |
-                        ControlFlow::Break => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Runtime,
-                                    "iterator filter callback produced invalid control flow",
-                                    whole,
-                                )
-                            );
-                        }
-
-                        ControlFlow::Continue => todo!(),
                     }
                 }
             }
@@ -340,24 +316,33 @@ impl Interpreter {
             match self.eval(expr)? {
                 ControlFlow::Value(v) 
                     => last = v,
-                ControlFlow::Return(_) 
+                ControlFlow::Return(value) 
                     => return Err(
                         self.error(
                             ErrorKind::Control,
-                            "return outside function", 
-                            expr
+                            format!(
+                                "unexpected top-level return: {}",
+                                value
+                            ), 
+                            expr,
                         )
                     ),
                 ControlFlow::Break 
                     => return Err(
                         self.error(
                             ErrorKind::Control,
-                            "break outside loop",
-                            expr
+                            "unexpected top-level break",
+                            expr,
                         )
                     ),
-                ControlFlow::Continue => 
-                    todo!(),
+                ControlFlow::Continue
+                    => return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "unexpected top-level continue",
+                            expr,
+                        )
+                    )
             }
         }
 
@@ -444,17 +429,17 @@ impl Interpreter {
             Dict(entries) => self.eval_dict(entries, expr),
 
             StructDecl {
+                visibility,
                 name,
                 fields,
                 methods,
-            } => {
-                self.eval_struct_decl(
+            } => self.eval_struct_decl(
+                    *visibility,
                     name,
                     fields,
                     methods,
                     expr,
-                )
-            }
+            ),
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -464,23 +449,24 @@ impl Interpreter {
 
             Import(parts) => self.eval_import(parts, expr),
 
-            Let(pattern, rhs) => self.eval_let(pattern, rhs),
-            Assign(name, rhs) => {
-                let mut value = self.eval_value(rhs)?;
-                if let Value::Func(func) = &value {
-                    if func.name.is_none() {
-                        value = Value::Func(Rc::new(Function {
-                            name: Some(name.clone()),
-                            params: func.params.clone(),
-                            body: func.body.clone(),
-                            closure: func.closure.clone(),
-                        }));
-                    }
-                }
-                if !self.env.assign(name, value.clone()) {
-                    self.env.define(name.clone(), value.clone());
-                }
-                Ok(ControlFlow::Value(value))
+            Let {
+                visibility,
+                pattern,
+                value,
+            } => self.eval_let(
+                *visibility, 
+                pattern, 
+                value
+            ),
+
+            Assign(
+                name, 
+                value
+            ) => {
+                self.eval_assign(
+                    name, 
+                    value, 
+                )
             }
 
             AssignIndex(obj, index, rhs) => self.eval_assign_index(obj, index, rhs, expr),
@@ -502,7 +488,8 @@ impl Interpreter {
                 operator::apply_binop(*op, l, r)
                     .map(ControlFlow::Value)
                     .map_err(|e| {
-                        self.attach_runtime_error(
+                        self.error(
+                            ErrorKind::Runtime,
                             e,
                             expr,
                         )
@@ -525,12 +512,9 @@ impl Interpreter {
                                     value => value
                                         .negate()
                                         .map_err(|msg| {
-                                            self.attach(
-                                                Error::new(
-                                                    ErrorKind::Type,
-                                                    msg,
-                                                    None,
-                                                ),
+                                            self.error(
+                                                ErrorKind::Type,
+                                                msg,
                                                 expr,
                                             )
                                         }),
@@ -553,12 +537,9 @@ impl Interpreter {
                             .negate()
                             .map(ControlFlow::Value)
                             .map_err(|msg| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Type,
-                                        msg,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Type,
+                                    msg,
                                     expr,
                                 )
                             })
@@ -582,32 +563,43 @@ impl Interpreter {
                 }
             }
 
-            While(cond, body) => self.eval_while(cond, body, expr),
+            While(cond, body) 
+                => self.eval_while(cond, body, expr),
             Break => {
-                if self.loop_depth == 0 { Err(self.error(ErrorKind::Control, "break outside loop", expr)) } else { Ok(ControlFlow::Break) }
-            }
-            Return(value) => {
-                if self.function_depth == 0 { 
-                    return Err(self.error(ErrorKind::Control, "return outside function", expr)); 
+                if self.loop_depth == 0 { 
+                    Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "break outside loop", expr
+                        )
+                    ) 
+                } else { 
+                    Ok(ControlFlow::Break) 
                 }
-
-                let v = 
-                match value { 
-                    Some(v) => self.eval_value(v)?,
-                    None => Value::Unit 
-                };
-
-                Ok(ControlFlow::Return(v))
             }
-            For(
-                name,
-                index,
+            Continue => {
+                if self.loop_depth == 0 { 
+                    Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "continue outside loop", expr
+                        )
+                    ) 
+                } else { 
+                    Ok(ControlFlow::Continue) 
+                }
+            }
+            Return(value) 
+                => self.eval_return(value),
+            For {
+                pattern,
+                iterable,
                 body
-            ) => self.eval_for(
-                name,
-                index,
-                body,
-                expr
+            } => self.eval_for(
+                    pattern,
+                    iterable,
+                    body,
+                    expr
                 ),
             Match {
                 value,
@@ -656,14 +648,30 @@ impl Interpreter {
     fn eval_value(&mut self, expr: &Expr) -> Result<Value> {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
-            ControlFlow::Return(v) => Ok(v),
-            ControlFlow::Break => 
-                Err(self.error(
-                    ErrorKind::Control,
-                    "break cannot appear here",
-                    expr
-                )),
-            ControlFlow::Continue => todo!()
+            ControlFlow::Return(_) =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "return cannot be used where a value is required",
+                        expr,
+                    )
+                ),
+            ControlFlow::Break =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "break cannot be used where a value is required",
+                        expr,
+                    )
+                ),
+            ControlFlow::Continue =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "continue cannot be used where a value is required",
+                        expr,
+                    )
+                )
         }
     }
 
@@ -747,10 +755,11 @@ impl Interpreter {
 
     fn eval_struct_decl(
         &mut self,
+        visibility: Visibility,
         name: &str,
         fields: &[String],
         methods: &[(String, Box<Expr>)],
-        expr: &Expr,
+        whole: &Expr,
     ) -> Result<ControlFlow> {
         if self.env.contains_local(name) {
             return Err(self.error(
@@ -759,11 +768,11 @@ impl Interpreter {
                     "struct '{}' is already defined in this scope",
                     name
                 ),
-                expr,
+                whole,
             ));
         }
 
-        let mut method_map = std::collections::HashMap::new();
+                let mut method_map = std::collections::HashMap::new();
 
         for (method_name, method_expr) in methods {
             let value = self.eval_value(method_expr)?;
@@ -789,18 +798,56 @@ impl Interpreter {
             );
         }
 
-        let definition = StructDefinition::new(
-            name.to_owned(),
-            fields.to_vec(),
-            method_map,
-        );
+        let definition =
+            StructDefinition::new(
+                name,
+                fields.to_vec(),
+                method_map,
+            );
 
-        self.env.define(
-            name.to_owned(),
-            Value::Struct(Rc::new(definition)),
-        );
+        let value =
+            Value::Struct(
+                Rc::new(
+                    definition
+                )
+            );
 
-        Ok(ControlFlow::Value(Value::Unit))
+        self.env
+            .declare(
+                name.to_owned(),
+                value,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Name,
+                    message,
+                    whole,
+                )
+            })?;
+
+        if visibility == Visibility::Public {
+            if let Some(context) =
+                self.module_stack.last_mut()
+            {
+                context.export(
+                    name.to_owned()
+                );
+            } else {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub struct' is only allowed at module scope",
+                        whole,
+                    )
+                );
+            }
+        }
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn eval_enum_decl(
@@ -847,80 +894,6 @@ impl Interpreter {
         )
     }
 
-    fn resolve_module_path(
-        &self,
-        requested: &ModulePath,
-        whole: &Expr,
-    ) -> Result<PathBuf> {
-        let path = if let Some(current) =
-            self.module_stack.last()
-        {
-            // Import from another module:
-            //
-            // /project/tests/modules/a.nv
-            //
-            // import b
-            //
-            // -> /project/tests/modules/b.nv
-
-            let parent =
-                current
-                    .file_path
-                    .parent()
-                    .ok_or_else(|| {
-                        self.error(
-                            ErrorKind::Runtime,
-                            "module file has no parent directory",
-                            whole,
-                        )
-                    })?;
-
-            let mut path =
-                parent.to_path_buf();
-
-            for part in requested.parts() {
-                path.push(part);
-            }
-
-            path.set_extension("nv");
-
-            path
-        } else {
-            // Import from main program:
-            //
-            // import tests.modules.a
-            //
-            // -> project/tests/modules/a.nv
-
-            let mut path =
-                self.project_root.clone();
-
-            for part in requested.parts() {
-                path.push(part);
-            }
-
-            path.set_extension("nv");
-
-            path
-        };
-
-        if !path.is_file() {
-            return Err(
-                self.error(
-                    ErrorKind::Name,
-                    format!(
-                        "module '{}' not found at '{}'",
-                        requested.name(),
-                        path.display()
-                    ),
-                    whole,
-                )
-            );
-        }
-
-        Ok(path)
-    }
-
     fn bind_module_path(
         &mut self,
         path: &ModulePath,
@@ -933,84 +906,106 @@ impl Interpreter {
         if parts.is_empty() {
             return Err(
                 self.error(
-                    ErrorKind::Runtime,
-                    "cannot bind empty module path",
+                    ErrorKind::Import,
+                    "empty module path",
                     whole,
                 )
             );
         }
 
+        // Single component:
+        //
+        // import math
+        //
+        // env["math"] = module
+        if parts.len() == 1 {
+            let name =
+                parts[0].clone();
+
+            if self.env.contains_local(&name) {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "name '{}' is already defined in this scope",
+                            name
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            self.env.define(
+                name,
+                Value::Module(module),
+            );
+
+            return Ok(());
+        }
+
         // ---------------------------------------------------------
-        // Root namespace
+        // Build nested namespace:
+        //
+        // tests
+        //   └── modules
+        //         └── visibility
+        //
+        // Intermediate namespaces are always public/exported.
         // ---------------------------------------------------------
 
         let root_name =
-            &parts[0];
+            parts[0].clone();
 
-        let mut current =
-            match self.env.get(root_name) {
-                Some(Value::Module(module)) => {
-                    module
-                }
-
-                Some(other) => {
-                    return Err(
-                        self.error(
-                            ErrorKind::Name,
-                            format!(
-                                "cannot create module namespace '{}': name already refers to {}",
-                                root_name,
-                                other.type_name()
-                            ),
-                            whole,
+        let root_module =
+            if let Some(Value::Module(existing)) =
+                self.env.get(&root_name)
+            {
+                existing
+            } else {
+                let namespace =
+                    Rc::new(
+                        RefCell::new(
+                            Module::new(
+                                root_name.clone()
+                            )
                         )
                     );
-                }
 
-                None => {
-                    let module =
-                        Rc::new(
-                            RefCell::new(
-                                Module::new(
-                                    root_name.clone()
-                                )
-                            )
-                        );
+                self.env.define(
+                    root_name.clone(),
+                    Value::Module(
+                        namespace.clone()
+                    )
+                );
 
-                    self.env.define(
-                        root_name.clone(),
-                        Value::Module(
-                            module.clone()
-                        ),
-                    );
-
-                    module
-                }
+                namespace
             };
 
-        // ---------------------------------------------------------
-        // Intermediate namespaces
-        // ---------------------------------------------------------
+        let mut current =
+            root_module;
 
-        for part in
-            &parts[1..parts.len() - 1]
-        {
-            let next =
-                current.borrow().get(part);
+        for component in &parts[1..parts.len() - 1] {
+            let child =
+                {
+                    let current_ref =
+                        current.borrow();
 
-            current =
-                match next {
+                    current_ref
+                        .get_internal(component)
+                };
+
+            let child =
+                match child {
                     Some(Value::Module(module)) =>
                         module,
 
-                    Some(other) => {
+                    Some(_) => {
                         return Err(
                             self.error(
                                 ErrorKind::Name,
                                 format!(
-                                    "module namespace '{}' is already occupied by {}",
-                                    part,
-                                    other.type_name()
+                                    "'{}' in module path is not a module",
+                                    component
                                 ),
                                 whole,
                             )
@@ -1022,37 +1017,53 @@ impl Interpreter {
                             Rc::new(
                                 RefCell::new(
                                     Module::new(
-                                        part.clone()
+                                        component.clone()
                                     )
                                 )
                             );
 
-                        current
-                            .borrow_mut()
-                            .set(
-                                part.clone(),
+                        {
+                            let mut current_ref =
+                                current.borrow_mut();
+
+                            // IMPORTANT:
+                            // intermediate namespace nodes are public
+                            current_ref.set_exported(
+                                component.clone(),
                                 Value::Module(
                                     module.clone()
-                                ),
+                                )
                             );
+                        }
 
                         module
                     }
                 };
+
+            current =
+                child;
         }
 
         // ---------------------------------------------------------
-        // Final component
+        // Attach final module.
         // ---------------------------------------------------------
 
-        let final_name =
+        let leaf_name =
             parts.last()
-                .unwrap();
+                .expect("non-empty module path")
+                .clone();
 
-        current.borrow_mut().set(
-            final_name.clone(),
-            Value::Module(module),
-        );
+        {
+            let mut current_ref =
+                current.borrow_mut();
+
+            current_ref.set_exported(
+                leaf_name,
+                Value::Module(
+                    module
+                )
+            );
+        }
 
         Ok(())
     }
@@ -1062,6 +1073,10 @@ impl Interpreter {
         parts: &[String],
         whole: &Expr,
     ) -> Result<ControlFlow> {
+        // =========================================================
+        // 1. Validate import path
+        // =========================================================
+
         if parts.is_empty() {
             return Err(
                 self.error(
@@ -1078,7 +1093,10 @@ impl Interpreter {
             );
 
         // =========================================================
-        // Standard library module
+        // 2. Lazy standard-library module
+        //
+        // Only module bodies are lazy.
+        // Builtin functions were already installed in Interpreter::new().
         // =========================================================
 
         if parts.len() == 1 {
@@ -1115,35 +1133,54 @@ impl Interpreter {
         }
 
         // =========================================================
-        // Resolve physical file
+        // 3. Resolve physical file
         // =========================================================
 
-        let path =
-            self.resolve_module_path(
-                &requested,
-                whole,
-            )?;
-
         let canonical =
-            std::fs::canonicalize(&path)
-                .map_err(|error| {
-                    self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "failed to resolve module '{}': {}",
-                            path.display(),
-                            error
-                        ),
-                        whole,
-                    )
+            self.module_loader
+                .resolve(
+                    &requested
+                )
+                .map_err(|mut error| {
+                    if error.span.is_none() { 
+                        error.span = Some(whole.span); 
+                    }
+                    if error.stack.is_empty() { 
+                        error.stack = self.stack.clone(); 
+                    }
+
+                    error
                 })?;
 
         // =========================================================
-        // Cyclic import detection
+        // 4. Cache lookup
+        //
+        // If this file was already successfully evaluated,
+        // do not execute it again.
         // =========================================================
 
-        if self
-            .module_stack
+        if let Some(module) =
+            self.module_loader
+                .get_cached(&canonical)
+        {
+            self.bind_module_path(
+                &requested,
+                module,
+                whole,
+            )?;
+
+            return Ok(
+                ControlFlow::Value(
+                    Value::Unit
+                )
+            );
+        }
+
+        // =========================================================
+        // 5. Cyclic import detection
+        // =========================================================
+
+        if self.module_stack
             .iter()
             .any(|context| {
                 context.file_path == canonical
@@ -1172,25 +1209,27 @@ impl Interpreter {
         }
 
         // =========================================================
-        // Read source
+        // 6. Load + parse
         // =========================================================
 
-        let source =
-            std::fs::read_to_string(&canonical)
-                .map_err(|error| {
-                    self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "failed to read module '{}': {}",
-                            canonical.display(),
-                            error
-                        ),
-                        whole,
-                    )
+        let program =
+            self.module_loader
+                .load_program(
+                    &canonical
+                )
+                .map_err(|mut error| {
+                    if error.span.is_none() { 
+                        error.span = Some(whole.span); 
+                    }
+                    if error.stack.is_empty() { 
+                        error.stack = self.stack.clone(); 
+                    }
+
+                    error
                 })?;
 
         // =========================================================
-        // Create module environment
+        // 7. Create module environment
         // =========================================================
 
         let module_env =
@@ -1203,7 +1242,7 @@ impl Interpreter {
             );
 
         // =========================================================
-        // Push module context
+        // 8. Push module context
         // =========================================================
 
         self.module_stack.push(
@@ -1214,25 +1253,70 @@ impl Interpreter {
         );
 
         // =========================================================
-        // Evaluate module
+        // 9. Evaluate module
         // =========================================================
 
         let result =
-            self.execute_source(&source);
+            self.eval_program(
+                &program
+            );
 
-        // Always restore interpreter state.
-        self.module_stack.pop();
+        // Always restore module stack.
+        let context =
+            self.module_stack
+                .pop()
+                .ok_or_else(|| {
+                    self.error(
+                        ErrorKind::Runtime,
+                        "module stack underflow",
+                        whole,
+                    )
+                })?;
 
+        // Always restore previous environment.
         let module_env =
             std::mem::replace(
                 &mut self.env,
                 previous_env,
             );
 
-        result?;
+        // Module execution must complete normally.
+        match result? {
+            ControlFlow::Value(_) => {}
+
+            ControlFlow::Return(_) => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "return cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+
+            ControlFlow::Break => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "break cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+
+            ControlFlow::Continue => {
+                return Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "continue cannot escape module scope",
+                        whole,
+                    )
+                );
+            }
+        }
 
         // =========================================================
-        // Build runtime Module
+        // 10. Build runtime Module
         // =========================================================
 
         let mut module =
@@ -1244,18 +1328,36 @@ impl Interpreter {
             in module_env.local_values()
         {
             module.set(
-                name,
+                name.clone(),
                 value,
             );
+
+            if context.is_exported(
+                &name
+            ) {
+                module.export(name);
+            }
         }
 
         let module =
             Rc::new(
-                RefCell::new(module)
+                RefCell::new(
+                    module
+                )
             );
 
         // =========================================================
-        // Insert into nested module namespace
+        // 11. Cache fully evaluated module
+        // =========================================================
+
+        self.module_loader
+            .cache(
+                canonical,
+                module.clone(),
+            );
+
+        // =========================================================
+        // 12. Attach nested namespace
         // =========================================================
 
         self.bind_module_path(
@@ -1273,13 +1375,10 @@ impl Interpreter {
 
     fn eval_let(
         &mut self,
+        visibility: Visibility,
         pattern: &Pattern,
         value_expr: &Expr,
     ) -> Result<ControlFlow> {
-        // ---------------------------------------------------------
-        // 1. Evaluate the initializer.
-        // ---------------------------------------------------------
-
         let value =
             match self.eval(value_expr)? {
                 ControlFlow::Value(value) =>
@@ -1288,10 +1387,6 @@ impl Interpreter {
                 other =>
                     return Ok(other),
             };
-
-        // ---------------------------------------------------------
-        // 2. Match the pattern and collect all bindings first.
-        // ---------------------------------------------------------
 
         let mut bindings =
             HashMap::new();
@@ -1321,8 +1416,43 @@ impl Interpreter {
         }
 
         // ---------------------------------------------------------
-        // 3. Commit all bindings atomically.
+        // For module-level public declarations, record exports.
+        //
+        // Local/block-scoped `pub let` is rejected because `pub`
+        // only makes sense at module scope.
         // ---------------------------------------------------------
+
+        if visibility == Visibility::Public {
+            if self.module_stack.is_empty() {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub' declaration is only allowed at module scope",
+                        value_expr,
+                    )
+                );
+            }
+
+            for name in bindings.keys() {
+                if name == "_" {
+                    return Err(
+                        self.error(
+                            ErrorKind::Name,
+                            "cannot export wildcard binding",
+                            value_expr,
+                        )
+                    );
+                }
+
+                if let Some(context) =
+                    self.module_stack.last_mut()
+                {
+                    context.export(
+                        name.clone()
+                    );
+                }
+            }
+        }
 
         self.env
             .declare_all(bindings)
@@ -1333,6 +1463,63 @@ impl Interpreter {
                     value_expr,
                 )
             })?;
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
+    }
+
+    /// Helper for `eval_let()` and `eval_for()`
+    fn match_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        value: &Value,
+        whole: &Expr,
+    ) -> Result<HashMap<String, Value>> {
+        let mut bindings =
+            HashMap::new();
+
+        let matched =
+            match_pattern(
+                pattern,
+                value,
+                &mut bindings,
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Runtime,
+                    message,
+                    whole,
+                )
+            })?;
+
+        if !matched {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    "pattern does not match value",
+                    whole,
+                )
+            );
+        }
+
+        Ok(bindings)
+    }
+
+    fn eval_assign(
+        &mut self,
+        name: &str,
+        value_expr: &Expr,
+    ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(value_expr)?;
+
+        self.env.assign_or_define(
+            name,
+            value,
+        );
 
         Ok(
             ControlFlow::Value(
@@ -1536,12 +1723,9 @@ impl Interpreter {
                         numeric,
                     )
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -2015,12 +2199,9 @@ impl Interpreter {
                             col_end,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -2623,43 +2804,91 @@ impl Interpreter {
         &mut self,
         cond: &Expr,
         body: &Expr,
-        whole: &Expr
+        whole: &Expr,
     ) -> Result<ControlFlow> {
-        let mut last = Value::Bool(false);
         self.loop_depth += 1;
+
         let result = (|| {
+            let mut last =
+                Value::Unit;
+
             loop {
-                match self.eval_value(cond)? {
-                    Value::Bool(true) => match self.eval(body)? {
-                        ControlFlow::Value(v) 
-                            => last=v,
-                        ControlFlow::Break 
-                            => break,
-                        ControlFlow::Return(v) 
-                            => return Ok(ControlFlow::Return(v)),
-                        ControlFlow::Continue 
-                            => todo!(),
+                // -------------------------------------------------
+                // Evaluate condition.
+                // -------------------------------------------------
+
+                let condition =
+                    self.eval_value(cond)?;
+
+                match condition {
+                    Value::Bool(true) => {}
+
+                    Value::Bool(false) => {
+                        break;
                     }
-                    Value::Bool(false) => break,
-                    other => return Err(self.error(ErrorKind::Type, format!("'while' expects Bool, got {}",other.type_name()),whole)),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "'while' expects Bool, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                }
+
+                // -------------------------------------------------
+                // Execute body.
+                // -------------------------------------------------
+
+                match self.eval(body)? {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
+
+                    ControlFlow::Break => {
+                        break;
+                    }
+
+                    ControlFlow::Continue => {
+                        continue;
+                    }
+
+                    ControlFlow::Return(value) => {
+                        return Ok(
+                            ControlFlow::Return(value)
+                        );
+                    }
                 }
             }
-            Ok(ControlFlow::Value(last))
+
+            Ok(
+                ControlFlow::Value(last)
+            )
         })();
+
         self.loop_depth -= 1;
+
         result
     }
 
     fn eval_for(
         &mut self,
-        name: &str,
-        iterable: &IndexExpr,
+        pattern: &Pattern,
+        iterable: &Expr,
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
+        let value =
+            self.eval_value(iterable)?;
+
         let iterator =
-            self.eval_iterable(
-                iterable,
+            self.make_iterator(
+                value,
                 whole,
             )?;
 
@@ -2672,19 +2901,28 @@ impl Interpreter {
         self.loop_depth += 1;
 
         let result = (|| {
-            // Declare loop variable once.
-            self.env
-                .declare(
-                    name.to_owned(),
-                    Value::Unit,
-                )
-                .map_err(|message| {
-                    self.error(
-                        ErrorKind::Name,
-                        message,
-                        whole,
+            let mut names =
+                Vec::new();
+
+            collect_pattern_names(
+                pattern,
+                &mut names,
+            );
+
+            for name in names {
+                self.env
+                    .declare(
+                        name,
+                        Value::Unit,
                     )
-                })?;
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Name,
+                            message,
+                            whole,
+                        )
+                    })?;
+            }
 
             let mut last =
                 Value::Unit;
@@ -2695,43 +2933,36 @@ impl Interpreter {
                     whole,
                 )?
             {
-                let assigned =
-                    self.env.assign_local(
-                        name,
-                        value,
-                    );
+                let bindings =
+                    self.match_pattern_bindings(
+                        pattern,
+                        &value,
+                        whole,
+                    )?;
 
-                if !assigned {
-                    return Err(
-                        self.error(
-                            ErrorKind::Runtime,
-                            format!(
-                                "loop variable '{}' disappeared from scope",
-                                name
-                            ),
-                            whole,
-                        )
+                for (name, value)
+                    in bindings
+                {
+                    self.env.assign_local(
+                        &name,
+                        value,
                     );
                 }
 
                 match self.eval(body)? {
-                    ControlFlow::Value(value) => {
-                        last = value;
-                    }
+                    ControlFlow::Value(value) =>
+                        last = value,
 
-                    ControlFlow::Break => {
-                        break;
-                    }
+                    ControlFlow::Break =>
+                        break,
 
-                    ControlFlow::Return(value) => {
+                    ControlFlow::Continue =>
+                        continue,
+
+                    ControlFlow::Return(value) =>
                         return Ok(
                             ControlFlow::Return(value)
-                        );
-                    }
-
-                    ControlFlow::Continue => {
-                        continue;
-                    }
+                        ),
                 }
             }
 
@@ -2741,10 +2972,53 @@ impl Interpreter {
         })();
 
         self.loop_depth -= 1;
-        self.env =
-            old_env;
+        self.env = old_env;
 
         result
+    }
+
+    fn eval_return(
+        &mut self,
+        value: &Option<Box<Expr>>,
+    ) -> Result<ControlFlow> {
+        match value {
+            Some(value) => {
+                match self.eval(value)? {
+                    ControlFlow::Value(value) =>
+                        Ok(
+                            ControlFlow::Return(value)
+                        ),
+
+                    ControlFlow::Return(value) =>
+                        Ok(
+                            ControlFlow::Return(value)
+                        ),
+
+                    ControlFlow::Break =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "break cannot be used in a return expression",
+                                value,
+                            )
+                        ),
+
+                    ControlFlow::Continue =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "continue cannot be used in a return expression",
+                                value,
+                            )
+                        ),
+                }
+            }
+            
+
+            None => Ok(
+                ControlFlow::Return(Value::Unit)
+            )
+        }
     }
 
     fn eval_match(
@@ -3129,12 +3403,9 @@ impl Interpreter {
                                 false,
                             )
                             .map_err(|message| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        message,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
                                     whole,
                                 )
                             })?;
@@ -3248,12 +3519,9 @@ impl Interpreter {
                                 true,
                             )
                             .map_err(|message| {
-                                self.attach(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        message,
-                                        None,
-                                    ),
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
                                     whole,
                                 )
                             })?;
@@ -3326,12 +3594,9 @@ impl Interpreter {
                 function(values)
                     .map(ControlFlow::Value)
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })
@@ -3431,56 +3696,65 @@ impl Interpreter {
 
         match value {
             Value::Str(string) => {
-                match name {
-                    "chars"
-                    | "len"
-                    | "trim"
-                    | "to_upper"
-                    | "to_lower"
-                    | "contains"
-                    | "starts_with"
-                    | "ends_with"
-                    | "split" => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Str(
-                                            string.clone()
-                                        ),
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Str(
+                        string
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Str has no field or method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Str has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::List(list) => {
-                Ok(ControlFlow::Value(
-                    Value::BoundMethod(
-                        BoundMethod::new(
-                            MethodReceiver::List(
-                                list.clone()
-                            ),
-                            name,
+                let receiver =
+                    MethodReceiver::List(
+                        list.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
                         )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "List has no method '{}'",
+                            name
+                        ),
+                        whole,
                     )
-                ))
+                )
             }
 
             Value::Object(object) => {
@@ -3524,20 +3798,25 @@ impl Interpreter {
                 let module =
                     module.borrow();
 
-                module
-                    .get(name)
-                    .map(ControlFlow::Value)
-                    .ok_or_else(|| {
-                        self.error(
-                            ErrorKind::Runtime,
-                            format!(
-                                "module '{}' has no member '{}'",
-                                module.name(),
-                                name
-                            ),
-                            whole,
-                        )
-                    })
+                if let Some(value) =
+                    module.get_field(name)
+                {
+                    return Ok(
+                        ControlFlow::Value(value)
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Name,
+                        format!(
+                            "module '{}' has no exported member '{}'",
+                            module.name(),
+                            name,
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Enum(enum_def) => {
@@ -3792,38 +4071,34 @@ impl Interpreter {
             }
 
             Value::Iterator(iterator) => {
-                match name {
-                    "next"
-                    | "map"
-                    | "filter"
-                    | "collect" => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Iterator(
-                                            iterator.clone()
-                                        ),
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Iterator(
+                        iterator
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Iterator has no method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Iterator has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Range(
@@ -3831,41 +4106,36 @@ impl Interpreter {
                 end,
                 inclusive,
             ) => {
-                match name {
-                    "iter"
-                    | "map"
-                    | "filter"
-                    | "collect"
-                    => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::BoundMethod(
-                                    BoundMethod::new(
-                                        MethodReceiver::Range {
-                                            start,
-                                            end,
-                                            inclusive,
-                                        },
-                                        name,
-                                    )
+                let receiver =
+                    MethodReceiver::Range {
+                        start,
+                        end,
+                        inclusive,
+                    };
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
                                 )
                             )
                         )
-                    }
-
-                    _ => {
-                        Err(
-                            self.error(
-                                ErrorKind::Runtime,
-                                format!(
-                                    "Range has no method '{}'",
-                                    name
-                                ),
-                                whole,
-                            )
-                        )
-                    }
+                    );
                 }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Range has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
             
             other => Err(self.error(
@@ -3900,12 +4170,9 @@ impl Interpreter {
                     function(vec![argument])
                         .map(ControlFlow::Value)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?
@@ -3995,13 +4262,23 @@ impl Interpreter {
                 Ok(ControlFlow::Value(value))
             }
 
-            ControlFlow::Break => Err(self.error(
-                ErrorKind::Control,
-                "break outside loop",
-                call_site,
-            )),
+            ControlFlow::Break 
+            => Err(
+                self.error(
+                    ErrorKind::Control,
+                    "break escaped function boundary",
+                    call_site,
+                )
+            ),
 
-            ControlFlow::Continue => todo!(),
+            ControlFlow::Continue
+            => Err(
+                self.error(
+                    ErrorKind::Control,
+                    "continue escaped function boundary",
+                    call_site,
+                )
+            ),
         }
     }
 
@@ -4103,7 +4380,6 @@ impl Interpreter {
             // =====================================================
             // chars()
             // =====================================================
-
             "chars" => {
                 if !args.is_empty() {
                     return Err(
@@ -4142,7 +4418,6 @@ impl Interpreter {
             // =====================================================
             // len()
             // =====================================================
-
             "len" => {
                 if !args.is_empty() {
                     return Err(
@@ -4167,7 +4442,6 @@ impl Interpreter {
             // =====================================================
             // trim()
             // =====================================================
-
             "trim" => {
                 if !args.is_empty() {
                     return Err(
@@ -4194,7 +4468,6 @@ impl Interpreter {
             // =====================================================
             // to_upper()
             // =====================================================
-
             "to_upper" => {
                 if !args.is_empty() {
                     return Err(
@@ -4221,7 +4494,6 @@ impl Interpreter {
             // =====================================================
             // to_lower()
             // =====================================================
-
             "to_lower" => {
                 if !args.is_empty() {
                     return Err(
@@ -4248,7 +4520,6 @@ impl Interpreter {
             // =====================================================
             // contains()
             // =====================================================
-
             "contains" => {
                 if args.len() != 1 {
                     return Err(
@@ -4290,6 +4561,340 @@ impl Interpreter {
                 )
             }
 
+            // =========================================================
+            // starts_with(prefix)
+            // =========================================================
+            "starts_with" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "starts_with() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let prefix =
+                    match &args[0] {
+                        Value::Str(value) =>
+                            value.as_str(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "starts_with() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            string.starts_with(prefix)
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // ends_with(suffix)
+            // =========================================================
+            "ends_with" => {
+            if args.len() != 1 {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        "ends_with() takes exactly 1 argument",
+                        whole,
+                    )
+                );
+            }
+
+            let suffix =
+                match &args[0] {
+                    Value::Str(value) =>
+                        value.as_str(),
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "ends_with() expects Str, got {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+                };
+
+            Ok(
+                ControlFlow::Value(
+                    Value::Bool(
+                        string.ends_with(suffix)
+                    )
+                )
+            )
+        }
+
+            // =========================================================
+            // split(separator)
+            // =========================================================
+            "split" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "split() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let separator =
+                    match &args[0] {
+                        Value::Str(value) =>
+                            value.as_str(),
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "split() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let values =
+                    string
+                        .split(separator)
+                        .map(|part| {
+                            Value::Str(
+                                Rc::new(
+                                    part.to_owned()
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(values)
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // replace(Str, Str)
+            // =========================================================
+            "replace" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "replace() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let from =
+                    match args.next().unwrap() {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "replace() expects Str as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let to =
+                    match args.next().unwrap() {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "replace() expects Str as second argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    string.replace(
+                        from.as_str(),
+                        to.as_str(),
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // repeat(Int)
+            // =========================================================
+            "repeat" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "repeat() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let count =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "repeat() does not accept negative counts",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "repeat() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                string.repeat(count)
+                            )
+                        )
+                    )
+                )
+            }
+
+            // =========================================================
+            // get(Int)
+            // =========================================================
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let index =
+                    match &args[0] {
+                        Value::Int(value)
+                            if *value >= 0 =>
+                        {
+                            *value as usize
+                        }
+
+                        Value::Int(_) =>
+                            return Ok(
+                                ControlFlow::Value(
+                                    option_none()
+                                )
+                            ),
+
+                        other =>
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "get() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            ),
+                    };
+
+                let value =
+                    string
+                        .chars()
+                        .nth(index)
+                        .map(|ch| {
+                            Value::Str(
+                                Rc::new(
+                                    ch.to_string()
+                                )
+                            )
+                        });
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(value),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
             _ => {
                 Err(
                     self.error(
@@ -4316,19 +4921,22 @@ impl Interpreter {
             // =====================================================
             // push(value)
             // =====================================================
+
             "push" => {
                 if args.len() != 1 {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "push() takes exactly 1 argument",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "push() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    args.pop().unwrap();
-
-                list.borrow_mut().push(value);
+                list.borrow_mut()
+                    .push(
+                        args.remove(0)
+                    );
 
                 Ok(
                     ControlFlow::Value(
@@ -4340,62 +4948,73 @@ impl Interpreter {
             // =====================================================
             // pop()
             // =====================================================
+
             "pop" => {
                 if !args.is_empty() {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "pop() takes no arguments",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "pop() takes no arguments",
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    list.borrow_mut()
-                        .pop()
-                        .unwrap_or(Value::Unit);
-
                 Ok(
-                    ControlFlow::Value(value)
+                    ControlFlow::Value(
+                        list.borrow_mut()
+                            .pop()
+                            .unwrap_or(
+                                Value::Unit
+                            )
+                    )
                 )
             }
 
             // =====================================================
             // remove(index)
             // =====================================================
+
             "remove" => {
                 if args.len() != 1 {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "remove() takes exactly 1 argument",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
                 }
 
                 let index =
-                    match args.pop().unwrap() {
-                        Value::Int(index)
-                            if index >= 0 =>
+                    match args.remove(0) {
+                        Value::Int(i)
+                            if i >= 0 =>
                         {
-                            index as usize
+                            i as usize
                         }
 
                         Value::Int(_) => {
-                            return Err(self.error(
-                                ErrorKind::Index,
-                                "remove() does not accept negative indices",
-                                whole,
-                            ));
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "remove() does not accept negative indices",
+                                    whole,
+                                )
+                            );
                         }
 
                         other => {
-                            return Err(self.error(
-                                ErrorKind::Type,
-                                format!(
-                                    "remove() expects Int, got {}",
-                                    other.type_name()
-                                ),
-                                whole,
-                            ));
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "remove() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
                         }
                     };
 
@@ -4403,43 +5022,44 @@ impl Interpreter {
                     list.borrow_mut();
 
                 if index >= list.len() {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "index out of range: {}",
-                            index
-                        ),
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
                 }
 
-                let value =
-                    list.remove(index);
-
                 Ok(
-                    ControlFlow::Value(value)
+                    ControlFlow::Value(
+                        list.remove(index)
+                    )
                 )
             }
 
             // =====================================================
             // len()
             // =====================================================
+
             "len" => {
                 if !args.is_empty() {
-                    return Err(self.error(
-                        ErrorKind::Arity,
-                        "len() takes no arguments",
-                        whole,
-                    ));
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() takes no arguments",
+                            whole,
+                        )
+                    );
                 }
-
-                let len =
-                    list.borrow().len();
 
                 Ok(
                     ControlFlow::Value(
                         Value::Int(
-                            len as i64
+                            list.borrow().len() as i64
                         )
                     )
                 )
@@ -4448,41 +5068,496 @@ impl Interpreter {
             // =====================================================
             // iter()
             // =====================================================
+
             "iter" => {
                 if !args.is_empty() {
                     return Err(
                         self.error(
                             ErrorKind::Arity,
-                            "iter() expects no arguments",
+                            "iter() takes no arguments",
                             whole,
                         )
                     );
                 }
 
+                let iterator =
+                    IteratorObj::List {
+                        data: list.clone(),
+                        index: 0,
+                    };
+
                 Ok(
                     ControlFlow::Value(
                         Value::Iterator(
-                            Rc::new(RefCell::new(IteratorObj::List {
-                                data: list.clone(),
-                                index: 0,
-                            }))
+                            Rc::new(
+                                RefCell::new(
+                                    iterator
+                                )
+                            )
                         )
                     )
                 )
             }
 
             // =====================================================
-            // Unknown method
+            // get(index)
+            //
+            // xs.get(i)
+            //   -> Some(value)
+            //   -> None
             // =====================================================
+
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let index =
+                    match args.remove(0) {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Ok(
+                                ControlFlow::Value(
+                                    option_none()
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "get() expects Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    list.borrow()
+                        .get(index)
+                        .cloned();
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            // =====================================================
+            // set(index, value)
+            // =====================================================
+
+            "set" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "set() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let index =
+                    match args.next().unwrap() {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "set() does not accept negative indices",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "set() expects Int as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    args.next().unwrap();
+
+                let mut list =
+                    list.borrow_mut();
+
+                if index >= list.len() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                list[index] =
+                    value;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // insert(index, value)
+            // =====================================================
+
+            "insert" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "insert() takes exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let index =
+                    match args.next().unwrap() {
+                        Value::Int(i)
+                            if i >= 0 =>
+                        {
+                            i as usize
+                        }
+
+                        Value::Int(_) => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Index,
+                                    "insert() does not accept negative indices",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "insert() expects Int as first argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole
+                                )
+                            );
+                        }
+                    };
+
+                let value =
+                    args.next().unwrap();
+
+                let mut list =
+                    list.borrow_mut();
+
+                if index > list.len() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    );
+                }
+
+                list.insert(
+                    index,
+                    value,
+                );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // contains(value)
+            // =====================================================
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let needle =
+                    &args[0];
+
+                let values =
+                    list.borrow();
+
+                for value in values.iter() {
+                    if Value::eq_values(
+                        value,
+                        needle,
+                    )
+                    .map_err(|message| {
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
+                            whole,
+                        )
+                    })?
+                    {
+                        return Ok(
+                            ControlFlow::Value(
+                                Value::Bool(true)
+                            )
+                        );
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(false)
+                    )
+                )
+            }
+
+            // =====================================================
+            // reverse()
+            // =====================================================
+
+            "reverse" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "reverse() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                list.borrow_mut()
+                    .reverse();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // clear()
+            // =====================================================
+
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "clear() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                list.borrow_mut()
+                    .clear();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // extend(other_list)
+            // =====================================================
+
+            "extend" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "extend() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match args.remove(0) {
+                        Value::List(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "extend() expects List, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                // Clone first so that extending a list with itself
+                // does not create a borrow conflict.
+                let values =
+                    other.borrow().clone();
+
+                list.borrow_mut()
+                    .extend(values);
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            // =====================================================
+            // join(separator)
+            // =====================================================
+
+            "join" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "join() takes exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let separator =
+                    match args.remove(0) {
+                        Value::Str(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "join() expects Str, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let values =
+                    list.borrow();
+
+                let mut result =
+                    String::new();
+
+                for (i, value)
+                    in values.iter().enumerate()
+                {
+                    if i > 0 {
+                        result.push_str(
+                            separator.as_str()
+                        );
+                    }
+
+                    match value {
+                        Value::Str(value) =>
+                            result.push_str(
+                                value.as_str()
+                            ),
+
+                        other =>
+                            result.push_str(
+                                &other.to_string()
+                            ),
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(result)
+                        )
+                    )
+                )
+            }
+
             _ => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "unknown list method '{}'",
-                        name
-                    ),
-                    whole,
-                ))
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
         }
     }
@@ -4524,7 +5599,11 @@ impl Interpreter {
 
             "map"
             | "filter"
-            | "collect" => {
+            | "collect"
+            | "reduce"
+            | "fold"
+            | "any"
+            | "all" => {
                 let iterator =
                     self.make_range_iterator(
                         start,
@@ -4670,50 +5749,23 @@ impl Interpreter {
                     );
                 }
 
-                let value =
-                    {
-                        let mut iterator =
-                            iterator.borrow_mut();
+                let next =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?;
 
-                        self.next_iterator_value(
-                            &mut iterator,
-                            whole,
-                        )?
-                    };
+                Ok(
+                    ControlFlow::Value(
+                        match next {
+                            Some(value) =>
+                                option_some(value),
 
-                match value {
-                    Some(value) => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::EnumValue(
-                                    Rc::new(
-                                        EnumValue::new(
-                                            "Option",
-                                            "Some",
-                                            vec![value],
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    }
-
-                    None => {
-                        Ok(
-                            ControlFlow::Value(
-                                Value::EnumValue(
-                                    Rc::new(
-                                        EnumValue::new(
-                                            "Option",
-                                            "None",
-                                            vec![],
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    }
-                }
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
             }
 
             // =====================================================
@@ -4883,6 +5935,291 @@ impl Interpreter {
                 )
             }
 
+            // =====================================================
+            // reduce()
+            // =====================================================
+            "reduce" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "reduce() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let function =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "reduce() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let Some(mut accumulator) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                else {
+                    return Ok(
+                        ControlFlow::Value(
+                            option_none()
+                        )
+                    );
+                };
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    accumulator =
+                        self.call_iterator_callback(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                            whole
+                        )?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        option_some(
+                            accumulator
+                        )
+                    )
+                )
+            }
+            
+            // =====================================================
+            // fold()
+            // =====================================================
+            "fold" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "fold() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut args =
+                    args.into_iter();
+
+                let mut accumulator =
+                    args.next().unwrap();
+
+                let function =
+                    match args.next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "fold() expects Function as second argument, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None =>
+                                break,
+                        };
+
+                    accumulator =
+                        self.call_iterator_callback(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                            whole
+                        )?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        accumulator
+                    )
+                )
+            }
+            
+            // =====================================================
+            // any()
+            // =====================================================
+            "any" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "any() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let predicate =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "any() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None => {
+                                return Ok(
+                                    ControlFlow::Value(
+                                        Value::Bool(false)
+                                    )
+                                );
+                            }
+                        };
+
+                    match self.call_iterator_predicate(
+                        predicate.clone(),
+                        value,
+                        whole
+                    )? {
+                        true => return Ok(
+                                ControlFlow::Value(
+                                    Value::Bool(true)
+                                )
+                            ),
+
+                        false => continue,
+                    }
+                }
+            }
+            
+            // =====================================================
+            // fold()
+            // =====================================================
+            "all" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "all() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let predicate =
+                    match args.into_iter().next().unwrap() {
+                        Value::Func(function) =>
+                            function,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "all() expects Function, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                loop {
+                    let next =
+                        self.next_from_iterator(
+                            &iterator,
+                            whole,
+                        )?;
+
+                    let value =
+                        match next {
+                            Some(value) =>
+                                value,
+
+                            None => {
+                                return Ok(
+                                    ControlFlow::Value(
+                                        Value::Bool(true)
+                                    )
+                                );
+                            }
+                        };
+
+                    match self.call_iterator_predicate(
+                        predicate.clone(),
+                        value,
+                        whole
+                    )? {
+                        false => return Ok(
+                                ControlFlow::Value(
+                                    Value::Bool(false)
+                                )
+                            ),
+
+                        true => continue,
+                    }
+                }
+            }
+            
             _ => {
                 Err(
                     self.error(
@@ -4891,6 +6228,83 @@ impl Interpreter {
                             "Iterator has no method '{}'",
                             name
                         ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_iterator_method()`
+    fn call_iterator_predicate(
+        &mut self,
+        function: FuncRef,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<bool> {
+        match self.call_iterator_callback(
+            function,
+            vec![value],
+            whole,
+        )? {
+            Value::Bool(result) =>
+                Ok(result),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "predicate must return Bool, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper for `call_iterator_method`
+    fn call_iterator_callback(
+        &mut self,
+        function: FuncRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<Value> {
+        match self.call_function(
+            function,
+            args,
+            whole,
+        )? {
+            ControlFlow::Value(value) =>
+                Ok(value),
+
+            ControlFlow::Return(_) => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot return",
+                        whole,
+                    )
+                )
+            }
+
+            ControlFlow::Break => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot break",
+                        whole,
+                    )
+                )
+            }
+
+            ControlFlow::Continue => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "iterator callback cannot continue",
                         whole,
                     )
                 )
@@ -4946,12 +6360,9 @@ impl Interpreter {
                     series
                         .to_matrix()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5023,12 +6434,9 @@ impl Interpreter {
                 let value =
                     series.mean()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5050,12 +6458,9 @@ impl Interpreter {
                 let value =
                     series.std()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5077,12 +6482,9 @@ impl Interpreter {
                 let value =
                     series.median()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5104,12 +6506,9 @@ impl Interpreter {
                 let value =
                     series.sum()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5131,12 +6530,9 @@ impl Interpreter {
                 let value =
                     series.min()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5158,12 +6554,9 @@ impl Interpreter {
                 let value =
                     series.max()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Type,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5207,12 +6600,9 @@ impl Interpreter {
                 let value =
                     series.quantile(q)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Value,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Value,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5258,12 +6648,9 @@ impl Interpreter {
                 let result =
                     series.unique()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5289,12 +6676,9 @@ impl Interpreter {
                 let result =
                     series.value_counts()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5401,12 +6785,9 @@ impl Interpreter {
                     dataframe
                         .select(&names)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5434,12 +6815,9 @@ impl Interpreter {
                     dataframe
                         .to_matrix()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5491,12 +6869,9 @@ impl Interpreter {
                     dataframe
                         .head(n)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5583,12 +6958,9 @@ impl Interpreter {
                             dataframe
                                 .filter_rows(&keep)
                                 .map_err(|message| {
-                                    self.attach(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            message,
-                                            None,
-                                        ),
+                                    self.error(
+                                        ErrorKind::Runtime,
+                                        message,
                                         whole,
                                     )
                                 })?;
@@ -5660,12 +7032,9 @@ impl Interpreter {
                             dataframe
                                 .filter_rows(&keep)
                                 .map_err(|message| {
-                                    self.attach(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            message,
-                                            None,
-                                        ),
+                                    self.error(
+                                        ErrorKind::Runtime,
+                                        message,
                                         whole,
                                     )
                                 })?;
@@ -5716,12 +7085,9 @@ impl Interpreter {
                         column_name,
                     )
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -5757,12 +7123,9 @@ impl Interpreter {
                     dataframe
                         .drop_columns(&names)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5800,12 +7163,9 @@ impl Interpreter {
                     dataframe
                         .rename(&mapping)
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5882,12 +7242,9 @@ impl Interpreter {
                             ascending,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5919,12 +7276,9 @@ impl Interpreter {
                     dataframe
                         .describe()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -5997,12 +7351,9 @@ impl Interpreter {
                             column_column,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6163,12 +7514,9 @@ impl Interpreter {
                     grouped
                         .count()
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6223,12 +7571,9 @@ impl Interpreter {
                             unreachable!(),
                     }
                     .map_err(|message| {
-                        self.attach(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                message,
-                                None,
-                            ),
+                        self.error(
+                            ErrorKind::Runtime,
+                            message,
                             whole,
                         )
                     })?;
@@ -6283,12 +7628,9 @@ impl Interpreter {
                             &functions,
                         )
                         .map_err(|message| {
-                            self.attach(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                ),
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
                                 whole,
                             )
                         })?;
@@ -6315,52 +7657,46 @@ impl Interpreter {
         }
     }
 
-    fn error(&self, kind: ErrorKind, message: impl Into<String>, expr: &Expr) -> Error {
-        Error::new(kind, message, Some(expr.span)).with_stack(&self.stack)
-    }
-
-    fn attach(&self, mut error: Error, expr: &Expr) -> Error {
-        if error.span.is_none() { error.span = Some(expr.span); }
-        if error.stack.is_empty() { error.stack = self.stack.clone(); }
-        error
-    }
-
-    /// Helper to convert String to Error
-    fn attach_runtime_error(
+    fn error(
         &self,
+        kind: ErrorKind,
         message: impl Into<String>,
-        expr: &Expr,
+        expr: &Expr
     ) -> Error {
-        self.attach(
-            Error::new(
-                ErrorKind::Runtime,
-                message,
-                None,
-            ),
-            expr,
+        Error::new(
+            kind,
+            message, 
+            Some(expr.span))
+                .with_stack(&self.stack)
+    }
+}
+
+/// Helper to wrap Value with Option
+fn option_some(
+    value: Value,
+) -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "Some",
+                vec![value],
+            )
         )
-    }
+    )
+}
 
-    fn execute_source(
-        &mut self,
-        source: &str,
-    ) -> Result<ControlFlow> {
-        let mut lexer =
-            Lexer::new(source);
-
-        let tokens =
-            lexer.lex()
-                .map_err(|e| e)?;
-
-        let mut parser =
-            Parser::new(tokens);
-
-        let program =
-            parser.parse()?;
-
-        self.eval_program(&program)
-    }
-
+/// Helper to create Option.None
+fn option_none() -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "None",
+                vec![],
+            )
+        )
+    )
 }
 
 /// Helper for `eval_match()`
@@ -6477,6 +7813,39 @@ fn match_pattern(
                 _ => Ok(false),
             }
         }
+    
+        Pattern::List(patterns) => {
+            let Value::List(list) =
+                value
+            else {
+                return Ok(false);
+            };
+
+            let values =
+                list.borrow();
+
+            if patterns.len()
+                != values.len()
+            {
+                return Ok(false);
+            }
+
+            for (pattern, value)
+                in patterns.iter()
+                    .zip(values.iter())
+            {
+                if !match_pattern(
+                    pattern,
+                    value,
+                    bindings,
+                )? {
+                    return Ok(false);
+                }
+            }
+
+            Ok(true)
+        }
+
     }
 }
 
@@ -6538,5 +7907,45 @@ fn match_enum_pattern(
     }
 
     Ok(true)
+}
+
+/// Helper for `eval_for()`
+fn collect_pattern_names(
+    pattern: &Pattern,
+    names: &mut Vec<String>,
+) {
+    match pattern {
+        Pattern::Wildcard
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::Bool(_)
+        | Pattern::Str(_) => {}
+
+        Pattern::Ident(name) => {
+            names.push(name.clone());
+        }
+
+        Pattern::Tuple(patterns) |
+        Pattern::List(patterns) => {
+            for pattern in patterns {
+                collect_pattern_names(
+                    pattern,
+                    names,
+                );
+            }
+        }
+
+        Pattern::Enum {
+            fields,
+            ..
+        } => {
+            for pattern in fields {
+                collect_pattern_names(
+                    pattern,
+                    names,
+                );
+            }
+        }
+    }
 }
 

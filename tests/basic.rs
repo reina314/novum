@@ -259,6 +259,122 @@ fn assignment_updates_outer_binding() {
 }
 
 #[test]
+fn while_continue() {
+    let result =
+        run(
+            r#"
+            let x = 0
+
+            while x < 5 {
+                x = x + 1
+
+                if x < 5 {
+                    continue
+                }
+
+                x
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn while_continue_skips_remaining_body() {
+    let result =
+        run(
+            r#"
+            let x = 0
+            let y = 0
+
+            while x < 5 {
+                x = x + 1
+
+                if x < 5 {
+                    continue
+                }
+
+                y = 100
+            }
+
+            y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(100)
+    );
+}
+
+#[test]
+fn continue_outside_loop_is_error() {
+    let result =
+        run_result(
+            r#"
+            continue
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn function_cannot_continue_caller_loop() {
+    let result =
+        run_result(
+            r#"
+            foo = || {
+                continue
+            }
+
+            while true {
+                foo()
+            }
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn function_local_continue() {
+    let result =
+        run(
+            r#"
+            foo = || {
+                let x = 0
+
+                while x < 3 {
+                    x = x + 1
+
+                    if x < 3 {
+                        continue
+                    }
+                }
+
+                x
+            }
+
+            foo()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(3)
+    );
+}
+
+#[test]
 fn dict_literal() {
     assert_eq!(
         run(
@@ -1194,6 +1310,25 @@ fn result_match() {
 }
 
 #[test]
+fn return_value() {
+    let result =
+        run(
+            r#"
+            get_value = || {
+                return 42
+            }
+
+            get_value()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(42)
+    );
+}
+
+#[test]
 fn try_result_err() {
     let result =
         run_result(
@@ -1432,6 +1567,36 @@ fn let_nested_tuple_destructuring() {
             a + b + c
             "#
         );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn list_pattern() {
+    let result = run(
+        r#"
+        let [x, y] = [10, 20]
+        x + y
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn nested_list_pattern() {
+    let result = run(
+        r#"
+        let [[a, b], c] = [[1, 2], 3]
+        a + b + c
+        "#
+    );
 
     assert_eq!(
         result,
@@ -1843,6 +2008,215 @@ fn string_chars_unicode() {
             );
         }
     }
+}
+
+#[test]
+fn iterator_reduce() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .reduce(|a, b| a + b)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(10)]
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Option.Some, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn iterator_reduce_empty() {
+    let result =
+        run(
+            r#"
+            [].iter()
+                .reduce(|a, b| a + b)
+            "#
+        );
+
+    match result {
+        Value::EnumValue(value) => {
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+
+            assert!(
+                value.fields().is_empty()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Option.None, got {:?}",
+                other
+            );
+        }
+    }
+}
+
+#[test]
+fn iterator_fold() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .fold(
+                    10,
+                    |acc, x| acc + x
+                )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(20)
+    );
+}
+
+#[test]
+fn iterator_any() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .any(|x| x > 3)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_all() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .all(|x| x > 0)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_all_false() {
+    let result =
+        run(
+            r#"
+            (1..5)
+                .all(|x| x < 4)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn for_tuple_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for (x, y) in [
+                (1, 2),
+                (3, 4),
+            ] {
+                sum = sum + x + y
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
+fn for_nested_tuple_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for ((a, b), c) in [
+                ((1, 2), 3),
+                ((4, 5), 6),
+            ] {
+                sum = sum + a + b + c
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(21)
+    );
+}
+
+#[test]
+fn for_enum_pattern() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            let values = [
+                Result.Ok(10),
+                Result.Ok(20),
+            ]
+
+            for Result.Ok(x) in values {
+                sum = sum + x
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
 }
 
 

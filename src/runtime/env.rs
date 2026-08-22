@@ -35,7 +35,31 @@ impl Env {
         )
     }
 
+    pub fn assign_or_define(
+        &self,
+        name: impl Into<String>,
+        value: Value,
+    ) {
+        let name = name.into();
+
+        // If the name already exists somewhere in the
+        // lexical environment chain, update the nearest binding.
+        if self.assign(
+            &name,
+            value.clone(),
+        ) {
+            return;
+        }
+
+        // Otherwise create a new binding in the current scope.
+        self.define(
+            name,
+            value,
+        );
+    }
+
     /// Legacy API.
+    /// raw insertion
     pub fn define(
         &self,
         name: impl Into<String>,
@@ -50,7 +74,8 @@ impl Env {
             );
     }
 
-    /// New API: single declaration.
+    /// New API.
+    /// explicit declaration with duplication check
     pub fn declare(
         &self,
         name: impl Into<String>,

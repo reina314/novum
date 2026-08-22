@@ -2,6 +2,7 @@ use crate::{
     runtime::{
         Value,
         IteratorObj,
+        Env,
     }
 };
 
@@ -10,7 +11,135 @@ use std::{
     cell::RefCell,
     io::{self, Write},
     time::Duration,
+    collections::HashMap,
 };
+
+pub fn install_builtins(
+    env: &Env
+) {
+    for (name, value) 
+        in builtins() {
+        env.define(name, value);
+    }
+}
+
+fn builtins()
+    -> HashMap<String, Value>
+{
+    let mut map = HashMap::new();
+
+    map.insert(
+        "print".into(),
+        Value::Builtin(print),
+    );
+
+    map.insert(
+        "typeof".into(),
+        Value::Builtin(r#typeof),
+    );
+
+    map.insert(
+        "iter".into(),
+        Value::Builtin(iter),
+    );
+
+    map.insert(
+        "range".into(),
+        Value::Builtin(range),
+    );
+
+    map.insert(
+        "len".into(),
+        Value::Builtin(len),
+    );
+
+    map.insert(
+        "is_null".into(),
+        Value::Builtin(is_null),
+    );
+
+    map.insert(
+        "is_type".into(),
+        Value::Builtin(is_type),
+    );
+
+    map.insert(
+        "assert".into(),
+        Value::Builtin(assert),
+    );
+
+    map.insert(
+        "panic".into(),
+        Value::Builtin(panic),
+    );
+
+    map.insert(
+        "input".into(),
+        Value::Builtin(input),
+    );
+
+    map.insert(
+        "read".into(),
+        Value::Builtin(read),
+    );
+
+    map.insert(
+        "write".into(),
+        Value::Builtin(write),
+    );
+
+    map.insert(
+        "append".into(),
+        Value::Builtin(append),
+    );
+
+    map.insert(
+        "str".into(),
+        Value::Builtin(str),
+    );
+
+    map.insert(
+        "int".into(),
+        Value::Builtin(int),
+    );
+
+    map.insert(
+        "float".into(),
+        Value::Builtin(float),
+    );
+
+    map.insert(
+        "args".into(),
+        Value::Builtin(args),
+    );
+
+    map.insert(
+        "env".into(),
+        Value::Builtin(env),
+    );
+
+    map.insert(
+        "cwd".into(),
+        Value::Builtin(cwd),
+    );
+
+    map.insert(
+        "sleep".into(),
+        Value::Builtin(sleep),
+    );
+
+    map.insert(
+        "random".into(),
+        Value::Builtin(random),
+    );
+
+    map.insert(
+        "randint".into(),
+        Value::Builtin(randint),
+    );
+
+    map
+}
 
 fn expect_args(
     args: &[Value],

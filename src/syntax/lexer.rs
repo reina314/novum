@@ -227,6 +227,7 @@ impl<'a> Lexer<'a> {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,
+            "continue" => TokenKind::Continue,
             "break" => TokenKind::Break,
             "return" => TokenKind::Return,
             "for" => TokenKind::For,
@@ -238,6 +239,8 @@ impl<'a> Lexer<'a> {
 
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
+
+            "pub" => TokenKind::Pub,
 
             "null" => TokenKind::Null,
 

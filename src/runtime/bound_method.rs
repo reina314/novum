@@ -30,6 +30,75 @@ pub enum MethodReceiver {
     Iterator(IteratorRef),
 }
 
+impl MethodReceiver {
+    pub fn supports_method(
+        &self,
+        name: &str,
+    ) -> bool {
+        match self {
+            Self::List(_) => matches!(
+                name,
+                "push"
+                    | "pop"
+                    | "remove"
+                    | "len"
+                    | "iter"
+                    | "get"
+                    | "set"
+                    | "insert"
+                    | "contains"
+                    | "reverse"
+                    | "clear"
+                    | "extend"
+                    | "join"
+            ),
+
+            Self::Str(_) => matches!(
+                name,
+                "chars"
+                    | "len"
+                    | "trim"
+                    | "to_upper"
+                    | "to_lower"
+                    | "contains"
+                    | "starts_with"
+                    | "ends_with"
+                    | "split"
+                    | "replace"
+                    | "repeat"
+            ),
+
+            Self::Iterator(_) => matches!(
+                name,
+                "next"
+                    | "map"
+                    | "filter"
+                    | "collect"
+                    | "reduce"
+                    | "fold"
+                    | "any"
+                    | "all"
+            ),
+
+            Self::Range { .. } => matches!(
+                name,
+                "iter"
+                    | "map"
+                    | "filter"
+                    | "collect"
+                    | "reduce"
+                    | "fold"
+                    | "any"
+                    | "all"
+            ),
+
+            // Existing cases...
+            _ => false,
+        }
+    }
+}
+
+
 #[derive(Clone)]
 pub struct BoundMethod {
     receiver: MethodReceiver,

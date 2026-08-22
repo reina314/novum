@@ -34,6 +34,7 @@ pub enum TokenKind {
     Else,
     While,
     Break,
+    Continue,
     Return,
     For,
     In,
@@ -62,6 +63,8 @@ pub enum TokenKind {
 
     DoubleDot,
     DoubleDotEq,
+
+    Pub,
 
     Null,
     Eof,
