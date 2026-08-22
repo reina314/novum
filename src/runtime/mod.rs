@@ -2,6 +2,7 @@ pub mod control;
 pub mod env;
 pub mod function;
 pub mod iterator;
+pub mod vector;
 pub mod matrix;
 pub mod series;
 pub mod dataframe;
@@ -22,6 +23,10 @@ pub use function::{
 pub use iterator::{
     IteratorObj,
     IteratorRef,
+};
+pub use vector::{
+    Vector,
+    VectorRef,
 };
 pub use matrix::{
     Matrix,

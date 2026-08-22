@@ -2,6 +2,8 @@ use super::{
     DataFrameRef,
     GroupedDataFrameRef,
     List,
+    VectorRef,
+    MatrixRef,
     ObjectRef,
     SeriesRef,
     IteratorRef,
@@ -16,7 +18,9 @@ use std::{
 pub enum MethodReceiver {
     Str(Rc<String>),
     List(List),
-    
+    Vector(VectorRef),
+    Matrix(MatrixRef),
+
     Range {
         start: i64,
         end: i64,
@@ -51,6 +55,7 @@ impl MethodReceiver {
                     | "clear"
                     | "extend"
                     | "join"
+                    | "vector"
             ),
 
             Self::Str(_) => matches!(
@@ -66,6 +71,22 @@ impl MethodReceiver {
                     | "split"
                     | "replace"
                     | "repeat"
+            ),
+
+            Self::Vector(_) => matches!(
+                name,
+                "len"
+                    | "shape"
+                    | "norm"
+                    | "dot"
+                    | "to_matrix"
+            ),
+
+            Self::Matrix(_) => matches!(
+                name,
+                "shape"
+                    | "transpose"
+                    | "trace"
             ),
 
             Self::Iterator(_) => matches!(

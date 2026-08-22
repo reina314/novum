@@ -1,4 +1,4 @@
-# Novum v0.15.1
+# Novum v0.15.2
 
 ### For quick ideas, quick experiments, and quick results.
 

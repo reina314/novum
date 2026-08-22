@@ -6,6 +6,7 @@ use super::{
     EnumRef,
     EnumValueRef,
     EnumConstructor,
+    VectorRef,
     MatrixRef,
     SeriesRef,
     DataFrameRef,
@@ -35,7 +36,10 @@ pub enum Value {
     Tuple(Tuple),
     List(List),
     Dict(Dict),
+
+    Vector(VectorRef),
     Matrix(MatrixRef),
+
     Series(SeriesRef),
     DataFrame(DataFrameRef),
     GroupedDataFrame(GroupedDataFrameRef),
@@ -71,7 +75,10 @@ impl Value {
             Self::Tuple(_) => "Tuple",
             Self::List(_) => "List",
             Self::Dict(_) => "Dict",
+
+            Self::Vector(_) => "Vector",
             Self::Matrix(_) => "Matrix",
+            
             Self::Series(_) => "Series",
             Self::DataFrame(_) => "DataFrame",
             Self::GroupedDataFrame(_) => "GroupedDataFrame",
@@ -194,10 +201,27 @@ impl Value {
                 }
             }
 
+            (// element-wise
+                Self::Vector(a),
+                Self::Vector(b)    
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                a.as_slice() == b.as_slice()
+            },
+
             (// recursive element-wise
                 Self::Matrix(a),
                 Self::Matrix(b)
-            ) => Rc::ptr_eq(a, b),
+            ) => {
+                let a = a.borrow();
+                let b = b.borrow();
+
+                a.rows() == b.rows()
+                    && a.cols() == b.cols()
+                    && a.as_slice() == b.as_slice()
+            },
 
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
             (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
@@ -296,6 +320,8 @@ impl fmt::Debug for Value {
             Self::List(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
+
+            Self::Vector(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Matrix(v) => write!(f, "{:?}", v.borrow()),
 

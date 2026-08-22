@@ -376,10 +376,12 @@ impl NovumUi {
             | TokenKind::Else
             | TokenKind::While
             | TokenKind::Break
+            | TokenKind::Continue
             | TokenKind::Return
             | TokenKind::For
             | TokenKind::In
             | TokenKind::Let
+            | TokenKind::Pub
             | TokenKind::Match
             | TokenKind::Struct
             | TokenKind::Enum
@@ -938,6 +940,17 @@ fn configure_keybindings()
         KeyCode::Enter,
         ReedlineEvent::Edit(vec![
             EditCommand::InsertNewline,
+        ]),
+    );
+
+    // --------------------------------------------------------
+    // Indentation
+    // --------------------------------------------------------
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::Edit(vec![
+            EditCommand::InsertString("    ".into()),
         ]),
     );
 

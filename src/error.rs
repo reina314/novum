@@ -17,6 +17,7 @@ pub enum ErrorKind {
     Runtime,
     Control,
     Import,
+    Shape,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +89,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Runtime => "Runtime",
             ErrorKind::Control => "Control",
             ErrorKind::Import => "Import",
+            ErrorKind::Shape => "shape",
         };
         write!(f, "{s}")
     }

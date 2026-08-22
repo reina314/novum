@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, Vector, VectorRef, MatrixRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -3869,6 +3869,68 @@ impl Interpreter {
                 )
             }
 
+            Value::Vector(vector) => {
+                let receiver =
+                    MethodReceiver::Vector(
+                        vector.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Vector has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
+            Value::Matrix(matrix) => {
+                let receiver =
+                    MethodReceiver::Matrix(
+                        matrix.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Matrix has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Series(series) => {
                 match name {
                     "name" => {
@@ -4304,6 +4366,24 @@ impl Interpreter {
                     method.name(),
                     args,
                     whole,
+                )
+            }
+
+            MethodReceiver::Vector(vector) => {
+                self.call_vector_method(
+                    vector.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Matrix(matrix) => {
+                self.call_matrix_method(
+                    matrix.clone(), 
+                    method.name(), 
+                    args, 
+                    whole
                 )
             }
 
@@ -5547,12 +5627,369 @@ impl Interpreter {
                 )
             }
 
+            // =====================================================
+            // vector()
+            // =====================================================
+            "vector" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "vector() takes no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    list.borrow();
+
+                let mut data =
+                    Vec::with_capacity(
+                        values.len()
+                    );
+
+                for value in values.iter() {
+                    match value {
+                        Value::Int(n) => {
+                            data.push(*n as f64);
+                        }
+
+                        Value::Float(x) => {
+                            data.push(*x);
+                        }
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "vector() expects numeric elements, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                let vector =
+                    Vector::new(data);
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Vector(
+                            Rc::new(
+                                RefCell::new(
+                                    vector
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+
             _ => {
                 Err(
                     self.error(
                         ErrorKind::Runtime,
                         format!(
                             "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_vector_method(
+        &mut self,
+        vector: VectorRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            vector.borrow().len()
+                                as i64
+                        )
+                    )
+                )
+            }
+
+            "shape" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "shape() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let vector =
+                    vector.borrow();
+
+                let (rows, _) =
+                    vector.shape();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Tuple(
+                            Rc::new(
+                                vec![
+                                    Value::Int(
+                                        rows as i64
+                                    ),
+                                ]
+                            )
+                        )
+                    )
+                )
+            }
+
+            "norm" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "norm() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(
+                            vector.borrow().norm()
+                        )
+                    )
+                )
+            }
+
+            "dot" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "dot() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let other =
+                    match args.remove(0) {
+                        Value::Vector(other) =>
+                            other,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "dot() expects Vector, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    };
+
+                let result =
+                    vector
+                        .borrow()
+                        .dot(
+                            &other.borrow()
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Shape,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(result)
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_matrix() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let matrix =
+                    vector
+                        .borrow()
+                        .to_column_matrix();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(
+                                    matrix
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Vector has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_matrix_method(
+        &mut self,
+        matrix: MatrixRef,
+        name: &str,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "shape" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "shape() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let matrix =
+                    matrix.borrow();
+
+                let (rows, cols) =
+                    matrix.shape();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Tuple(
+                            Rc::new(
+                                vec![
+                                    Value::Int(
+                                        rows as i64
+                                    ),
+                                    Value::Int(
+                                        cols as i64
+                                    ),
+                                ]
+                            )
+                        )
+                    )
+                )
+            }
+
+            "transpose" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "transpose() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    matrix
+                        .borrow()
+                        .transpose();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Matrix(
+                            Rc::new(
+                                RefCell::new(
+                                    result
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "trace" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "trace() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let result =
+                    matrix
+                        .borrow()
+                        .trace()
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Shape,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Float(result)
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Matrix has no method '{}'",
                             name
                         ),
                         whole,

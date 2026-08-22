@@ -5,6 +5,7 @@ use common::{
     assert_float_close,
 };
 use novum::runtime::{Value, Matrix};
+use std::rc::Rc;
 
 #[test]
 fn matrix_addition() {
@@ -465,3 +466,289 @@ fn linear_regression() {
     }
 }
 
+#[test]
+fn list_vector() {
+    let result =
+        run(
+            "[1, 2, 3].vector()"
+        );
+
+    match result {
+        Value::Vector(vector) => {
+            let vector =
+                vector.borrow();
+
+            assert_eq!(
+                vector.as_slice(),
+                &[1.0, 2.0, 3.0]
+            );
+        }
+
+        other => panic!(
+            "expected Vector, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn vector_addition() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3].vector()
+            +
+            [4, 5, 6].vector()
+            "#
+        );
+
+    match result {
+        Value::Vector(vector) => {
+            assert_eq!(
+                vector.borrow().as_slice(),
+                &[5.0, 7.0, 9.0]
+            );
+        }
+
+        other => panic!(
+            "expected Vector, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn vector_norm() {
+    let result =
+        run(
+            r#"
+            [3, 4].vector().norm()
+            "#
+        );
+
+    match result {
+        Value::Float(value) => {
+            assert!(
+                (value - 5.0).abs()
+                    < 1e-12
+            );
+        }
+
+        other => panic!(
+            "expected Float, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn vector_dot() {
+    let result =
+        run(
+            r#"
+            [1, 2, 3]
+                .vector()
+                .dot(
+                    [4, 5, 6].vector()
+                )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Float(32.0)
+    );
+}
+
+#[test]
+fn matrix_field_transpose() {
+    let result =
+        run(
+            r#"
+            import linalg
+
+            let A = linalg.matrix([[1,2],[3,4]])
+            A.transpose()
+            "#
+        );
+
+    match result {
+        Value::Matrix(matrix) => {
+            let matrix =
+                matrix.borrow();
+
+            assert_eq!(
+                matrix.get(0, 0),
+                Some(1.0)
+            );
+
+            assert_eq!(
+                matrix.get(0, 1),
+                Some(3.0)
+            );
+
+            assert_eq!(
+                matrix.get(1, 0),
+                Some(2.0)
+            );
+
+            assert_eq!(
+                matrix.get(1, 1),
+                Some(4.0)
+            );
+        }
+
+        other => panic!(
+            "expected Matrix, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn matrix_shape() {
+    let result =
+        run(
+            r#"
+            import linalg
+
+            linalg.matrix(
+                [[1,2,3],[4,5,6]]
+            ).shape()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Tuple(
+            Rc::new(
+                vec![
+                    Value::Int(2),
+                    Value::Int(3),
+                ]
+            )
+        )
+    );
+}
+
+#[test]
+fn matrix_vector_multiplication() {
+    let result =
+        run(
+            r#"
+            import linalg
+
+            let A = linalg.matrix([[1,2],[3,4]])
+            let v = [5,6].vector()
+
+            A @ v
+            "#
+        );
+
+    match result {
+        Value::Vector(vector) => {
+            assert_eq!(
+                vector.borrow().as_slice(),
+                &[17.0, 39.0]
+            );
+        }
+
+        other => panic!(
+            "expected Vector, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn vector_matrix_multiplication() {
+    let result =
+        run(
+            r#"
+            import linalg
+
+            let v = [1,2].vector()
+            let A = linalg.matrix([[3,4],[5,6]])
+
+            v @ A
+            "#
+        );
+
+    match result {
+        Value::Vector(vector) => {
+            assert_eq!(
+                vector.borrow().as_slice(),
+                &[13.0, 16.0]
+            );
+        }
+
+        other => panic!(
+            "expected Vector, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn vector_equality_is_element_wise() {
+    let result = run(
+        r#"
+        [1, 2, 3].vector()
+        ==
+        [1, 2, 3].vector()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn vector_inequality_is_element_wise() {
+    let result = run(
+        r#"
+        [1, 2, 3].vector()
+        ==
+        [1, 2, 4].vector()
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn matrix_equality_is_element_wise() {
+    let result = run(
+        r#"
+        [[1,2],[3,4]]
+        ==
+        [[1,2],[3,4]]
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn matrix_shape_difference_is_not_equal() {
+    let result = run(
+        r#"
+        [[1,2,3]]
+        ==
+        [[1,2],[3,0]]
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Bool(false)
+    );
+}
