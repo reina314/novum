@@ -105,21 +105,6 @@ fn builtins()
     );
 
     map.insert(
-        "args".into(),
-        Value::Builtin(args),
-    );
-
-    map.insert(
-        "env".into(),
-        Value::Builtin(env),
-    );
-
-    map.insert(
-        "cwd".into(),
-        Value::Builtin(cwd),
-    );
-
-    map.insert(
         "sleep".into(),
         Value::Builtin(sleep),
     );
@@ -166,71 +151,6 @@ fn expect_string(
     }
 }
 
-pub fn args(args: Vec<Value>) -> Result<Value, String> {
-    if !args.is_empty() {
-        return Err(
-            "args() expects no arguments".into()
-        );
-    }
-
-    let values = std::env::args()
-        .skip(1)
-        .map(|arg| Value::Str(Rc::new(arg)))
-        .collect();
-
-    Ok(Value::List(
-        Rc::new(std::cell::RefCell::new(values))
-    ))
-}
-
-pub fn env(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err(
-            "env() expects exactly 1 argument".into()
-        );
-    }
-
-    let name = match &args[0] {
-        Value::Str(name) => name,
-
-        other => {
-            return Err(format!(
-                "env() expected Str, got {}",
-                other.type_name()
-            ));
-        }
-    };
-
-    match std::env::var(name.as_ref()) {
-        Ok(value) =>
-            Ok(Value::Str(Rc::new(value))),
-
-        Err(std::env::VarError::NotPresent) =>
-            Ok(Value::Null),
-
-        Err(e) =>
-            Err(format!(
-                "failed to read environment variable: {e}"
-            )),
-    }
-}
-
-pub fn cwd(args: Vec<Value>) -> Result<Value, String> {
-    if !args.is_empty() {
-        return Err(
-            "cwd() expects no arguments".into()
-        );
-    }
-
-    let path = std::env::current_dir()
-        .map_err(|e| e.to_string())?;
-
-    Ok(Value::Str(
-        Rc::new(
-            path.to_string_lossy().into_owned()
-        )
-    ))
-}
 
 pub fn print(args: Vec<Value>) -> Result<Value,String> {
     for value in args { println!("{}", value); }

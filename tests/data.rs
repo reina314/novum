@@ -1613,3 +1613,73 @@ fn fs_exists() {
     );
 }
 
+#[test]
+fn process_args() {
+    let result =
+        run(
+            r#"
+            import process
+            process.args()
+            "#
+        );
+
+    match result {
+        Value::List(_) => {}
+
+        other => panic!(
+            "expected List, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn process_cwd() {
+    let result =
+        run(
+            r#"
+            import process
+            process.cwd()?
+            "#
+        );
+
+    match result {
+        Value::Str(path) => {
+            assert!(
+                !path.is_empty()
+            );
+        }
+
+        other => panic!(
+            "expected Str, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn process_run() {
+    let result =
+        run(
+            r#"
+            import process
+
+            let result =
+                process.run(
+                    "echo",
+                    ["hello"]
+                )?
+
+            result.stdout.trim()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new(
+                "hello".into()
+            )
+        )
+    );
+}

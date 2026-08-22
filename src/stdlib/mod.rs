@@ -11,6 +11,7 @@ use std::{
 pub mod builtin;
 pub mod math;
 pub mod linalg;
+pub mod process;
 pub mod fs;
 pub mod csv;
 pub mod json;
@@ -38,6 +39,9 @@ pub fn load_module(
 
         "linalg" =>
             Some(linalg::module()),
+
+        "process" =>
+            Some(process::module()),
 
         "fs" =>
             Some(fs::module()),
