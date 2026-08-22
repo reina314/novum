@@ -2,6 +2,7 @@ use super::{
     DataFrameRef,
     GroupedDataFrameRef,
     List,
+    Dict,
     VectorRef,
     MatrixRef,
     ObjectRef,
@@ -18,6 +19,7 @@ use std::{
 pub enum MethodReceiver {
     Str(Rc<String>),
     List(List),
+    Dict(Dict),
     Vector(VectorRef),
     Matrix(MatrixRef),
 
@@ -71,6 +73,19 @@ impl MethodReceiver {
                     | "split"
                     | "replace"
                     | "repeat"
+            ),
+
+            Self::Dict(_) => matches!(
+                name,
+                "get"
+                    | "set"
+                    | "remove"
+                    | "contains"
+                    | "keys"
+                    | "values"
+                    | "len"
+                    | "items"
+                    | "iter"
             ),
 
             Self::Vector(_) => matches!(

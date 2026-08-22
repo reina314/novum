@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
@@ -3815,6 +3815,37 @@ impl Interpreter {
                 )
             }
 
+            Value::Dict(dict) => {
+                let receiver =
+                    MethodReceiver::Dict(
+                        dict.clone()
+                    );
+
+                if receiver.supports_method(name) {
+                    return Ok(
+                        ControlFlow::Value(
+                            Value::BoundMethod(
+                                BoundMethod::new(
+                                    receiver,
+                                    name,
+                                )
+                            )
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Dict has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Object(object) => {
                 if object.borrow()
                     .get_method(name)
@@ -4421,6 +4452,15 @@ impl Interpreter {
             MethodReceiver::List(list) => {
                 self.call_list_method(
                     list.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+
+            MethodReceiver::Dict(dict) => {
+                self.call_dict_method(
+                    dict.clone(),
                     method.name(),
                     args,
                     whole,
@@ -5711,6 +5751,348 @@ impl Interpreter {
                         ErrorKind::Runtime,
                         format!(
                             "List has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn call_dict_method(
+        &mut self,
+        dict: Dict,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Int(
+                            dict.borrow().len()
+                                as i64
+                        )
+                    )
+                )
+            }
+
+            "get" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "get() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    dict.borrow()
+                        .get(key.as_str())
+                        .cloned();
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            "set" => {
+                if args.len() != 2 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "set() expects exactly 2 arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    args.remove(0);
+
+                dict.borrow_mut()
+                    .insert(
+                        key.as_str().to_owned(),
+                        value,
+                    );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "remove() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let value =
+                    dict.borrow_mut()
+                        .remove(
+                            key.as_str()
+                        );
+
+                Ok(
+                    ControlFlow::Value(
+                        match value {
+                            Some(value) =>
+                                option_some(
+                                    value
+                                ),
+
+                            None =>
+                                option_none(),
+                        }
+                    )
+                )
+            }
+
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "contains() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let key =
+                    self.expect::<StrRef>(
+                        args.remove(0),
+                        whole,
+                    )?;
+
+                let contains =
+                    dict.borrow()
+                        .contains_key(
+                            key.as_str()
+                        );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(contains)
+                    )
+                )
+            }
+
+            "keys" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "keys() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .keys()
+                        .map(|key| {
+                            Value::Str(
+                                Rc::new(
+                                    key.clone()
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "values" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "values() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "items" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "items() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let values =
+                    dict.borrow()
+                        .iter()
+                        .map(|(key, value)| {
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Str(
+                                        Rc::new(
+                                            key.clone()
+                                        )
+                                    ),
+                                    value.clone(),
+                                ])
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::List(
+                            Rc::new(
+                                RefCell::new(
+                                    values
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                // We deliberately snapshot the entries.
+                //
+                // This avoids holding a RefCell borrow for the
+                // lifetime of the iterator.
+                let items =
+                    dict.borrow()
+                        .iter()
+                        .map(|(key, value)| {
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Str(
+                                        Rc::new(
+                                            key.clone()
+                                        )
+                                    ),
+                                    value.clone(),
+                                ])
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                let iterator =
+                    IteratorObj::List {
+                        data: Rc::new(
+                            RefCell::new(items)
+                        ),
+                        index: 0,
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Iterator(
+                            Rc::new(
+                                RefCell::new(
+                                    iterator
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Dict has no method '{}'",
                             name
                         ),
                         whole,

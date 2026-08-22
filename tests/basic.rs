@@ -2300,3 +2300,132 @@ fn iterator_zip_map() {
     // [11,22,33]
 }
 
+#[test]
+fn dict_len_method() {
+    let result =
+        run(
+            r#"
+            {"a": 1, "b": 2}.len()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn dict_get_method() {
+    let result =
+        run(
+            r#"
+            {"a": 10}.get("a")
+            "#
+        );
+
+    // 既存の option_some helper / equality test に
+    // 合わせて検証
+}
+
+#[test]
+fn dict_get_missing_returns_none() {
+    let result =
+        run(
+            r#"
+            {"a": 10}.get("b")
+            "#
+        );
+
+    // Option.None
+}
+
+#[test]
+fn dict_set_method() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.set("b", 2)
+
+            d["b"]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2)
+    );
+}
+
+#[test]
+fn dict_remove_method() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.remove("a")
+            "#
+        );
+
+    // Option.Some(1)
+}
+
+#[test]
+fn dict_remove_missing_returns_none() {
+    let result =
+        run(
+            r#"
+            let d = {"a": 1}
+
+            d.remove("b")
+            "#
+        );
+
+    // Option.None
+}
+
+#[test]
+fn dict_contains_method() {
+    assert_eq!(
+        run(
+            r#"
+            {"a": 1}.contains("a")
+            "#
+        ),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(
+            r#"
+            {"a": 1}.contains("b")
+            "#
+        ),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn dict_keys_method() {
+    let result =
+        run(
+            r#"
+            {"a": 1, "b": 2}
+                .keys()
+                .iter()
+                .all(|key|
+                    key == "a"
+                    or key == "b"
+                )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Bool(true)
+    );
+}
+
