@@ -1,0 +1,122 @@
+import math
+
+struct Perceptron {
+    weights,
+    bias,
+    learning_rate,
+    epochs,
+
+    init: |self, input_dim, learning_rate, epochs| { 
+        self.weights = [0.0]
+        for _ in range(0, input_dim) {
+            self.weights.push(0.0)
+        }
+        self.bias = 0.0
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+    },
+
+    predict: |self, x| {
+        sum = 0
+        for (w, xi) in self.weights.iter().zip(x.iter()) {
+            sum = sum + w * xi
+        }
+
+        activation = sum + self.bias
+
+        if activation >= 0 { 
+            return 1 
+        } else { 
+            return 0 
+        }
+    },
+
+    fit: |self, X, y| {
+        for epoch in range(0, self.epochs) {
+            total_error = 0
+
+            for (xi, target) in X.iter().zip(y.iter()) {
+                prediction = self.predict(xi)
+                error = target - prediction
+
+                if error != 0 {
+                    i = 0
+                    for (w, x_val) in self.weights.iter().zip(xi.iter()) {
+                        self.weights[i] = 
+                            w + self.learning_rate * error * x_val
+                        
+                        i = i + 1
+                    }
+
+                    self.bias = self.bias + self.learning_rate * error 
+                    total_error = total_error + math.abs(error)
+                }
+            }
+
+            if total_error == 0 {
+                print("Epochs: "+(epoch+1)+", converged")
+                break
+            }
+        }
+    }
+}
+
+
+// Fitting and Prediction
+print("\n==AND gate=======================")
+
+X_and = [[0, 0], [0, 1], [1, 0], [1, 1]]
+y_and = [0, 0, 0, 1]
+
+model_and = Perceptron(0,0,0,0)
+model_and.init(2, 0.005, 20)
+model_and.fit(X_and, y_and)
+
+print("weights after fitting: "+model_and.weights)
+print("bias after fitting: "+model_and.bias+"\n")
+
+print("Prediction: ")
+for (x, y) in X_and.iter().zip(y_and.iter()) {
+    print("\t"+ x +" -> "+model_and.predict(x) + "   Answer: "+y)
+}
+
+
+print("\n==OR gate=======================")
+X_or = [[0, 0], [0, 1], [1, 0], [1, 1]]
+y_or = [0, 1, 1, 1]
+
+model_or = Perceptron(0,0,0,0)
+model_or.init(2, 0.005, 20)
+model_or.fit(X_or, y_or)
+
+print("weights after fitting: "+model_or.weights)
+print("bias after fitting: "+model_or.bias+"\n")
+
+print("Prediction: ")
+for (x, y) in X_or.iter().zip(y_or.iter()) {
+    print("\t"+ x +" -> "+model_or.predict(x) + "   Answer: "+y)
+}
+
+// Example Output
+//
+// ==AND gate=======================
+// Epochs: 6, converged
+// weights after fitting: [0.01, 0.005, 0]
+// bias after fitting: -0.015
+
+// Prediction:
+//         [0, 0] -> 0   Answer: 0
+//         [0, 1] -> 0   Answer: 0
+//         [1, 0] -> 0   Answer: 0
+//         [1, 1] -> 1   Answer: 1
+
+// ==OR gate=======================
+// Epochs: 4, converged
+// weights after fitting: [0.005, 0.005, 0]
+// bias after fitting: -0.005
+
+// Prediction:
+//         [0, 0] -> 0   Answer: 0
+//         [0, 1] -> 1   Answer: 1
+//         [1, 0] -> 1   Answer: 1
+//         [1, 1] -> 1   Answer: 1
