@@ -153,6 +153,45 @@ fn cyclic_import_is_error() {
     );
 }
 
+#[test]
+fn importing_same_module_twice_uses_cache() {
+    let result =
+        run(
+            r#"
+            import tests.modules.counter
+            import tests.modules.counter
+
+            tests.modules.counter.value
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
+    );
+}
+
+#[test]
+fn builtin_is_available_without_import() {
+    let result =
+        run(
+            r#"
+            input
+            "#
+        );
+
+    // adapt to the actual builtin representation
+    match result {
+        Value::Builtin(_) => {}
+
+        other => {
+            panic!(
+                "expected builtin, got {:?}",
+                other
+            );
+        }
+    }
+}
 
 
 

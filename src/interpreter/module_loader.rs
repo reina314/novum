@@ -23,6 +23,9 @@ use std::{
 pub struct ModuleLoader {
     root: PathBuf,
     cache: HashMap<PathBuf, ModuleRef>,
+
+    #[cfg(test)]
+    load_count: usize,
 }
 
 impl ModuleLoader {
@@ -32,7 +35,17 @@ impl ModuleLoader {
         Self {
             root: root.into(),
             cache: HashMap::new(),
+
+            #[cfg(test)]
+            load_count: 0,
         }
+    }
+
+    #[cfg(test)]
+    pub fn load_count(
+        &self,
+    ) -> usize {
+        self.load_count
     }
 
     // =========================================================
