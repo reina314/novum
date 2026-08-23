@@ -97,21 +97,47 @@ impl<'a> Lexer<'a> {
                     self.lex_string(ch)?
                 }
 
-                '+' => TokenKind::Plus,
+                '+' => {
+                    if self.consume_if('=') {
+                        TokenKind::PlusEq
+                    } else {
+                        TokenKind::Plus
+                    }
+                }
 
-                '-' => TokenKind::Minus,
+                '-' => {
+                    if self.consume_if('=') {
+                        TokenKind::MinusEq
+                    } else {
+                        TokenKind::Minus
+                    }
+                }
 
                 '*' => {
                     if self.consume_if('*') {
                         TokenKind::DoubleStar
+                    } else if self.consume_if('=') {
+                        TokenKind::StarEq
                     } else {
                         TokenKind::Star
                     }
                 }
 
-                '/' => TokenKind::Slash,
+                '/' => {
+                    if self.consume_if('=') {
+                        TokenKind::SlashEq
+                    } else {
+                        TokenKind::Slash
+                    }
+                }
 
-                '%' => TokenKind::Percent,
+                '%' => {
+                    if self.consume_if('=') {
+                        TokenKind::PercentEq
+                    } else {
+                        TokenKind::Percent
+                    }
+                }
 
                 '@' => TokenKind::At,
 

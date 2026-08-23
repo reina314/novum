@@ -76,6 +76,11 @@ pub enum ExprKind {
         value: Box<Expr>,
     },
     Assign(String, Box<Expr>),
+    AssignOp {
+        target: Box<Expr>,
+        op: BinOp,
+        value: Box<Expr>,
+    },
     AssignIndex(Box<Expr>, IndexExpr, Box<Expr>),
     AssignField(Box<Expr>, String, Box<Expr>),
     Drop(String),

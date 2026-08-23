@@ -50,6 +50,15 @@ impl ModulePath {
     }
 }
 
+impl fmt::Display for ModulePath {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ModuleContext {
     pub module_path: ModulePath,

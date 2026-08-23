@@ -10,7 +10,7 @@ use crate::{
         BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef,
     }, stdlib, 
     syntax::{
-        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
+        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program,
         ast::{
             EnumDef as AstEnumDef,
             MatchArm,
@@ -23,15 +23,21 @@ use std::{
     cell::RefCell,
     rc::Rc,
     collections::HashMap,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 pub struct Interpreter {
     env: Env,
     stack: Vec<StackFrame>,
+    block_depth: usize,
     loop_depth: usize,
     function_depth: usize,
     module_loader: ModuleLoader,
     module_stack: Vec<ModuleContext>,
+    file_stack: Vec<PathBuf>,
 }
 
 impl Default for Interpreter {
@@ -52,10 +58,12 @@ impl Interpreter {
         let mut interpreter = Interpreter { 
             env,
             stack: Vec::new(),
+            block_depth: 0,
             loop_depth: 0,
             function_depth: 0,
             module_loader,
             module_stack: Vec::new(),
+            file_stack: Vec::new(),
         };
 
         // eager loading
@@ -553,6 +561,39 @@ impl Interpreter {
         Ok(ControlFlow::Value(last))
     }
 
+    pub fn eval_program_from_file(
+        &mut self,
+        program: &Program,
+        path: &Path,
+    ) -> Result<ControlFlow> {
+        let canonical =
+            std::fs::canonicalize(path)
+                .map_err(|error| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        format!(
+                            "failed to resolve source file '{}': {}",
+                            path.display(),
+                            error
+                        ),
+                        None,
+                    )
+                })?;
+
+        self.file_stack.push(
+            canonical
+        );
+
+        let result =
+            self.eval_program(
+                program
+            );
+
+        self.file_stack.pop();
+
+        result
+    }
+
     pub fn eval(
         &mut self,
         expr: &Expr
@@ -670,6 +711,19 @@ impl Interpreter {
                 self.eval_assign(
                     name, 
                     value, 
+                )
+            }
+
+            AssignOp { 
+                target,
+                op,
+                value ,
+            } => {
+                self.eval_assign_op(
+                    target,
+                    *op,
+                    value,
+                    expr,
                 )
             }
 
@@ -1044,19 +1098,21 @@ impl Interpreter {
             })?;
 
         if visibility == Visibility::Public {
+            if self.block_depth != 0 {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub struct' is only allowed at top-level",
+                        whole,
+                    )
+                );
+            }
+
             if let Some(context) =
                 self.module_stack.last_mut()
             {
                 context.export(
                     name.to_owned()
-                );
-            } else {
-                return Err(
-                    self.error(
-                        ErrorKind::Name,
-                        "'pub struct' is only allowed at module scope",
-                        whole,
-                    )
                 );
             }
         }
@@ -1311,67 +1367,98 @@ impl Interpreter {
             );
 
         // =========================================================
-        // 2. Lazy standard-library module
+        // 2. Determine the directory of the importing module
         //
-        // Only module bodies are lazy.
-        // Builtin functions were already installed in Interpreter::new().
+        // For:
+        //
+        //   app/parent.nv
+        //
+        // `import child` first searches:
+        //
+        //   app/child.nv
+        //
+        // =========================================================
+        let base_dir =
+            self.file_stack
+                .last()
+                .and_then(|path| {
+                    path.parent()
+                });
+
+        dbg!(base_dir);
+
+        // =========================================================
+        // 3. Resolve user module first
         // =========================================================
 
-        if parts.len() == 1 {
-            let name =
-                &parts[0];
+        let resolved =
+            self.module_loader.resolve(
+                &requested,
+                base_dir,
+            );
 
-            if let Some(module) =
-                crate::stdlib::load_module(name)
-            {
-                if self.env.contains_local(name) {
+        let canonical =
+            match resolved {
+                Ok(path) =>
+                    path,
+
+                Err(error) => {
+                    // -------------------------------------------------
+                    // If this is a single component import, try stdlib.
+                    // -------------------------------------------------
+
+                    if parts.len() == 1 {
+                        let name =
+                            &parts[0];
+
+                        if let Some(module) =
+                            crate::stdlib::load_module(name)
+                        {
+                            if self.env.contains_local(
+                                name
+                            ) {
+                                return Err(
+                                    self.error(
+                                        ErrorKind::Name,
+                                        format!(
+                                            "name '{}' is already defined in this scope",
+                                            name
+                                        ),
+                                        whole,
+                                    )
+                                );
+                            }
+
+                            self.env.define(
+                                name.clone(),
+                                Value::Module(module),
+                            );
+
+                            return Ok(
+                                ControlFlow::Value(
+                                    Value::Unit
+                                )
+                            );
+                        }
+                    }
+
                     return Err(
                         self.error(
-                            ErrorKind::Name,
+                            ErrorKind::Import,
                             format!(
-                                "name '{}' is already defined in this scope",
-                                name
+                                "failed to import '{}': {}",
+                                requested.name(),
+                                error.message,
                             ),
                             whole,
                         )
                     );
                 }
+            };
 
-                self.env.define(
-                    name.clone(),
-                    Value::Module(module),
-                );
-
-                return Ok(
-                    ControlFlow::Value(
-                        Value::Unit
-                    )
-                );
-            }
-        }
 
         // =========================================================
-        // 3. Resolve physical file
-        // =========================================================
-
-        let canonical =
-            self.module_loader
-                .resolve(
-                    &requested
-                )
-                .map_err(|mut error| {
-                    if error.span.is_none() { 
-                        error.span = Some(whole.span); 
-                    }
-                    if error.stack.is_empty() { 
-                        error.stack = self.stack.clone(); 
-                    }
-
-                    error
-                })?;
-
-        // =========================================================
-        // 4. Cache lookup
+        // 5. Cache lookup
         //
         // If this file was already successfully evaluated,
         // do not execute it again.
@@ -1395,7 +1482,7 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 5. Cyclic import detection
+        // 6. Cyclic import detection
         // =========================================================
 
         if self.module_stack
@@ -1427,7 +1514,7 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 6. Load + parse
+        // 7. Load + parse
         // =========================================================
 
         let program =
@@ -1447,7 +1534,7 @@ impl Interpreter {
                 })?;
 
         // =========================================================
-        // 7. Create module environment
+        // 8. Create module environment
         // =========================================================
 
         let module_env =
@@ -1460,7 +1547,7 @@ impl Interpreter {
             );
 
         // =========================================================
-        // 8. Push module context
+        // 9. Push module context
         // =========================================================
 
         self.module_stack.push(
@@ -1470,14 +1557,21 @@ impl Interpreter {
             )
         );
 
+        self.file_stack.push(
+            canonical.clone()
+        );
+
         // =========================================================
-        // 9. Evaluate module
+        // 10. Evaluate module
         // =========================================================
 
         let result =
             self.eval_program(
                 &program
             );
+
+        // Always restore file execution context.
+        self.file_stack.pop();
 
         // Always restore module stack.
         let context =
@@ -1534,7 +1628,7 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 10. Build runtime Module
+        // 11. Build runtime Module
         // =========================================================
 
         let mut module =
@@ -1565,7 +1659,7 @@ impl Interpreter {
             );
 
         // =========================================================
-        // 11. Cache fully evaluated module
+        // 12. Cache fully evaluated module
         // =========================================================
 
         self.module_loader
@@ -1575,7 +1669,7 @@ impl Interpreter {
             );
 
         // =========================================================
-        // 12. Attach nested namespace
+        // 14. Attach nested namespace
         // =========================================================
 
         self.bind_module_path(
@@ -1641,11 +1735,12 @@ impl Interpreter {
         // ---------------------------------------------------------
 
         if visibility == Visibility::Public {
-            if self.module_stack.is_empty() {
+            // `pub` is only valid at top-level.
+            if self.block_depth != 0 {
                 return Err(
                     self.error(
                         ErrorKind::Name,
-                        "'pub' declaration is only allowed at module scope",
+                        "'pub let' is only allowed at top-level",
                         value_expr,
                     )
                 );
@@ -1662,6 +1757,8 @@ impl Interpreter {
                     );
                 }
 
+                // If we are evaluating a real module, record the
+                // binding as part of its public interface.
                 if let Some(context) =
                     self.module_stack.last_mut()
                 {
@@ -1744,6 +1841,16 @@ impl Interpreter {
                 Value::Unit
             )
         )
+    }
+
+    fn eval_assign_op(
+        &mut self,
+        target: &Expr,
+        op: BinOp,
+        rhs_expr: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        todo!()
     }
 
     fn eval_assign_index(
@@ -3386,14 +3493,17 @@ impl Interpreter {
     fn eval_block(
         &mut self,
         exprs: &[Expr],
-        _: bool,
+        scoped: bool,
     ) -> Result<ControlFlow> {
-        let new_env = self.env.child();
         let old_env =
-            std::mem::replace(
-                &mut self.env,
-                new_env,
-            );
+            self.env.clone();
+
+        if scoped {
+            self.env =
+                self.env.child();
+
+            self.block_depth += 1;
+        }
 
         let result = (|| {
             let mut last =
@@ -3416,7 +3526,10 @@ impl Interpreter {
             )
         })();
 
-        self.env = old_env;
+        if scoped {
+            self.block_depth -= 1;
+            self.env = old_env;
+        }
 
         result
     }

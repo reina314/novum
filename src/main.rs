@@ -27,7 +27,10 @@ use std::{
     borrow::Cow,
     env,
     fs,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -193,21 +196,84 @@ fn run_file(
     display_lexer: bool,
     display_parser: bool,
 ) -> Result<(), String> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| {
-            format!(
-                "failed to read '{path}': {e}"
-            )
-        })?;
+    let source =
+        fs::read_to_string(path)
+            .map_err(|e| {
+                format!(
+                    "failed to read '{path}': {e}"
+                )
+            })?;
 
-    run(
-        interpreter,
-        &source,
-        display_lexer,
-        display_parser,
-        None,
-        false,
-    );
+    let mut lexer =
+        Lexer::new(&source);
+
+    let tokens =
+        match lexer.lex() {
+            Ok(tokens) =>
+                tokens,
+
+            Err(error) => {
+                error.display(
+                    &source
+                );
+
+                return Ok(());
+            }
+        };
+
+    if display_lexer {
+        println!(
+            "\nTokens:\n{tokens:#?}"
+        );
+    }
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        match parser.parse() {
+            Ok(program) =>
+                program,
+
+            Err(error) => {
+                error.display(
+                    &source
+                );
+
+                return Ok(());
+            }
+        };
+
+    if display_parser {
+        println!(
+            "\nAST:\n{program:#?}"
+        );
+    }
+
+    match interpreter
+        .eval_program_from_file(
+            &program,
+            Path::new(path),
+        )
+    {
+        Ok(
+            ControlFlow::Value(value)
+        ) if value != Value::Unit => {
+            print_result(
+                value,
+                None,
+                false,
+            );
+        }
+
+        Ok(_) => {}
+
+        Err(error) => {
+            error.display(
+                &source
+            );
+        }
+    }
 
     Ok(())
 }

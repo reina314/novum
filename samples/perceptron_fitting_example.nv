@@ -1,0 +1,60 @@
+import perceptron_example
+
+// fitting and prediction
+print("\n==AND gate=======================")
+
+X_and = [[0, 0], [0, 1], [1, 0], [1, 1]]
+y_and = [0, 0, 0, 1]
+
+model_and = perceptron_example.Perceptron(0,0,0,0)
+model_and.init(2, 0.005, 20)
+model_and.fit(X_and, y_and)
+
+print("weights after fitting: "+model_and.weights)
+print("bias after fitting: "+model_and.bias+"\n")
+
+print("Prediction: ")
+for (x, y) in X_and.iter().zip(y_and.iter()) {
+    print("\t"+ x +" -> "+model_and.predict(x) + "   Answer: "+y)
+}
+
+
+print("\n==OR gate=======================")
+X_or = [[0, 0], [0, 1], [1, 0], [1, 1]]
+y_or = [0, 1, 1, 1]
+
+model_or = perceptron_example.Perceptron(0,0,0,0)
+model_or.init(2, 0.005, 20)
+model_or.fit(X_or, y_or)
+
+print("weights after fitting: "+model_or.weights)
+print("bias after fitting: "+model_or.bias+"\n")
+
+print("Prediction: ")
+for (x, y) in X_or.iter().zip(y_or.iter()) {
+    print("\t"+ x +" -> "+model_or.predict(x) + "   Answer: "+y)
+}
+
+// Example Output
+//
+// ==AND gate=======================
+// Epochs: 6, converged
+// weights after fitting: [0.01, 0.005, 0]
+// bias after fitting: -0.015
+
+// Prediction:
+//         [0, 0] -> 0   Answer: 0
+//         [0, 1] -> 0   Answer: 0
+//         [1, 0] -> 0   Answer: 0
+//         [1, 1] -> 1   Answer: 1
+
+// ==OR gate=======================
+// Epochs: 4, converged
+// weights after fitting: [0.005, 0.005, 0]
+// bias after fitting: -0.005
+
+// Prediction:
+//         [0, 0] -> 0   Answer: 0
+//         [0, 1] -> 1   Answer: 1
+//         [1, 0] -> 1   Answer: 1
+//         [1, 1] -> 1   Answer: 1

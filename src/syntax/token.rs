@@ -10,6 +10,11 @@ pub enum TokenKind {
     Ident(String),
 
     Equals,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
     FatArrow,
 
     Plus,
