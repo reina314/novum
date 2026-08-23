@@ -50,6 +50,11 @@ fn builtins()
     );
 
     map.insert(
+        "zip".into(),
+        Value::Builtin(zip),
+    );
+
+    map.insert(
         "range".into(),
         Value::Builtin(range),
     );
@@ -376,86 +381,13 @@ pub fn iter(
     let value =
         args.remove(0);
 
-    match value {
-        Value::Iterator(iterator) => {
-            Ok(
-                Value::Iterator(iterator)
-            )
-        }
+    let iterator = IteratorObj::from_value(value)?;
 
-        Value::List(data) => {
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::List {
-                                data,
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        Value::Str(string) => {
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Str {
-                                data: Rc::new(
-                                    string
-                                        .chars()
-                                        .collect()
-                                ),
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        Value::Range(
-            start,
-            end,
-            inclusive,
-        ) => {
-            let end =
-                if inclusive {
-                    end.checked_add(1)
-                        .ok_or_else(|| {
-                            "inclusive range endpoint overflow"
-                                .to_owned()
-                        })?
-                } else {
-                    end
-                };
-
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        other => {
-            Err(
-                format!(
-                    "{} is not iterable",
-                    other.type_name()
-                )
-            )
-        }
-    }
+    Ok(
+        Value::Iterator(
+            iterator
+        )
+    )
 }
 
 pub fn set(
@@ -490,6 +422,40 @@ pub fn set(
             Rc::new(
                 RefCell::new(
                     set
+                )
+            )
+        )
+    )
+}
+
+pub fn zip(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "zip() expects exactly 2 arguments"
+                .into()
+        );
+    }
+
+    let left =
+        IteratorObj::from_value(
+            args.remove(0)
+        )?;
+
+    let right =
+        IteratorObj::from_value(
+            args.remove(0)
+        )?;
+
+    Ok(
+        Value::Iterator(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Zip {
+                        left,
+                        right,
+                    }
                 )
             )
         )

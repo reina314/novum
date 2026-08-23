@@ -63,11 +63,10 @@ impl IteratorObj {
         value: Value,
     ) -> Result<IteratorRef, String> {
         match value {
-            Value::Iterator(iterator) => {
-                Ok(iterator)
-            }
+            Value::Iterator(iterator) =>
+                Ok(iterator),
 
-            Value::List(data) => {
+            Value::List(data) =>
                 Ok(
                     Rc::new(
                         RefCell::new(
@@ -77,19 +76,20 @@ impl IteratorObj {
                             }
                         )
                     )
-                )
-            }
+                ),
 
-            Value::Str(string) => {
+            Value::Str(data) => {
+                let chars =
+                    Rc::new(
+                        data.chars()
+                            .collect::<Vec<_>>()
+                    );
+
                 Ok(
                     Rc::new(
                         RefCell::new(
                             IteratorObj::Str {
-                                data: Rc::new(
-                                    string
-                                        .chars()
-                                        .collect()
-                                ),
+                                data: chars,
                                 index: 0,
                             }
                         )
@@ -125,14 +125,99 @@ impl IteratorObj {
                 )
             }
 
-            other => {
+            // Dict → items()
+            Value::Dict(dict) => {
+                let items =
+                    dict.borrow()
+                        .iter()
+                        .map(|(key, value)| {
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Str(
+                                        Rc::new(
+                                            key.clone()
+                                        )
+                                    ),
+                                    value.clone(),
+                                ])
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::List {
+                                data:
+                                    Rc::new(
+                                        RefCell::new(
+                                            items
+                                        )
+                                    ),
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            }
+
+            Value::Set(set) => {
+                let values =
+                    set.borrow()
+                        .values()
+                        .to_vec();
+
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::List {
+                                data:
+                                    Rc::new(
+                                        RefCell::new(
+                                            values
+                                        )
+                                    ),
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            }
+
+            Value::Vector(vector) => {
+                let values =
+                    vector
+                        .borrow()
+                        .as_slice()
+                        .iter()
+                        .copied()
+                        .map(Value::Float)
+                        .collect();
+
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::List {
+                                data:
+                                    Rc::new(
+                                        RefCell::new(
+                                            values
+                                        )
+                                    ),
+                                index: 0,
+                            }
+                        )
+                    )
+                )
+            }
+
+            other =>
                 Err(
                     format!(
                         "{} is not iterable",
                         other.type_name()
                     )
-                )
-            }
+                ),
         }
     }
 }

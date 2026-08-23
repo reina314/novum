@@ -459,6 +459,7 @@ impl Interpreter {
         }
     }
 
+    /// Helper function to get the next Value from an IteratorRef
     fn next_from_iterator(
         &mut self,
         iterator: &IteratorRef,
@@ -470,6 +471,77 @@ impl Interpreter {
         self.next_iterator_value(
             &mut iterator,
             whole,
+        )
+    }
+
+    /// Helper function to convert a iterable Value into an IteratorRef
+    fn iterator_from_value(
+        &self,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        IteratorObj::from_value(
+            value
+        )
+        .map_err(|message| {
+            self.error(
+                ErrorKind::Type,
+                message,
+                whole,
+            )
+        })
+    }
+
+    /// Helper for `eval_field`
+    fn make_bound_method(
+        &self,
+        receiver: MethodReceiver,
+        name: &str,
+        whole: &Expr,
+    ) -> Result<Option<Value>> {
+        if receiver.supports_method(name) {
+            return Ok(
+                Some(
+                    Value::BoundMethod(
+                        BoundMethod::new(
+                            receiver,
+                            name,
+                        )
+                    )
+                )
+            );
+        }
+
+        if !receiver.is_iterator_method(name) {
+            return Ok(None);
+        }
+
+        let value =
+            match receiver.to_iterable_value() {
+                Some(value) =>
+                    value,
+
+                None =>
+                    return Ok(None),
+            };
+
+        let iterator =
+            self.iterator_from_value(
+                value,
+                whole,
+            )?;
+
+        Ok(
+            Some(
+                Value::BoundMethod(
+                    BoundMethod::new(
+                        MethodReceiver::Iterator(
+                            iterator
+                        ),
+                        name,
+                    )
+                )
+            )
         )
     }
 
@@ -1061,7 +1133,7 @@ impl Interpreter {
 
                 ListItem::Range(range) => {
                     let iterator =
-                        self.eval_iterable(
+                        self.eval_range_iterator(
                             range,
                             expr,
                         )?;
@@ -1084,6 +1156,111 @@ impl Interpreter {
                     Rc::new(
                         RefCell::new(values)
                     )
+                )
+            )
+        )
+    }
+
+    /// Helper for `eval_list` to evaluate a range expression and return an iterator
+    fn eval_range_iterator(
+        &mut self,
+        range: &IndexExpr,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        let IndexExpr::Range {
+            start,
+            end,
+            inclusive,
+        } = range
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Type,
+                    "expected range expression",
+                    whole,
+                )
+            );
+        };
+
+        let start =
+            match start {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range start must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => 0,
+            };
+
+        let end =
+            match end {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range end must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Range,
+                            "open-ended ranges are not allowed in list literals",
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        let end =
+            if *inclusive {
+                end.checked_add(1)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Overflow,
+                            "inclusive range endpoint overflow",
+                            whole,
+                        )
+                    })?
+            } else {
+                end
+            };
+
+        Ok(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Range {
+                        current: start,
+                        end,
+                    }
                 )
             )
         )
@@ -1437,10 +1614,6 @@ impl Interpreter {
         parts: &[String],
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        // =========================================================
-        // 1. Validate import path
-        // =========================================================
-
         if parts.is_empty() {
             return Err(
                 self.error(
@@ -1456,30 +1629,12 @@ impl Interpreter {
                 parts.to_vec()
             );
 
-        // =========================================================
-        // 2. Determine the directory of the importing module
-        //
-        // For:
-        //
-        //   app/parent.nv
-        //
-        // `import child` first searches:
-        //
-        //   app/child.nv
-        //
-        // =========================================================
         let base_dir =
             self.file_stack
                 .last()
                 .and_then(|path| {
                     path.parent()
                 });
-
-        dbg!(base_dir);
-
-        // =========================================================
-        // 3. Resolve user module first
-        // =========================================================
 
         let resolved =
             self.module_loader.resolve(
@@ -1546,14 +1701,6 @@ impl Interpreter {
                 }
             };
 
-
-        // =========================================================
-        // 5. Cache lookup
-        //
-        // If this file was already successfully evaluated,
-        // do not execute it again.
-        // =========================================================
-
         if let Some(module) =
             self.module_loader
                 .get_cached(&canonical)
@@ -1570,10 +1717,6 @@ impl Interpreter {
                 )
             );
         }
-
-        // =========================================================
-        // 6. Cyclic import detection
-        // =========================================================
 
         if self.module_stack
             .iter()
@@ -1603,10 +1746,6 @@ impl Interpreter {
             );
         }
 
-        // =========================================================
-        // 7. Load + parse
-        // =========================================================
-
         let program =
             self.module_loader
                 .load_program(
@@ -1623,10 +1762,6 @@ impl Interpreter {
                     error
                 })?;
 
-        // =========================================================
-        // 8. Create module environment
-        // =========================================================
-
         let module_env =
             self.env.child();
 
@@ -1635,10 +1770,6 @@ impl Interpreter {
                 &mut self.env,
                 module_env,
             );
-
-        // =========================================================
-        // 9. Push module context
-        // =========================================================
 
         self.module_stack.push(
             ModuleContext::new(
@@ -1650,10 +1781,6 @@ impl Interpreter {
         self.file_stack.push(
             canonical.clone()
         );
-
-        // =========================================================
-        // 10. Evaluate module
-        // =========================================================
 
         let result =
             self.eval_program(
@@ -1717,10 +1844,6 @@ impl Interpreter {
             }
         }
 
-        // =========================================================
-        // 11. Build runtime Module
-        // =========================================================
-
         let mut module =
             Module::new(
                 requested.name()
@@ -1748,19 +1871,11 @@ impl Interpreter {
                 )
             );
 
-        // =========================================================
-        // 12. Cache fully evaluated module
-        // =========================================================
-
         self.module_loader
             .cache(
                 canonical,
                 module.clone(),
             );
-
-        // =========================================================
-        // 14. Attach nested namespace
-        // =========================================================
 
         self.bind_module_path(
             &requested,
@@ -2640,59 +2755,6 @@ impl Interpreter {
         )
     }
 
-    /// Helper for `eval_index()`
-    fn eval_matrix_single_index(
-        &mut self,
-        index: &IndexExpr,
-        axis: &str,
-        whole: &Expr,
-    ) -> Result<usize> {
-        match index {
-            IndexExpr::Single(expr) => {
-                let v = self.eval_value(expr)?;
-                
-                let v: i64 = self.expect(
-                    v,
-                    whole,
-                )?;
-
-                if v >= 0 { Ok(v as usize) }
-                else {
-                    Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "negative Matrix {} index",
-                            axis
-                        ),
-                        whole,
-                    ))
-                }
-            }
-
-            IndexExpr::Range { .. } => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    format!(
-                        "Matrix {} slicing is not implemented yet",
-                        axis
-                    ),
-                    whole,
-                ))
-            }
-
-            IndexExpr::Tuple(_) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    format!(
-                        "nested Matrix {} index is not supported",
-                        axis
-                    ),
-                    whole,
-                ))
-            }
-        }
-    }
-
     fn eval_index(
         &mut self,
         obj: &Expr,
@@ -3309,194 +3371,18 @@ impl Interpreter {
 
     fn eval_iterable(
         &mut self,
-        index: &IndexExpr,
+        expr: &Expr,
         whole: &Expr,
     ) -> Result<IteratorRef> {
-        match index {
-            // =====================================================
-            // Single iterable expression
-            // =====================================================
-            IndexExpr::Single(expr) => {
-                let value =
-                    self.eval_value(expr)?;
+        let value =
+            self.eval_value(
+                expr
+            )?;
 
-                self.make_iterator(
-                    value,
-                    whole,
-                )
-            }
-
-            // =====================================================
-            // Range
-            // =====================================================
-            IndexExpr::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                let start =
-                    match start {
-                        Some(expr) => {
-                            let v = self.eval_value(expr)?;
-
-                            let v: i64 = self.expect(
-                                v,
-                                whole,
-                            )?;
-
-                            if v >= 0 { v }
-                            else {
-                                return Err(
-                                    self.error(
-                                        ErrorKind::Index,
-                                        "negative range start",
-                                        whole,
-                                    )
-                                );
-                            }
-                        }
-
-                        None => 0,
-                    };
-
-                let mut end =
-                    match end {
-                        Some(expr) => {
-                            let v = self.eval_value(expr)?;
-
-                            self.expect::<i64>(
-                                v,
-                                whole,
-                            )?
-                        }
-
-                        None => i64::MAX,
-                    };
-
-                if *inclusive {
-                    end =
-                        end.checked_add(1)
-                            .ok_or_else(|| {
-                                self.error(
-                                    ErrorKind::Overflow,
-                                    "inclusive range endpoint overflow",
-                                    whole,
-                                )
-                            })?;
-                }
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            }
-
-            // =====================================================
-            // Tuple index expression is not an iterable itself
-            // =====================================================
-            IndexExpr::Tuple(_) => {
-                Err(
-                    self.error(
-                        ErrorKind::Type,
-                        "tuple index is not iterable",
-                        whole,
-                    )
-                )
-            }
-        }
-    }
-
-    /// Helper for `eval_iterable()`
-    fn make_iterator(
-        &mut self,
-        value: Value,
-        whole: &Expr,
-    ) -> Result<IteratorRef> {
-        match value {
-            Value::Iterator(iterator) => {
-                Ok(iterator)
-            }
-
-            Value::List(data) => {
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::List {
-                                data,
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            }
-
-            Value::Str(string) => {
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Str {
-                                data: Rc::new(
-                                    string
-                                        .chars()
-                                        .collect()
-                                ),
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            }
-
-            Value::Range(
-                start,
-                end,
-                inclusive,
-            ) => {
-                let end =
-                    if inclusive {
-                        end.checked_add(1)
-                            .ok_or_else(|| {
-                                self.error(
-                                    ErrorKind::Overflow,
-                                    "inclusive range endpoint overflow",
-                                    whole,
-                                )
-                            })?
-                    } else {
-                        end
-                    };
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            }
-
-            other => {
-                Err(
-                    self.error(
-                        ErrorKind::Type,
-                        format!(
-                            "{} is not iterable",
-                            other.type_name()
-                        ),
-                        whole,
-                    )
-                )
-            }
-        }
+        self.iterator_from_value(
+            value,
+            whole,
+        )
     }
 
     fn eval_while(
@@ -3571,12 +3457,9 @@ impl Interpreter {
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let value =
-            self.eval_value(iterable)?;
-
         let iterator =
-            self.make_iterator(
-                value,
+            self.eval_iterable(
+                iterable,
                 whole,
             )?;
 
@@ -4349,15 +4232,16 @@ impl Interpreter {
                         string
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4380,15 +4264,16 @@ impl Interpreter {
                         list.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4411,15 +4296,16 @@ impl Interpreter {
                         set.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4442,15 +4328,16 @@ impl Interpreter {
                         dict.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4585,15 +4472,16 @@ impl Interpreter {
                         vector.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4616,6 +4504,7 @@ impl Interpreter {
                         matrix.clone()
                     );
 
+                // intentionally not using `make_bound_method` here, because we don't want to decide its iterator semantics yet.
                 if receiver.supports_method(name) {
                     return Ok(
                         ControlFlow::Value(
@@ -4848,15 +4737,16 @@ impl Interpreter {
                         iterator
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4885,15 +4775,16 @@ impl Interpreter {
                         inclusive,
                     };
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -7364,7 +7255,7 @@ impl Interpreter {
 
     /// Helper for `call_range_method()`
     fn make_range_iterator(
-        &mut self,
+        &self,
         start: i64,
         end: i64,
         inclusive: bool,
@@ -7964,29 +7855,16 @@ impl Interpreter {
                     );
                 }
 
-                let other =
-                    match &args[0] {
-                        Value::Iterator(other) =>
-                            other,
+                let other 
+                    = self.iterator_from_value(
+                        args[0].clone(),
+                        whole
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "zip() expects Iterator, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
-
-                let result =
+                let iterator =
                     IteratorObj::Zip {
                         left: iterator.clone(),
-                        right: other.clone(),
+                        right: other,
                     };
 
                 Ok(
@@ -7994,7 +7872,7 @@ impl Interpreter {
                         Value::Iterator(
                             Rc::new(
                                 RefCell::new(
-                                    result
+                                    iterator
                                 )
                             )
                         )

@@ -14,7 +14,7 @@ print("weights after fitting: "+model_and.weights)
 print("bias after fitting: "+model_and.bias+"\n")
 
 print("Prediction: ")
-for (x, y) in X_and.iter().zip(y_and.iter()) {
+for (x, y) in zip(X_and, y_and) {
     print("\t"+ x +" -> "+model_and.predict(x) + "   Answer: "+y)
 }
 
@@ -31,7 +31,7 @@ print("weights after fitting: "+model_or.weights)
 print("bias after fitting: "+model_or.bias+"\n")
 
 print("Prediction: ")
-for (x, y) in X_or.iter().zip(y_or.iter()) {
+for (x, y) in zip(X_or, y_or) {
     print("\t"+ x +" -> "+model_or.predict(x) + "   Answer: "+y)
 }
 

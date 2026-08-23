@@ -2680,6 +2680,78 @@ fn set_iterator() {
                 .collect()
             "#
         );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn list_auto_iter_map() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn string_auto_iter_enumerate() {
+    let result =
+        run(
+            r#"
+            "abc"
+                .enumerate()
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(0),
+                        Value::Str(Rc::new("a".into())),
+                    ])),
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(1),
+                        Value::Str(Rc::new("b".into())),
+                    ])),
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(2),
+                        Value::Str(Rc::new("c".into())),
+                    ])),
+                ])
+            )
+        )
+    );
 }
 
 #[test]
