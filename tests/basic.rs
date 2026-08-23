@@ -70,6 +70,78 @@ fn compound_assignment_div() {
 }
 
 #[test]
+fn compound_assign_list_index() {
+    let result =
+        run(
+            r#"
+            xs = [1, 2, 3]
+            xs[0] += 10
+            xs[0]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(11)
+    );
+}
+
+#[test]
+fn compound_assign_dict_index() {
+    let result =
+        run(
+            r#"
+            d = {"count": 1}
+            d["count"] += 4
+            d["count"]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn compound_assign_matrix_index() {
+    let result =
+        run(
+            r#"
+            A = matrix([[1, 2], [3, 4]])
+            A[0, 1] += 10
+            A[0, 1]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Float(12.0)
+    );
+}
+
+#[test]
+fn compound_assign_object_field() {
+    let result =
+        run(
+            r#"
+            struct Point {
+                x,
+            }
+
+            let p = Point(10)
+            p.x += 5
+            p.x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(15)
+    );
+}
+
+#[test]
 fn mathematical_precedence() {
     assert_eq!(run("2 + 3 * 4"), Value::Int(14));
     assert_eq!(run("2 * 3 ** 2"), Value::Int(18));

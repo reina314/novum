@@ -143,6 +143,17 @@ pub enum IndexExpr {
     Tuple(Vec<IndexExpr>),
 }
 
+impl IndexExpr {
+    pub fn as_single(&self) -> Option<&Expr> {
+        match self {
+            IndexExpr::Single(expr) => Some(expr),
+            _ => None,
+        }
+    }
+}
+
+
+
 #[derive(Debug, Clone)]
 pub enum ListItem {
     Expr(Expr),

@@ -29,6 +29,38 @@ use std::{
     },
 };
 
+enum AssignTarget {
+    Name {
+        name: String,
+    },
+
+    ListIndex {
+        list: List,
+        index: usize,
+    },
+
+    DictKey {
+        dict: Dict,
+        key: String,
+    },
+
+    StringIndex {
+        string: Rc<String>,
+        index: usize,
+    },
+
+    MatrixIndex {
+        matrix: MatrixRef,
+        row: usize,
+        col: usize,
+    },
+
+    ObjectField {
+        object: ObjectRef,
+        name: String,
+    },
+}
+
 pub struct Interpreter {
     env: Env,
     stack: Vec<StackFrame>,
@@ -465,7 +497,7 @@ impl Interpreter {
         }
     }
 
-    /// Helper funtion to validate i64 and f64
+    /// Helper funtion to validate i64, f64 and convert to f64
     fn expect_number(
         &self,
         value: Value,
@@ -493,7 +525,50 @@ impl Interpreter {
         }
     }
 
-    /// Helper function to validate Value type and extract data
+    /// Helper function to validate index type and convert to usize
+    fn expect_index(
+        &mut self,
+        expr: &Expr,
+        whole: &Expr,
+        description: &str,
+    ) -> Result<usize> {
+        match self.eval_value(expr)? {
+            Value::Int(value)
+                if value >= 0 =>
+            {
+                Ok(value as usize)
+            }
+
+            Value::Int(_) => {
+                Err(
+                    self.error(
+                        ErrorKind::Index,
+                        format!(
+                            "{} must be non-negative",
+                            description
+                        ),
+                        whole,
+                    )
+                )
+            }
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "{} must be Int, got {}",
+                            description,
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper function to validate Value type and convert to T
     fn expect<T: FromValue>(
         &self,
         value: Value,
@@ -1838,51 +1913,155 @@ impl Interpreter {
         Ok(bindings)
     }
 
-    fn eval_assign(
+    fn resolve_assign_target(
         &mut self,
         target: &Expr,
-        rhs: &Expr,
         whole: &Expr,
-    ) -> Result<ControlFlow> {
+    ) -> Result<AssignTarget> {
         match &target.kind {
+            // =====================================================
+            // x
+            // =====================================================
+
             ExprKind::Ident(name) => {
-                let value =
-                    self.eval_value(rhs)?;
-
-                self.env.assign_or_define(
-                    name,
-                    value,
-                );
-
                 Ok(
-                    ControlFlow::Value(
-                        Value::Unit
-                    )
+                    AssignTarget::Name {
+                        name: name.clone(),
+                    }
                 )
             }
+
+            // =====================================================
+            // x[index]
+            // x[range]
+            // x[row, col]
+            // =====================================================
 
             ExprKind::Index(
-                object,
+                object_expr,
                 index,
             ) => {
-                self.eval_assign_index(
-                    object,
-                    index,
-                    rhs,
-                    whole,
-                )
+                let object =
+                    self.eval_value(
+                        object_expr
+                    )?;
+
+                match object {
+                    Value::List(list) => {
+                        let index =
+                            self.resolve_single_index(
+                                index,
+                                list.borrow().len(),
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::ListIndex {
+                                list,
+                                index,
+                            }
+                        )
+                    }
+
+                    Value::Dict(dict) => {
+                        let key =
+                            self.resolve_dict_key(
+                                index,
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::DictKey {
+                                dict,
+                                key,
+                            }
+                        )
+                    }
+
+                    Value::Str(string) => {
+                        let index =
+                            self.resolve_single_index(
+                                index,
+                                string.chars().count(),
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::StringIndex {
+                                string,
+                                index,
+                            }
+                        )
+                    }
+
+                    Value::Matrix(matrix) => {
+                        let (row, col) =
+                            self.resolve_matrix_index(
+                                index,
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::MatrixIndex {
+                                matrix,
+                                row,
+                                col,
+                            }
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "cannot assign through {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
             }
+
+            // =====================================================
+            // obj.field
+            // =====================================================
 
             ExprKind::Field {
                 object,
                 name,
             } => {
-                self.eval_assign_field(
-                    object,
-                    name,
-                    rhs,
-                    whole,
-                )
+                let value =
+                    self.eval_value(
+                        object
+                    )?;
+
+                match value {
+                    Value::Object(object) => {
+                        Ok(
+                            AssignTarget::ObjectField {
+                                object,
+                                name: name.clone(),
+                            }
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "cannot assign field '{}' on {}",
+                                    name,
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
             }
 
             _ => {
@@ -1897,216 +2076,407 @@ impl Interpreter {
         }
     }
 
-    fn eval_assign_op(
+    fn resolve_single_index(
         &mut self,
-        target: &Expr,
-        op: BinOp,
-        rhs: &Expr,
+        index: &IndexExpr,
+        len: usize,
         whole: &Expr,
-    ) -> Result<ControlFlow> {
-        match &target.kind {
-            ExprKind::Ident(name) => {
-                let current =
-                    self.env.get(name)
-                        .ok_or_else(|| {
-                            self.error(
-                                ErrorKind::Name,
-                                format!(
-                                    "{} is not defined",
-                                    name
-                                ),
-                                whole,
-                            )
-                        })?;
+    ) -> Result<usize> {
+        let IndexExpr::Single(expr) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "assignment requires a single index",
+                    whole,
+                )
+            );
+        };
 
-                let rhs =
-                    self.eval_value(rhs)?;
+        let index =
+            self.eval_value(expr)?;
 
-                let value =
-                    operator::apply_binop(
-                        op,
-                        current,
-                        rhs,
-                    )
-                    .map_err(|error| {
+        let index =
+            match index {
+                Value::Int(value)
+                    if value >= 0 =>
+                {
+                    value as usize
+                }
+
+                Value::Int(_) => {
+                    return Err(
                         self.error(
-                            ErrorKind::Type,
-                            error,
+                            ErrorKind::Index,
+                            "negative indices are not allowed for assignment",
                             whole,
                         )
-                    })?;
+                    );
+                }
 
-                self.env.assign(
-                    name,
-                    value,
-                );
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "index must be Int, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
 
-                Ok(
-                    ControlFlow::Value(
-                        Value::Unit
+        if index >= len {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    format!(
+                        "index out of range: {}",
+                        index
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        Ok(index)
+    }
+
+    fn resolve_dict_key(
+        &mut self,
+        index: &IndexExpr,
+        whole: &Expr,
+    ) -> Result<String> {
+        let IndexExpr::Single(expr) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "dictionary assignment requires a single key",
+                    whole,
+                )
+            );
+        };
+
+        let value =
+            self.eval_value(expr)?;
+
+        match value {
+            Value::Str(key) =>
+                Ok(key.as_ref().clone()),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "dictionary key must be Str, got {}",
+                            other.type_name()
+                        ),
+                        whole,
                     )
                 )
-            }
-
-            _ => {
-                todo!()
             }
         }
     }
 
-    fn eval_assign_index(
+    fn resolve_matrix_index(
         &mut self,
-        obj: &Expr,
         index: &IndexExpr,
-        rhs: &Expr,
         whole: &Expr,
-    ) -> Result<ControlFlow> {
-        let target = self.eval_value(obj)?;
+    ) -> Result<(usize, usize)> {
+        let IndexExpr::Tuple(indices) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "matrix assignment requires two indices",
+                    whole,
+                )
+            );
+        };
 
-        match (target, index) {
-            // =========================================================
-            // List[index] = value
-            // =========================================================
-            (
-                Value::List(list),
-                IndexExpr::Single(index),
-            ) => {
-                let idx =
-                    self.eval_index_int(
-                        index,
-                        whole,
-                    )?;
+        if indices.len() != 2 {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    format!(
+                        "matrix assignment expects 2 indices, got {}",
+                        indices.len()
+                    ),
+                    whole,
+                )
+            );
+        }
 
-                let value =
-                    self.eval_value(rhs)?;
+        let row_expr = indices[0]
+            .as_single()
+            .ok_or_else(|| {
+                self.error(
+                    ErrorKind::Type,
+                    "matrix row index must be a single index",
+                    whole,
+                )
+            })?;
 
-                let mut list =
-                    list.borrow_mut();
+        let col_expr = indices[1]
+            .as_single()
+            .ok_or_else(|| {
+                self.error(
+                    ErrorKind::Type,
+                    "matrix column index must be a single index",
+                    whole,
+                )
+            })?;
 
-                if idx >= list.len() {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "index out of range: {}",
-                            idx
-                        ),
-                        whole,
-                    ));
-                }
+        let row = self.expect_index(
+            row_expr,
+            whole,
+            "matrix row index",
+        )?;
 
-                list[idx] = value.clone();
+        let col = self.expect_index(
+            col_expr,
+            whole,
+            "matrix column index",
+        )?;
 
-                Ok(ControlFlow::Value(value))
+        Ok((row, col))
+    }
+
+    fn read_assign_target(
+        &self,
+        target: &AssignTarget,
+        whole: &Expr,
+    ) -> Result<Value> {
+        match target {
+            // =====================================================
+            // x
+            // =====================================================
+
+            AssignTarget::Name { name } => {
+                self.env
+                    .get(name)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "{} is not defined",
+                                name
+                            ),
+                            whole,
+                        )
+                    })
             }
 
-            // =========================================================
-            // List[start..end] = value
-            //
-            // unsupported yet
-            // =========================================================
-            (
-                Value::List(_),
-                IndexExpr::Range { .. },
-            ) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    "list slice assignment is not implemented yet",
-                    whole,
-                ))
+            // =====================================================
+            // xs[i]
+            // =====================================================
+
+            AssignTarget::ListIndex {
+                list,
+                index,
+            } => {
+                list.borrow()
+                    .get(*index)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    })
             }
 
-            // =========================================================
-            // Dict["key"] = value
-            // =========================================================
-            (
-                Value::Dict(dict),
-                IndexExpr::Single(index),
-            ) => {
-                let v = self.eval_value(index)?;
+            // =====================================================
+            // dict[key]
+            // =====================================================
 
-                let key: String = self.expect::<StrRef>(
-                    v,
-                    whole,
-                )?.as_ref().clone();
+            AssignTarget::DictKey {
+                dict,
+                key,
+            } => {
+                dict.borrow()
+                    .get(key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "dictionary key not found: {:?}",
+                                key
+                            ),
+                            whole,
+                        )
+                    })
+            }
 
-                let value =
-                    self.eval_value(rhs)?;
+            // =====================================================
+            // string[i]
+            // =====================================================
 
-                dict.borrow_mut().insert(
-                    key,
-                    value.clone(),
+            AssignTarget::StringIndex {
+                string,
+                index,
+            } => {
+                string
+                    .chars()
+                    .nth(*index)
+                    .map(|c| {
+                        Value::Str(
+                            Rc::new(
+                                c.to_string()
+                            )
+                        )
+                    })
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    })
+            }
+
+            // =====================================================
+            // matrix[row, col]
+            // =====================================================
+
+            AssignTarget::MatrixIndex {
+                matrix,
+                row,
+                col,
+            } => {
+                matrix
+                    .borrow()
+                    .get(*row, *col)
+                    .map(Value::Float)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "matrix index out of bounds: ({}, {})",
+                                row,
+                                col
+                            ),
+                            whole,
+                        )
+                    })
+            }
+
+            // =====================================================
+            // obj.field
+            // =====================================================
+
+            AssignTarget::ObjectField {
+                object,
+                name,
+            } => {
+                object
+                    .borrow()
+                    .get_field(name)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "object has no field '{}'",
+                                name
+                            ),
+                            whole,
+                        )
+                    })
+            }
+        }
+    }
+
+    fn write_assign_target(
+        &mut self,
+        target: AssignTarget,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<()> {
+        match target {
+            // =====================================================
+            // x = value
+            // =====================================================
+
+            AssignTarget::Name { name } => {
+                self.env.assign(
+                    &name,
+                    value,
                 );
 
-                Ok(ControlFlow::Value(value))
+                Ok(())
             }
 
-            // =========================================================
-            // Dict[...] = ...
-            //
-            // tuple indexing is not supported
-            // =========================================================
-            (
-                Value::Dict(_),
-                IndexExpr::Tuple(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "tuple indexing is not supported for Dict",
-                    whole,
-                ))
+            // =====================================================
+            // xs[i] = value
+            // =====================================================
+
+            AssignTarget::ListIndex {
+                list,
+                index,
+            } => {
+                list.borrow_mut()[index] =
+                    value;
+
+                Ok(())
             }
 
-            // =========================================================
-            // String[index] = ...
-            //
-            // String is immutable
-            // =========================================================
-            (
-                Value::Str(_),
-                IndexExpr::Single(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    "String values are immutable",
-                    whole,
-                ))
+            // =====================================================
+            // dict[key] = value
+            // =====================================================
+
+            AssignTarget::DictKey {
+                dict,
+                key,
+            } => {
+                dict.borrow_mut()
+                    .insert(
+                        key,
+                        value,
+                    );
+
+                Ok(())
             }
 
-            // =========================================================
-            // Matrix[row, col] = value
-            // =========================================================
-            (
-                Value::Matrix(matrix),
-                IndexExpr::Tuple(indices),
-            ) => {
-                if indices.len() != 2 {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "Matrix assignment expects exactly 2 indices, got {}",
-                            indices.len()
-                        ),
+            // =====================================================
+            // string[i] = value
+            // =====================================================
+
+            AssignTarget::StringIndex {
+                ..
+            } => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "String elements are immutable",
                         whole,
-                    ));
-                }
+                    )
+                )
+            }
 
-                let row =
-                    self.eval_matrix_single_index(
-                        &indices[0],
-                        "row",
-                        whole,
-                    )?;
+            // =====================================================
+            // matrix[row, col] = value
+            // =====================================================
 
-                let col =
-                    self.eval_matrix_single_index(
-                        &indices[1],
-                        "column",
-                        whole,
-                    )?;
-
-                let value =
-                    self.eval_value(rhs)?;
-
+            AssignTarget::MatrixIndex {
+                matrix,
+                row,
+                col,
+            } => {
                 let numeric = 
                     self.expect_number(value, whole)?;
 
@@ -2125,129 +2495,149 @@ impl Interpreter {
                         )
                     })?;
 
-                Ok(ControlFlow::Value(
-                    Value::Float(numeric)
-                ))
+                Ok(())
             }
 
-            // =========================================================
-            // Matrix[index] = ...
-            //
-            // Single index is intentionally unsupported.
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Single(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "Matrix assignment requires two indices: Matrix[row, col]",
-                    whole,
-                ))
-            }
+            // =====================================================
+            // obj.field = value
+            // =====================================================
 
-            // =========================================================
-            // Matrix[slice] = ...
-            //
-            // Slice assignment is intentionally deferred.
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Range { .. },
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "Matrix slice assignment is not implemented yet",
-                    whole,
-                ))
-            }
+            AssignTarget::ObjectField {
+                object,
+                name,
+            } => {
+                object
+                    .borrow_mut()
+                    .set_field(
+                        name,
+                        value,
+                    );
 
-            // =========================================================
-            // Matrix tuple with >2 dimensions
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Tuple(_),
-            ) => {
-                unreachable!(
-                    "Matrix tuple assignment should be handled above"
-                )
-            }
-
-            // =========================================================
-            // Unsupported indexing target
-            // =========================================================
-            (
-                other,
-                _,
-            ) => {
-                Err(self.error(
-                    ErrorKind::Type,
-                    format!(
-                        "invalid indexed assignment on {}",
-                        other.type_name()
-                    ),
-                    whole,
-                ))
+                Ok(())
             }
         }
     }
 
-    fn eval_assign_field(
+    fn eval_assign(
         &mut self,
-        obj: &Expr,
-        name: &str,
-        rhs: &Expr,
+        target_expr: &Expr,
+        rhs_expr: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let target = self.eval_value(obj)?;
-        let value = self.eval_value(rhs)?;
+        match &target_expr.kind {
+            // -----------------------------------------------------
+            // Bare identifier:
+            // -----------------------------------------------------
 
-        match target {
-            Value::Object(object) => {
-                let mut object = object.borrow_mut();
+            ExprKind::Ident(name) => {
+                let value =
+                    self.eval_value(
+                        rhs_expr
+                    )?;
 
-                if object.get_method(name).is_some() {
-                    return Err(self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "cannot assign to object method '{}'",
-                            name
-                        ),
-                        whole,
-                    ));
-                }
-
-                object.set_field(
-                    name.to_owned(),
-                    value.clone(),
+                self.env.assign_or_define(
+                    name,
+                    value,
                 );
 
-                Ok(ControlFlow::Value(value))
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
             }
 
-            // Deny module modification
-            Value::Module(module) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "cannot modify module '{}'",
-                        module.borrow().name()
-                    ),
+            // -----------------------------------------------------
+            // Index / field:
+            // -----------------------------------------------------
+
+            ExprKind::Index(_, _)
+            | ExprKind::Field { .. } => {
+                let target =
+                    self.resolve_assign_target(
+                        target_expr,
+                        whole,
+                    )?;
+
+                let value =
+                    self.eval_value(
+                        rhs_expr
+                    )?;
+
+                self.write_assign_target(
+                    target,
+                    value,
                     whole,
-                ))
+                )?;
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
             }
 
-            other => Err(self.error(
-                ErrorKind::Type,
-                format!(
-                    "cannot assign field '{}' on {}",
-                    name,
-                    other.type_name()
-                ),
-                whole,
-            )),
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "invalid assignment target",
+                        whole,
+                    )
+                )
+            }
         }
+    }
+
+    fn eval_assign_op(
+        &mut self,
+        target_expr: &Expr,
+        op: BinOp,
+        rhs_expr: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let target =
+            self.resolve_assign_target(
+                target_expr,
+                whole,
+            )?;
+
+        let current =
+            self.read_assign_target(
+                &target,
+                whole,
+            )?;
+
+        let rhs =
+            self.eval_value(
+                rhs_expr
+            )?;
+
+        let value =
+            operator::apply_binop(
+                op,
+                current,
+                rhs,
+            )
+            .map_err(|error| {
+                self.error(
+                    ErrorKind::Runtime,
+                    error,
+                    whole,
+                )
+            })?;
+
+        self.write_assign_target(
+            target,
+            value,
+            whole,
+        )?;
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     /// Helper for `eval_index()`
@@ -2320,9 +2710,10 @@ impl Interpreter {
                 IndexExpr::Single(index),
             ) => {
                 let idx =
-                    self.eval_index_int(
+                    self.expect_index(
                         index,
                         whole,
+                        "index"
                     )?;
 
                 let list_ref =
@@ -2388,9 +2779,10 @@ impl Interpreter {
                 IndexExpr::Single(index),
             ) => {
                 let idx =
-                    self.eval_index_int(
+                    self.expect_index(
                         index,
                         whole,
+                        "index",
                     )?;
 
                 s.chars()
@@ -2681,24 +3073,6 @@ impl Interpreter {
         }
     }
 
-    fn eval_index_int(&mut self, expr: &Expr, whole: &Expr) -> Result<usize> {
-        let v = self.eval_value(expr)?;
-        
-        let v: i64 = self.expect(
-            v,
-            whole,
-        )?;
-
-        if v >= 0 { Ok(v as usize) }
-        else {
-            Err(self.error(
-                ErrorKind::Index, 
-                "negative index is not supported", 
-                whole,
-            ))
-        }
-    }
-
     fn resolve_matrix_range(
         &mut self,
         start: Option<&Expr>,
@@ -2911,12 +3285,14 @@ impl Interpreter {
         whole: &Expr
     ) -> Result<(usize,usize)> {
         let s = match start { 
-            Some(e) => self.eval_index_int(e, whole)?, 
+            Some(e) => self.expect_index(
+                e, whole, "slice start")?, 
             None => 0 
         };
 
         let mut e = match end { 
-            Some(e) => self.eval_index_int(e, whole)?, 
+            Some(e) => self.expect_index(
+                e, whole, "slice end")?, 
             None => len 
         };
 
