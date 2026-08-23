@@ -15,6 +15,7 @@ pub mod r#enum;
 pub mod bound_method;
 pub mod value;
 pub mod r#type;
+pub mod path;
 
 pub use control::ControlFlow;
 pub use env::Env;
@@ -84,4 +85,8 @@ pub use value::{
 };
 pub use r#type::{
     Type,
+};
+pub use path::{
+    PathValue,
+    PathRef,
 };

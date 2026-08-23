@@ -173,6 +173,73 @@ fn importing_same_module_twice_uses_cache() {
 }
 
 #[test]
+fn import_stdlib_alias() {
+    let result =
+        run(
+            r#"
+            import math as m
+
+            m.sqrt(16)
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Float(4.0)
+    );
+}
+
+#[test]
+fn import_user_module_alias() {
+    let result =
+        run(
+            r#"
+            import tests.modules.counter as mod
+
+            mod.value
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
+    );
+}
+
+#[test]
+fn import_alias_does_not_bind_original_name() {
+    let result =
+        run_result(
+            r#"
+            import math as m
+
+            math.sqrt(4)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn import_without_alias_keeps_namespace() {
+    let result =
+        run(
+            r#"
+            import tests.modules.counter
+
+            tests.modules.counter.value
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
+    );
+}
+
+#[test]
 fn builtin_is_available_without_import() {
     let result =
         run(
@@ -277,6 +344,72 @@ fn pub_local_is_error() {
     );
 }
 
+#[test]
+fn path_api() {
+    let result =
+        run(
+            r#"
+            let p =
+                path("data/result.csv")
 
+            p.name()?
+                "#
+        );
 
+    // "result.csv"
+}
+
+#[test]
+fn path_extension() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .extension()?
+            "#
+        );
+
+    // "csv"
+}
+
+#[test]
+fn path_stem() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .stem()?
+            "#
+        );
+
+    // "result"
+}
+
+#[test]
+fn path_parent() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .parent()?
+                .to_str()
+            "#
+        );
+
+    // "data"
+}
+
+#[test]
+fn path_join() {
+    let result =
+        run(
+            r#"
+            path("data")
+                .join("result.csv")
+                .to_str()
+            "#
+        );
+
+    // OS-dependent path representation
+}
 

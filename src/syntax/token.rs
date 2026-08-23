@@ -10,6 +10,11 @@ pub enum TokenKind {
     Ident(String),
 
     Equals,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
     FatArrow,
 
     Plus,
@@ -38,6 +43,7 @@ pub enum TokenKind {
     Return,
     For,
     In,
+    As,
     Let,
     Match,
 

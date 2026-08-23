@@ -583,6 +583,140 @@ fn mul(
             ))
         }
 
+        (// [0] * 5 = [0, 0, 0, 0, 0]
+            Value::List(list),
+            Value::Int(count),
+        ) => {
+            if count < 0 {
+                return Err(
+                    "cannot repeat a list a negative number of times".into()
+                );
+            }
+
+            let list =
+                list.borrow();
+
+            let count =
+                count as usize;
+
+            let mut result =
+                Vec::with_capacity(
+                    list.len()
+                        .checked_mul(count)
+                        .ok_or_else(|| {
+                            "list repetition size overflow"
+                        })?
+                );
+
+            for _ in 0..count {
+                result.extend(
+                    list.iter().cloned()
+                );
+            }
+
+            Ok(
+                Value::List(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (// 5 * [0] = [0, 0, 0, 0, 0] 
+            Value::Int(count),
+            Value::List(list),
+        ) => {
+            if count < 0 {
+                return Err(
+                    "cannot repeat a list a negative number of times".into()
+                );
+            }
+
+            let list =
+                list.borrow();
+
+            let count =
+                count as usize;
+
+            let mut result =
+                Vec::with_capacity(
+                    list.len()
+                        .checked_mul(count)
+                        .ok_or_else(|| {
+                            "list repetition size overflow"
+                        })?
+                );
+
+            for _ in 0..count {
+                result.extend(
+                    list.iter().cloned()
+                );
+            }
+
+            Ok(
+                Value::List(
+                    Rc::new(
+                        RefCell::new(
+                            result
+                        )
+                    )
+                )
+            )
+        }
+
+        (// "abc" * 3 = "abcabcabc"
+            Value::Str(text),
+            Value::Int(count),
+        ) => {
+            if count < 0 {
+                return Err(
+                    "cannot repeat a string a negative number of times".into()
+                );
+            }
+
+            let count =
+                count as usize;
+
+            let result =
+                text
+                    .as_ref()
+                    .repeat(count);
+
+            Ok(
+                Value::Str(
+                    Rc::new(result)
+                )
+            )
+        }
+
+        (// 3 * "abc" = "abcabcabc"
+            Value::Int(count),
+            Value::Str(text),
+        ) => {
+            if count < 0 {
+                return Err(
+                    "cannot repeat a string a negative number of times".into()
+                );
+            }
+
+            let count =
+                count as usize;
+
+            let result =
+                text
+                    .as_ref()
+                    .repeat(count);
+
+            Ok(
+                Value::Str(
+                    Rc::new(result)
+                )
+            )
+        }
+
         (
             Value::Vector(vector),
             Value::Int(scalar),

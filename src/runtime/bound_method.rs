@@ -1,6 +1,7 @@
 use super::{
     DataFrameRef,
     GroupedDataFrameRef,
+    Value,
     List,
     Dict,
     SetRef,
@@ -9,6 +10,7 @@ use super::{
     ObjectRef,
     SeriesRef,
     IteratorRef,
+    PathRef,
 };
 
 use std::{
@@ -36,6 +38,8 @@ pub enum MethodReceiver {
     DataFrame(DataFrameRef),
     GroupedDataFrame(GroupedDataFrameRef),
     Iterator(IteratorRef),
+
+    Path(PathRef),
 }
 
 impl MethodReceiver {
@@ -151,8 +155,93 @@ impl MethodReceiver {
                     | "skip"
             ),
 
+            Self::Path(_) => matches!(
+                name,
+                "to_str"
+                    | "name"
+                    | "extension"
+                    | "stem"
+                    | "parent"
+                    | "join"
+                    | "exists"
+                    | "is_file"
+                    | "is_dir"
+            ),
+
             // Existing cases...
             _ => false,
+        }
+    }
+
+    pub fn is_iterator_method(
+        &self,
+        name: &str,
+    ) -> bool {
+        matches!(
+            name,
+            "map"
+                | "filter"
+                | "collect"
+                | "reduce"
+                | "fold"
+                | "any"
+                | "all"
+                | "enumerate"
+                | "zip"
+                | "take"
+                | "skip"
+        )
+    }
+
+    pub fn to_iterable_value(
+        self,
+    ) -> Option<Value> {
+        match self {
+            Self::List(list) =>
+                Some(
+                    Value::List(list)
+                ),
+
+            Self::Dict(dict) =>
+                Some(
+                    Value::Dict(dict)
+                ),
+
+            Self::Str(string) =>
+                Some(
+                    Value::Str(string)
+                ),
+
+            Self::Vector(vector) =>
+                Some(
+                    Value::Vector(vector)
+                ),
+
+            Self::Set(set) =>
+                Some(
+                    Value::Set(set)
+                ),
+
+            Self::Range {
+                start,
+                end,
+                inclusive,
+            } =>
+                Some(
+                    Value::Range(
+                        start,
+                        end,
+                        inclusive,
+                    )
+                ),
+
+            Self::Iterator(iterator) =>
+                Some(
+                    Value::Iterator(iterator)
+                ),
+
+            _ =>
+                None,
         }
     }
 }

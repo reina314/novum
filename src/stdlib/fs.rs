@@ -8,6 +8,7 @@ use crate::runtime::{
 use std::{
     rc::Rc,
     cell::RefCell,
+    path::PathBuf,
 };
 
 pub fn module() -> ModuleRef {
@@ -97,7 +98,7 @@ pub fn read(
                 result_err(
                     format!(
                         "failed to read '{}': {}",
-                        path,
+                        path.display(),
                         error
                     )
                 )
@@ -146,7 +147,7 @@ pub fn write(
                 result_err(
                     format!(
                         "failed to write '{}': {}",
-                        path,
+                        path.display(),
                         error
                     )
                 )
@@ -205,7 +206,7 @@ pub fn append(
                 result_err(
                     format!(
                         "failed to append to '{}': {}",
-                        path,
+                        path.display(),
                         error
                     )
                 )
@@ -268,7 +269,7 @@ pub fn remove(
                 result_err(
                     format!(
                         "failed to remove '{}': {}",
-                        path,
+                        path.display(),
                         error
                     )
                 )
@@ -307,7 +308,7 @@ pub fn mkdir(
                 result_err(
                     format!(
                         "failed to create directory '{}': {}",
-                        path,
+                        path.display(),
                         error
                     )
                 )
@@ -355,8 +356,8 @@ pub fn rename(
                 result_err(
                     format!(
                         "failed to rename '{}' to '{}': {}",
-                        from,
-                        to,
+                        from.display(),
+                        to.display(),
                         error
                     )
                 )
@@ -406,8 +407,8 @@ pub fn copy(
                 result_err(
                     format!(
                         "failed to copy '{}' to '{}': {}",
-                        from,
-                        to,
+                        from.display(),
+                        to.display(),
                         error
                     )
                 )
@@ -442,7 +443,7 @@ pub fn list_dir(
                     result_err(
                         format!(
                             "failed to read directory '{}': {}",
-                            path,
+                            path.display(),
                             error
                         )
                     )
@@ -464,7 +465,7 @@ pub fn list_dir(
                         result_err(
                             format!(
                                 "failed to read directory entry in '{}': {}",
-                                path,
+                                path.display(),
                                 error
                             )
                         )
@@ -500,17 +501,28 @@ pub fn list_dir(
 fn get_path(
     args: &mut Vec<Value>,
     function: &str,
-) -> Result<String, String> {
+) -> Result<PathBuf, String> {
     match args.remove(0) {
         Value::Str(path) =>
-            Ok(path.as_ref().clone()),
+            Ok(
+                PathBuf::from(
+                    path.as_ref()
+                )
+            ),
+
+        Value::Path(path) =>
+            Ok(
+                path.to_path_buf()
+            ),
 
         other =>
-            Err(format!(
-                "{} expects path as Str, got {}",
-                function,
-                other.type_name()
-            )),
+            Err(
+                format!(
+                    "{} expects Str or Path, got {}",
+                    function,
+                    other.type_name()
+                )
+            ),
     }
 }
 

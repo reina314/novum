@@ -4,6 +4,7 @@ use crate::{
         IteratorObj,
         Env,
         Set,
+        PathValue,
     }
 };
 
@@ -47,6 +48,16 @@ fn builtins()
     map.insert(
         "set".into(),
         Value::Builtin(set),
+    );
+
+    map.insert(
+        "zip".into(),
+        Value::Builtin(zip),
+    );
+
+    map.insert(
+        "zeros".into(),
+        Value::Builtin(zeros),
     );
 
     map.insert(
@@ -102,6 +113,11 @@ fn builtins()
     map.insert(
         "bool".into(),
         Value::Builtin(bool),
+    );
+
+    map.insert(
+        "path".into(),
+        Value::Builtin(path),
     );
 
     map.insert(
@@ -195,9 +211,16 @@ pub fn str(args: Vec<Value>) -> Result<Value, String> {
         );
     }
 
-    Ok(Value::Str(
-        Rc::new(args[0].to_string())
-    ))
+    let value = args.into_iter().next().unwrap();
+
+    let text = match value {
+        Value::Path(path) =>
+            path.to_string_lossy().to_owned(),
+
+        value => value.to_string(),
+    };
+
+    Ok(Value::Str(Rc::new(text)))
 }
 
 pub fn int(
@@ -349,6 +372,42 @@ pub fn bool(
     }
 }
 
+pub fn path(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "path() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let path =
+        match args.remove(0) {
+            Value::Str(value) =>
+                PathValue::new(
+                    value.as_ref()
+                ),
+
+            Value::Path(value) =>
+                value.as_ref().clone(),
+
+            other =>
+                return Err(
+                    format!(
+                        "path() expects Str or Path, got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    Ok(
+        Value::Path(
+            Rc::new(path)
+        )
+    )
+}
+
 pub fn r#typeof(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err(
@@ -376,86 +435,13 @@ pub fn iter(
     let value =
         args.remove(0);
 
-    match value {
-        Value::Iterator(iterator) => {
-            Ok(
-                Value::Iterator(iterator)
-            )
-        }
+    let iterator = IteratorObj::from_value(value)?;
 
-        Value::List(data) => {
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::List {
-                                data,
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        Value::Str(string) => {
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Str {
-                                data: Rc::new(
-                                    string
-                                        .chars()
-                                        .collect()
-                                ),
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        Value::Range(
-            start,
-            end,
-            inclusive,
-        ) => {
-            let end =
-                if inclusive {
-                    end.checked_add(1)
-                        .ok_or_else(|| {
-                            "inclusive range endpoint overflow"
-                                .to_owned()
-                        })?
-                } else {
-                    end
-                };
-
-            Ok(
-                Value::Iterator(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            )
-        }
-
-        other => {
-            Err(
-                format!(
-                    "{} is not iterable",
-                    other.type_name()
-                )
-            )
-        }
-    }
+    Ok(
+        Value::Iterator(
+            iterator
+        )
+    )
 }
 
 pub fn set(
@@ -490,6 +476,85 @@ pub fn set(
             Rc::new(
                 RefCell::new(
                     set
+                )
+            )
+        )
+    )
+}
+
+pub fn zip(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "zip() expects exactly 2 arguments"
+                .into()
+        );
+    }
+
+    let left =
+        IteratorObj::from_value(
+            args.remove(0)
+        )?;
+
+    let right =
+        IteratorObj::from_value(
+            args.remove(0)
+        )?;
+
+    Ok(
+        Value::Iterator(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Zip {
+                        left,
+                        right,
+                    }
+                )
+            )
+        )
+    )
+}
+
+pub fn zeros(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "zeros() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let count =
+        match args.remove(0) {
+            Value::Int(value)
+                if value >= 0 =>
+            {
+                value as usize
+            }
+
+            Value::Int(_) =>
+                return Err(
+                    "zeros() does not accept a negative count"
+                        .into()
+                ),
+
+            other =>
+                return Err(format!(
+                    "zeros() expects Int, got {}",
+                    other.type_name()
+                )),
+        };
+
+    Ok(
+        Value::List(
+            Rc::new(
+                RefCell::new(
+                    vec![
+                        Value::Int(0);
+                        count
+                    ]
                 )
             )
         )

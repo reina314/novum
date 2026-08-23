@@ -7,6 +7,140 @@ use novum::{Interpreter, Lexer, Parser};
 use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
 use std::{cell::RefCell, rc::Rc};
 
+
+#[test]
+fn compound_assignment_add() {
+    let result = run(
+        r#"
+        x = 10
+        x += 5
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(15)
+    );
+}
+
+#[test]
+fn compound_assignment_sub() {
+    let result = run(
+        r#"
+        x = 10
+        x -= 3
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(7)
+    );
+}
+
+#[test]
+fn compound_assignment_mul() {
+    let result = run(
+        r#"
+        x = 10
+        x *= 3
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn compound_assignment_div() {
+    let result = run(
+        r#"
+        x = 10
+        x /= 4
+        x
+        "#
+    );
+
+    // 現在の division semantics に合わせる
+}
+
+#[test]
+fn compound_assign_list_index() {
+    let result =
+        run(
+            r#"
+            xs = [1, 2, 3]
+            xs[0] += 10
+            xs[0]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(11)
+    );
+}
+
+#[test]
+fn compound_assign_dict_index() {
+    let result =
+        run(
+            r#"
+            d = {"count": 1}
+            d["count"] += 4
+            d["count"]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn compound_assign_matrix_index() {
+    let result =
+        run(
+            r#"
+            A = matrix([[1, 2], [3, 4]])
+            A[0, 1] += 10
+            A[0, 1]
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Float(12.0)
+    );
+}
+
+#[test]
+fn compound_assign_object_field() {
+    let result =
+        run(
+            r#"
+            struct Point {
+                x,
+            }
+
+            let p = Point(10)
+            p.x += 5
+            p.x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(15)
+    );
+}
+
 #[test]
 fn mathematical_precedence() {
     assert_eq!(run("2 + 3 * 4"), Value::Int(14));
@@ -2546,6 +2680,78 @@ fn set_iterator() {
                 .collect()
             "#
         );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn list_auto_iter_map() {
+    let result =
+        run(
+            r#"
+            [1,2,3]
+                .map(|x| x * 2)
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn string_auto_iter_enumerate() {
+    let result =
+        run(
+            r#"
+            "abc"
+                .enumerate()
+                .collect()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(0),
+                        Value::Str(Rc::new("a".into())),
+                    ])),
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(1),
+                        Value::Str(Rc::new("b".into())),
+                    ])),
+                    Value::Tuple(Rc::new(vec![
+                        Value::Int(2),
+                        Value::Str(Rc::new("c".into())),
+                    ])),
+                ])
+            )
+        )
+    );
 }
 
 #[test]
@@ -2578,7 +2784,7 @@ fn str_conversion() {
             Rc::new("123".into())
         )
     );
-
+    
     assert_eq!(
         run(r#"str(true)"#),
         Value::Str(
@@ -2608,5 +2814,66 @@ fn float_from_string() {
     assert_eq!(
         run(r#"float("3.14")"#),
         Value::Float(3.14)
+    );
+}
+
+#[test]
+fn list_repetition() {
+    let result =
+        run(
+            "[0] * 5"
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn string_repetition() {
+    let result =
+        run(
+            r#""=" * 20"#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new(
+                "=".repeat(20)
+            )
+        )
+    );
+}
+
+#[test]
+fn zeros_builtin() {
+    let result =
+        run(
+            "zeros(3)"
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ])
+            )
+        )
     );
 }

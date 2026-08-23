@@ -13,9 +13,11 @@ use super::{
     DataFrameRef,
     GroupedDataFrameRef,
     ModuleRef,
+    PathRef,
     BoundMethod,
     Type,
 };
+
 use std::{
     fmt, 
     rc::Rc,
@@ -55,6 +57,8 @@ pub enum Value {
     Enum(EnumRef),
     EnumValue(EnumValueRef),
     EnumConstructor(EnumConstructor),
+
+    Path(PathRef),
 
     Range(i64, i64, bool),
     
@@ -98,6 +102,8 @@ impl Value {
             Self::Enum(_) => Type::Enum,
             Self::EnumValue(_) => Type::EnumValue,
             Self::EnumConstructor(_) => Type::EnumConstructor,
+
+            Self::Path(_) => Type::Path,
             
             Self::Range(..) => Type::Range,
 
@@ -294,6 +300,13 @@ impl Value {
                 }
             }
 
+            (
+                Self::Path(a),
+                Self::Path(b),
+            ) => {
+                a.as_path() == b.as_path()
+            }
+
             (Self::Unit, Self::Unit) => true,
             (Self::Null, Self::Null) => true,
             
@@ -373,6 +386,8 @@ impl fmt::Debug for Value {
             Self::EnumValue(value) => write!(f, "{:?}", value),
 
             Self::EnumConstructor(constructor) => write!(f, "{:?}", constructor),
+
+            Self::Path(path) => write!(f, "{:?}", path),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
             
@@ -528,6 +543,9 @@ impl fmt::Display for Value {
             Self::EnumConstructor(constructor) =>
                 write!(f, "{}", constructor),
 
+            Self::Path(path) =>
+                write!(f, "{:#?}", path),
+
             Self::Range(
                 start,
                 end,
@@ -577,9 +595,16 @@ impl PartialEq for Value {
 fn format_float(value: f64) -> String {
     let s = format!("{value:.8}");
 
-    s.trim_end_matches('0')
+    let s = s
+        .trim_end_matches('0')
         .trim_end_matches('.')
-        .to_string()
+        .to_string();
+
+    if s.contains('.') {
+        s
+    } else {
+        format!("{s}.0")
+    }
 }
 
 
@@ -735,3 +760,20 @@ impl FromValue for IteratorRef {
     }
 }
 
+impl FromValue for PathRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Path(path) =>
+                Ok(path),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Path
+    }
+}

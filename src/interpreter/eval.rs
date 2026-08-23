@@ -7,10 +7,10 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef,
     }, stdlib, 
     syntax::{
-        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, 
+        BinOp, Expr, ExprKind, IndexExpr, ListItem, Program,
         ast::{
             EnumDef as AstEnumDef,
             MatchArm,
@@ -23,15 +23,53 @@ use std::{
     cell::RefCell,
     rc::Rc,
     collections::HashMap,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
+
+enum AssignTarget {
+    Name {
+        name: String,
+    },
+
+    ListIndex {
+        list: List,
+        index: usize,
+    },
+
+    DictKey {
+        dict: Dict,
+        key: String,
+    },
+
+    StringIndex {
+        string: Rc<String>,
+        index: usize,
+    },
+
+    MatrixIndex {
+        matrix: MatrixRef,
+        row: usize,
+        col: usize,
+    },
+
+    ObjectField {
+        object: ObjectRef,
+        name: String,
+    },
+}
 
 pub struct Interpreter {
     env: Env,
     stack: Vec<StackFrame>,
+    block_depth: usize,
     loop_depth: usize,
     function_depth: usize,
     module_loader: ModuleLoader,
     module_stack: Vec<ModuleContext>,
+    file_stack: Vec<PathBuf>,
 }
 
 impl Default for Interpreter {
@@ -52,10 +90,12 @@ impl Interpreter {
         let mut interpreter = Interpreter { 
             env,
             stack: Vec::new(),
+            block_depth: 0,
             loop_depth: 0,
             function_depth: 0,
             module_loader,
             module_stack: Vec::new(),
+            file_stack: Vec::new(),
         };
 
         // eager loading
@@ -419,6 +459,7 @@ impl Interpreter {
         }
     }
 
+    /// Helper function to get the next Value from an IteratorRef
     fn next_from_iterator(
         &mut self,
         iterator: &IteratorRef,
@@ -430,6 +471,77 @@ impl Interpreter {
         self.next_iterator_value(
             &mut iterator,
             whole,
+        )
+    }
+
+    /// Helper function to convert a iterable Value into an IteratorRef
+    fn iterator_from_value(
+        &self,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        IteratorObj::from_value(
+            value
+        )
+        .map_err(|message| {
+            self.error(
+                ErrorKind::Type,
+                message,
+                whole,
+            )
+        })
+    }
+
+    /// Helper for `eval_field`
+    fn make_bound_method(
+        &self,
+        receiver: MethodReceiver,
+        name: &str,
+        whole: &Expr,
+    ) -> Result<Option<Value>> {
+        if receiver.supports_method(name) {
+            return Ok(
+                Some(
+                    Value::BoundMethod(
+                        BoundMethod::new(
+                            receiver,
+                            name,
+                        )
+                    )
+                )
+            );
+        }
+
+        if !receiver.is_iterator_method(name) {
+            return Ok(None);
+        }
+
+        let value =
+            match receiver.to_iterable_value() {
+                Some(value) =>
+                    value,
+
+                None =>
+                    return Ok(None),
+            };
+
+        let iterator =
+            self.iterator_from_value(
+                value,
+                whole,
+            )?;
+
+        Ok(
+            Some(
+                Value::BoundMethod(
+                    BoundMethod::new(
+                        MethodReceiver::Iterator(
+                            iterator
+                        ),
+                        name,
+                    )
+                )
+            )
         )
     }
 
@@ -457,7 +569,7 @@ impl Interpreter {
         }
     }
 
-    /// Helper funtion to validate i64 and f64
+    /// Helper funtion to validate i64, f64 and convert to f64
     fn expect_number(
         &self,
         value: Value,
@@ -485,7 +597,50 @@ impl Interpreter {
         }
     }
 
-    /// Helper function to validate Value type and extract data
+    /// Helper function to validate index type and convert to usize
+    fn expect_index(
+        &mut self,
+        expr: &Expr,
+        whole: &Expr,
+        description: &str,
+    ) -> Result<usize> {
+        match self.eval_value(expr)? {
+            Value::Int(value)
+                if value >= 0 =>
+            {
+                Ok(value as usize)
+            }
+
+            Value::Int(_) => {
+                Err(
+                    self.error(
+                        ErrorKind::Index,
+                        format!(
+                            "{} must be non-negative",
+                            description
+                        ),
+                        whole,
+                    )
+                )
+            }
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "{} must be Int, got {}",
+                            description,
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    /// Helper function to validate Value type and convert to T
     fn expect<T: FromValue>(
         &self,
         value: Value,
@@ -551,6 +706,39 @@ impl Interpreter {
         }
 
         Ok(ControlFlow::Value(last))
+    }
+
+    pub fn eval_program_from_file(
+        &mut self,
+        program: &Program,
+        path: &Path,
+    ) -> Result<ControlFlow> {
+        let canonical =
+            std::fs::canonicalize(path)
+                .map_err(|error| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        format!(
+                            "failed to resolve source file '{}': {}",
+                            path.display(),
+                            error
+                        ),
+                        None,
+                    )
+                })?;
+
+        self.file_stack.push(
+            canonical
+        );
+
+        let result =
+            self.eval_program(
+                program
+            );
+
+        self.file_stack.pop();
+
+        result
     }
 
     pub fn eval(
@@ -637,13 +825,15 @@ impl Interpreter {
                 name,
                 fields,
                 methods,
-            } => self.eval_struct_decl(
+            } => {
+                self.eval_struct_decl(
                     *visibility,
                     name,
                     fields,
                     methods,
                     expr,
-            ),
+                )
+            },
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -651,30 +841,52 @@ impl Interpreter {
                 )
             }
 
-            Import(parts) => self.eval_import(parts, expr),
+            Import {
+                path,
+                alias,
+            } => {
+                self.eval_import(
+                    path,
+                    alias.as_deref(),
+                    expr,
+                )
+            }
 
             Let {
                 visibility,
                 pattern,
                 value,
-            } => self.eval_let(
-                *visibility, 
-                pattern, 
-                value
-            ),
-
-            Assign(
-                name, 
-                value
-            ) => {
-                self.eval_assign(
-                    name, 
-                    value, 
+            } => {
+                self.eval_let(
+                    *visibility, 
+                    pattern, 
+                    value
                 )
             }
 
-            AssignIndex(obj, index, rhs) => self.eval_assign_index(obj, index, rhs, expr),
-            AssignField(obj, name, rhs) => self.eval_assign_field(obj, name, rhs, expr),
+            Assign {
+                target, 
+                value,
+            } => {
+                self.eval_assign(
+                    target,
+                    value,
+                    expr,
+                )
+            }
+
+            AssignOp { 
+                target,
+                op,
+                value ,
+            } => {
+                self.eval_assign_op(
+                    target,
+                    *op,
+                    value,
+                    expr,
+                )
+            }
 
             Drop(name) => {
                 if self.env.remove_local(name).is_none() {
@@ -685,7 +897,11 @@ impl Interpreter {
 
             Binary(BinOp::And, lhs, rhs) => self.eval_and(lhs, rhs, expr),
             Binary(BinOp::Or, lhs, rhs) => self.eval_or(lhs, rhs, expr),
-            Binary(op, lhs, rhs) => {
+            Binary(
+                op, 
+                lhs, 
+                rhs
+            ) => {
                 let l = self.eval_value(lhs)?;
                 let r = self.eval_value(rhs)?;
 
@@ -854,7 +1070,16 @@ impl Interpreter {
 
             Call(callee, args) => self.eval_call(callee, args, expr),
 
-            Field(obj, name) => self.eval_field(obj, name, expr),
+            Field {
+                object, 
+                name
+            } => {
+                self.eval_field(
+                    object, 
+                    name, 
+                    expr
+                )
+            }
 
             Index(obj, index) => self.eval_index(obj, index, expr),
 
@@ -917,7 +1142,7 @@ impl Interpreter {
 
                 ListItem::Range(range) => {
                     let iterator =
-                        self.eval_iterable(
+                        self.eval_range_iterator(
                             range,
                             expr,
                         )?;
@@ -940,6 +1165,111 @@ impl Interpreter {
                     Rc::new(
                         RefCell::new(values)
                     )
+                )
+            )
+        )
+    }
+
+    /// Helper for `eval_list` to evaluate a range expression and return an iterator
+    fn eval_range_iterator(
+        &mut self,
+        range: &IndexExpr,
+        whole: &Expr,
+    ) -> Result<IteratorRef> {
+        let IndexExpr::Range {
+            start,
+            end,
+            inclusive,
+        } = range
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Type,
+                    "expected range expression",
+                    whole,
+                )
+            );
+        };
+
+        let start =
+            match start {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range start must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => 0,
+            };
+
+        let end =
+            match end {
+                Some(expr) => {
+                    match self.eval_value(expr)? {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range end must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                None => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Range,
+                            "open-ended ranges are not allowed in list literals",
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        let end =
+            if *inclusive {
+                end.checked_add(1)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Overflow,
+                            "inclusive range endpoint overflow",
+                            whole,
+                        )
+                    })?
+            } else {
+                end
+            };
+
+        Ok(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Range {
+                        current: start,
+                        end,
+                    }
                 )
             )
         )
@@ -1044,19 +1374,21 @@ impl Interpreter {
             })?;
 
         if visibility == Visibility::Public {
+            if self.block_depth != 0 {
+                return Err(
+                    self.error(
+                        ErrorKind::Name,
+                        "'pub struct' is only allowed at top-level",
+                        whole,
+                    )
+                );
+            }
+
             if let Some(context) =
                 self.module_stack.last_mut()
             {
                 context.export(
                     name.to_owned()
-                );
-            } else {
-                return Err(
-                    self.error(
-                        ErrorKind::Name,
-                        "'pub struct' is only allowed at module scope",
-                        whole,
-                    )
                 );
             }
         }
@@ -1289,6 +1621,7 @@ impl Interpreter {
     fn eval_import(
         &mut self,
         parts: &[String],
+        alias: Option<&str>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
         // =========================================================
@@ -1310,79 +1643,122 @@ impl Interpreter {
                 parts.to_vec()
             );
 
-        // =========================================================
-        // 2. Lazy standard-library module
+        // ---------------------------------------------------------
+        // Name to bind in the current environment.
         //
-        // Only module bodies are lazy.
-        // Builtin functions were already installed in Interpreter::new().
+        // import math
+        //     -> math
+        //
+        // import math as m
+        //     -> m
+        //
+        // import tests.modules.a
+        //     -> a
+        //
+        // import tests.modules.a as mod
+        //     -> mod
+        // ---------------------------------------------------------
+
+        let binding_name =
+            alias
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    parts
+                        .last()
+                        .cloned()
+                        .expect(
+                            "validated non-empty module path"
+                        )
+                });
+
+        // =========================================================
+        // 2. Determine importing file directory
         // =========================================================
 
-        if parts.len() == 1 {
-            let name =
-                &parts[0];
+        let base_dir =
+            self.file_stack
+                .last()
+                .and_then(|path| {
+                    path.parent()
+                });
 
-            if let Some(module) =
-                crate::stdlib::load_module(name)
-            {
-                if self.env.contains_local(name) {
+        // =========================================================
+        // 3. Resolve physical user module first
+        //
+        // Relative module resolution has priority over stdlib.
+        // =========================================================
+
+        let resolved =
+            self.module_loader.resolve(
+                &requested,
+                base_dir,
+            );
+
+        let canonical =
+            match resolved {
+                Ok(path) =>
+                    path,
+
+                Err(error) => {
+                    // -------------------------------------------------
+                    // 3a. If a physical module was not found and this
+                    //     is a single-component import, try stdlib.
+                    // -------------------------------------------------
+
+                    if parts.len() == 1 {
+                        let name =
+                            &parts[0];
+
+                        if let Some(module) =
+                            crate::stdlib::load_module(
+                                name
+                            )
+                        {
+                            self.bind_imported_module(
+                                &requested,
+                                &binding_name,
+                                alias,
+                                module,
+                                whole,
+                            )?;
+
+                            return Ok(
+                                ControlFlow::Value(
+                                    Value::Unit
+                                )
+                            );
+                        }
+                    }
+
                     return Err(
                         self.error(
-                            ErrorKind::Name,
+                            ErrorKind::Import,
                             format!(
-                                "name '{}' is already defined in this scope",
-                                name
+                                "failed to import '{}': {}",
+                                requested.name(),
+                                error.message,
                             ),
                             whole,
                         )
                     );
                 }
-
-                self.env.define(
-                    name.clone(),
-                    Value::Module(module),
-                );
-
-                return Ok(
-                    ControlFlow::Value(
-                        Value::Unit
-                    )
-                );
-            }
-        }
-
-        // =========================================================
-        // 3. Resolve physical file
-        // =========================================================
-
-        let canonical =
-            self.module_loader
-                .resolve(
-                    &requested
-                )
-                .map_err(|mut error| {
-                    if error.span.is_none() { 
-                        error.span = Some(whole.span); 
-                    }
-                    if error.stack.is_empty() { 
-                        error.stack = self.stack.clone(); 
-                    }
-
-                    error
-                })?;
+            };
 
         // =========================================================
         // 4. Cache lookup
         //
-        // If this file was already successfully evaluated,
-        // do not execute it again.
+        // Important:
+        // cache is keyed by physical module path, not alias.
         // =========================================================
 
         if let Some(module) =
             self.module_loader
                 .get_cached(&canonical)
         {
-            self.bind_module_path(
+            self.bind_imported_module(
                 &requested,
+                &binding_name,
+                alias,
                 module,
                 whole,
             )?;
@@ -1396,6 +1772,10 @@ impl Interpreter {
 
         // =========================================================
         // 5. Cyclic import detection
+        //
+        // Important:
+        // cycle detection uses the physical module path,
+        // never the alias.
         // =========================================================
 
         if self.module_stack
@@ -1436,11 +1816,14 @@ impl Interpreter {
                     &canonical
                 )
                 .map_err(|mut error| {
-                    if error.span.is_none() { 
-                        error.span = Some(whole.span); 
+                    if error.span.is_none() {
+                        error.span =
+                            Some(whole.span);
                     }
-                    if error.stack.is_empty() { 
-                        error.stack = self.stack.clone(); 
+
+                    if error.stack.is_empty() {
+                        error.stack =
+                            self.stack.clone();
                     }
 
                     error
@@ -1470,6 +1853,10 @@ impl Interpreter {
             )
         );
 
+        self.file_stack.push(
+            canonical.clone()
+        );
+
         // =========================================================
         // 9. Evaluate module
         // =========================================================
@@ -1478,6 +1865,9 @@ impl Interpreter {
             self.eval_program(
                 &program
             );
+
+        // Always restore file execution context.
+        self.file_stack.pop();
 
         // Always restore module stack.
         let context =
@@ -1498,7 +1888,10 @@ impl Interpreter {
                 previous_env,
             );
 
-        // Module execution must complete normally.
+        // =========================================================
+        // 10. Module execution must complete normally
+        // =========================================================
+
         match result? {
             ControlFlow::Value(_) => {}
 
@@ -1534,7 +1927,7 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 10. Build runtime Module
+        // 11. Build runtime Module
         // =========================================================
 
         let mut module =
@@ -1553,7 +1946,9 @@ impl Interpreter {
             if context.is_exported(
                 &name
             ) {
-                module.export(name);
+                module.export(
+                    name
+                );
             }
         }
 
@@ -1565,21 +1960,22 @@ impl Interpreter {
             );
 
         // =========================================================
-        // 11. Cache fully evaluated module
+        // 12. Cache fully evaluated module
         // =========================================================
 
-        self.module_loader
-            .cache(
-                canonical,
-                module.clone(),
-            );
+        self.module_loader.cache(
+            canonical,
+            module.clone(),
+        );
 
         // =========================================================
-        // 12. Attach nested namespace
+        // 13. Bind module
         // =========================================================
 
-        self.bind_module_path(
+        self.bind_imported_module(
             &requested,
+            &binding_name,
+            alias,
             module,
             whole,
         )?;
@@ -1588,6 +1984,46 @@ impl Interpreter {
             ControlFlow::Value(
                 Value::Unit
             )
+        )
+    }
+
+    /// Helper for `eval_import()` to bind the imported module to the current environment.
+    fn bind_imported_module(
+        &mut self,
+        requested: &ModulePath,
+        binding_name: &str,
+        alias: Option<&str>,
+        module: ModuleRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        if self.env.contains_local(
+            binding_name
+        ) {
+            return Err(
+                self.error(
+                    ErrorKind::Name,
+                    format!(
+                        "name '{}' is already defined in this scope",
+                        binding_name
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        if alias.is_some() {
+            self.env.define(
+                binding_name.to_owned(),
+                Value::Module(module),
+            );
+
+            return Ok(());
+        }
+
+        self.bind_module_path(
+            requested,
+            module,
+            whole,
         )
     }
 
@@ -1641,11 +2077,12 @@ impl Interpreter {
         // ---------------------------------------------------------
 
         if visibility == Visibility::Public {
-            if self.module_stack.is_empty() {
+            // `pub` is only valid at top-level.
+            if self.block_depth != 0 {
                 return Err(
                     self.error(
                         ErrorKind::Name,
-                        "'pub' declaration is only allowed at module scope",
+                        "'pub let' is only allowed at top-level",
                         value_expr,
                     )
                 );
@@ -1662,6 +2099,8 @@ impl Interpreter {
                     );
                 }
 
+                // If we are evaluating a real module, record the
+                // binding as part of its public interface.
                 if let Some(context) =
                     self.module_stack.last_mut()
                 {
@@ -1726,179 +2165,570 @@ impl Interpreter {
         Ok(bindings)
     }
 
-    fn eval_assign(
+    fn resolve_assign_target(
         &mut self,
-        name: &str,
-        value_expr: &Expr,
-    ) -> Result<ControlFlow> {
-        let value =
-            self.eval_value(value_expr)?;
+        target: &Expr,
+        whole: &Expr,
+    ) -> Result<AssignTarget> {
+        match &target.kind {
+            // =====================================================
+            // x
+            // =====================================================
 
-        self.env.assign_or_define(
-            name,
-            value,
-        );
+            ExprKind::Ident(name) => {
+                Ok(
+                    AssignTarget::Name {
+                        name: name.clone(),
+                    }
+                )
+            }
 
-        Ok(
-            ControlFlow::Value(
-                Value::Unit
-            )
-        )
+            // =====================================================
+            // x[index]
+            // x[range]
+            // x[row, col]
+            // =====================================================
+
+            ExprKind::Index(
+                object_expr,
+                index,
+            ) => {
+                let object =
+                    self.eval_value(
+                        object_expr
+                    )?;
+
+                match object {
+                    Value::List(list) => {
+                        let index =
+                            self.resolve_single_index(
+                                index,
+                                list.borrow().len(),
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::ListIndex {
+                                list,
+                                index,
+                            }
+                        )
+                    }
+
+                    Value::Dict(dict) => {
+                        let key =
+                            self.resolve_dict_key(
+                                index,
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::DictKey {
+                                dict,
+                                key,
+                            }
+                        )
+                    }
+
+                    Value::Str(string) => {
+                        let index =
+                            self.resolve_single_index(
+                                index,
+                                string.chars().count(),
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::StringIndex {
+                                string,
+                                index,
+                            }
+                        )
+                    }
+
+                    Value::Matrix(matrix) => {
+                        let (row, col) =
+                            self.resolve_matrix_index(
+                                index,
+                                whole,
+                            )?;
+
+                        Ok(
+                            AssignTarget::MatrixIndex {
+                                matrix,
+                                row,
+                                col,
+                            }
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "cannot assign through {}",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            // =====================================================
+            // obj.field
+            // =====================================================
+
+            ExprKind::Field {
+                object,
+                name,
+            } => {
+                let value =
+                    self.eval_value(
+                        object
+                    )?;
+
+                match value {
+                    Value::Object(object) => {
+                        Ok(
+                            AssignTarget::ObjectField {
+                                object,
+                                name: name.clone(),
+                            }
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "cannot assign field '{}' on {}",
+                                    name,
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        )
+                    }
+                }
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "invalid assignment target",
+                        whole,
+                    )
+                )
+            }
+        }
     }
 
-    fn eval_assign_index(
+    fn resolve_single_index(
         &mut self,
-        obj: &Expr,
         index: &IndexExpr,
-        rhs: &Expr,
+        len: usize,
         whole: &Expr,
-    ) -> Result<ControlFlow> {
-        let target = self.eval_value(obj)?;
+    ) -> Result<usize> {
+        let IndexExpr::Single(expr) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "assignment requires a single index",
+                    whole,
+                )
+            );
+        };
 
-        match (target, index) {
-            // =========================================================
-            // List[index] = value
-            // =========================================================
-            (
-                Value::List(list),
-                IndexExpr::Single(index),
-            ) => {
-                let idx =
-                    self.eval_index_int(
-                        index,
-                        whole,
-                    )?;
+        let index =
+            self.eval_value(expr)?;
 
-                let value =
-                    self.eval_value(rhs)?;
-
-                let mut list =
-                    list.borrow_mut();
-
-                if idx >= list.len() {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "index out of range: {}",
-                            idx
-                        ),
-                        whole,
-                    ));
+        let index =
+            match index {
+                Value::Int(value)
+                    if value >= 0 =>
+                {
+                    value as usize
                 }
 
-                list[idx] = value.clone();
+                Value::Int(_) => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Index,
+                            "negative indices are not allowed for assignment",
+                            whole,
+                        )
+                    );
+                }
 
-                Ok(ControlFlow::Value(value))
+                other => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Type,
+                            format!(
+                                "index must be Int, got {}",
+                                other.type_name()
+                            ),
+                            whole,
+                        )
+                    );
+                }
+            };
+
+        if index >= len {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    format!(
+                        "index out of range: {}",
+                        index
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        Ok(index)
+    }
+
+    fn resolve_dict_key(
+        &mut self,
+        index: &IndexExpr,
+        whole: &Expr,
+    ) -> Result<String> {
+        let IndexExpr::Single(expr) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "dictionary assignment requires a single key",
+                    whole,
+                )
+            );
+        };
+
+        let value =
+            self.eval_value(expr)?;
+
+        match value {
+            Value::Str(key) =>
+                Ok(key.as_ref().clone()),
+
+            other => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        format!(
+                            "dictionary key must be Str, got {}",
+                            other.type_name()
+                        ),
+                        whole,
+                    )
+                )
+            }
+        }
+    }
+
+    fn resolve_matrix_index(
+        &mut self,
+        index: &IndexExpr,
+        whole: &Expr,
+    ) -> Result<(usize, usize)> {
+        let IndexExpr::Tuple(indices) =
+            index
+        else {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    "matrix assignment requires two indices",
+                    whole,
+                )
+            );
+        };
+
+        if indices.len() != 2 {
+            return Err(
+                self.error(
+                    ErrorKind::Index,
+                    format!(
+                        "matrix assignment expects 2 indices, got {}",
+                        indices.len()
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        let row_expr = indices[0]
+            .as_single()
+            .ok_or_else(|| {
+                self.error(
+                    ErrorKind::Type,
+                    "matrix row index must be a single index",
+                    whole,
+                )
+            })?;
+
+        let col_expr = indices[1]
+            .as_single()
+            .ok_or_else(|| {
+                self.error(
+                    ErrorKind::Type,
+                    "matrix column index must be a single index",
+                    whole,
+                )
+            })?;
+
+        let row = self.expect_index(
+            row_expr,
+            whole,
+            "matrix row index",
+        )?;
+
+        let col = self.expect_index(
+            col_expr,
+            whole,
+            "matrix column index",
+        )?;
+
+        Ok((row, col))
+    }
+
+    fn read_assign_target(
+        &self,
+        target: &AssignTarget,
+        whole: &Expr,
+    ) -> Result<Value> {
+        match target {
+            // =====================================================
+            // x
+            // =====================================================
+
+            AssignTarget::Name { name } => {
+                self.env
+                    .get(name)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "{} is not defined",
+                                name
+                            ),
+                            whole,
+                        )
+                    })
             }
 
-            // =========================================================
-            // List[start..end] = value
-            //
-            // unsupported yet
-            // =========================================================
-            (
-                Value::List(_),
-                IndexExpr::Range { .. },
-            ) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    "list slice assignment is not implemented yet",
-                    whole,
-                ))
+            // =====================================================
+            // xs[i]
+            // =====================================================
+
+            AssignTarget::ListIndex {
+                list,
+                index,
+            } => {
+                list.borrow()
+                    .get(*index)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    })
             }
 
-            // =========================================================
-            // Dict["key"] = value
-            // =========================================================
-            (
-                Value::Dict(dict),
-                IndexExpr::Single(index),
-            ) => {
-                let v = self.eval_value(index)?;
+            // =====================================================
+            // dict[key]
+            // =====================================================
 
-                let key: String = self.expect::<StrRef>(
-                    v,
-                    whole,
-                )?.as_ref().clone();
+            AssignTarget::DictKey {
+                dict,
+                key,
+            } => {
+                dict.borrow()
+                    .get(key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "dictionary key not found: {:?}",
+                                key
+                            ),
+                            whole,
+                        )
+                    })
+            }
 
-                let value =
-                    self.eval_value(rhs)?;
+            // =====================================================
+            // string[i]
+            // =====================================================
 
-                dict.borrow_mut().insert(
-                    key,
-                    value.clone(),
+            AssignTarget::StringIndex {
+                string,
+                index,
+            } => {
+                string
+                    .chars()
+                    .nth(*index)
+                    .map(|c| {
+                        Value::Str(
+                            Rc::new(
+                                c.to_string()
+                            )
+                        )
+                    })
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "index out of range: {}",
+                                index
+                            ),
+                            whole,
+                        )
+                    })
+            }
+
+            // =====================================================
+            // matrix[row, col]
+            // =====================================================
+
+            AssignTarget::MatrixIndex {
+                matrix,
+                row,
+                col,
+            } => {
+                matrix
+                    .borrow()
+                    .get(*row, *col)
+                    .map(Value::Float)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Index,
+                            format!(
+                                "matrix index out of bounds: ({}, {})",
+                                row,
+                                col
+                            ),
+                            whole,
+                        )
+                    })
+            }
+
+            // =====================================================
+            // obj.field
+            // =====================================================
+
+            AssignTarget::ObjectField {
+                object,
+                name,
+            } => {
+                object
+                    .borrow()
+                    .get_field(name)
+                    .ok_or_else(|| {
+                        self.error(
+                            ErrorKind::Name,
+                            format!(
+                                "object has no field '{}'",
+                                name
+                            ),
+                            whole,
+                        )
+                    })
+            }
+        }
+    }
+
+    fn write_assign_target(
+        &mut self,
+        target: AssignTarget,
+        value: Value,
+        whole: &Expr,
+    ) -> Result<()> {
+        match target {
+            // =====================================================
+            // x = value
+            // =====================================================
+
+            AssignTarget::Name { name } => {
+                self.env.assign(
+                    &name,
+                    value,
                 );
 
-                Ok(ControlFlow::Value(value))
+                Ok(())
             }
 
-            // =========================================================
-            // Dict[...] = ...
-            //
-            // tuple indexing is not supported
-            // =========================================================
-            (
-                Value::Dict(_),
-                IndexExpr::Tuple(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "tuple indexing is not supported for Dict",
-                    whole,
-                ))
+            // =====================================================
+            // xs[i] = value
+            // =====================================================
+
+            AssignTarget::ListIndex {
+                list,
+                index,
+            } => {
+                list.borrow_mut()[index] =
+                    value;
+
+                Ok(())
             }
 
-            // =========================================================
-            // String[index] = ...
-            //
-            // String is immutable
-            // =========================================================
-            (
-                Value::Str(_),
-                IndexExpr::Single(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    "String values are immutable",
-                    whole,
-                ))
+            // =====================================================
+            // dict[key] = value
+            // =====================================================
+
+            AssignTarget::DictKey {
+                dict,
+                key,
+            } => {
+                dict.borrow_mut()
+                    .insert(
+                        key,
+                        value,
+                    );
+
+                Ok(())
             }
 
-            // =========================================================
-            // Matrix[row, col] = value
-            // =========================================================
-            (
-                Value::Matrix(matrix),
-                IndexExpr::Tuple(indices),
-            ) => {
-                if indices.len() != 2 {
-                    return Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "Matrix assignment expects exactly 2 indices, got {}",
-                            indices.len()
-                        ),
+            // =====================================================
+            // string[i] = value
+            // =====================================================
+
+            AssignTarget::StringIndex {
+                ..
+            } => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "String elements are immutable",
                         whole,
-                    ));
-                }
+                    )
+                )
+            }
 
-                let row =
-                    self.eval_matrix_single_index(
-                        &indices[0],
-                        "row",
-                        whole,
-                    )?;
+            // =====================================================
+            // matrix[row, col] = value
+            // =====================================================
 
-                let col =
-                    self.eval_matrix_single_index(
-                        &indices[1],
-                        "column",
-                        whole,
-                    )?;
-
-                let value =
-                    self.eval_value(rhs)?;
-
+            AssignTarget::MatrixIndex {
+                matrix,
+                row,
+                col,
+            } => {
                 let numeric = 
                     self.expect_number(value, whole)?;
 
@@ -1917,182 +2747,149 @@ impl Interpreter {
                         )
                     })?;
 
-                Ok(ControlFlow::Value(
-                    Value::Float(numeric)
-                ))
+                Ok(())
             }
 
-            // =========================================================
-            // Matrix[index] = ...
-            //
-            // Single index is intentionally unsupported.
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Single(_),
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "Matrix assignment requires two indices: Matrix[row, col]",
-                    whole,
-                ))
-            }
+            // =====================================================
+            // obj.field = value
+            // =====================================================
 
-            // =========================================================
-            // Matrix[slice] = ...
-            //
-            // Slice assignment is intentionally deferred.
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Range { .. },
-            ) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    "Matrix slice assignment is not implemented yet",
-                    whole,
-                ))
-            }
+            AssignTarget::ObjectField {
+                object,
+                name,
+            } => {
+                object
+                    .borrow_mut()
+                    .set_field(
+                        name,
+                        value,
+                    );
 
-            // =========================================================
-            // Matrix tuple with >2 dimensions
-            // =========================================================
-            (
-                Value::Matrix(_),
-                IndexExpr::Tuple(_),
-            ) => {
-                unreachable!(
-                    "Matrix tuple assignment should be handled above"
+                Ok(())
+            }
+        }
+    }
+
+    fn eval_assign(
+        &mut self,
+        target_expr: &Expr,
+        rhs_expr: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match &target_expr.kind {
+            // -----------------------------------------------------
+            // Bare identifier:
+            // -----------------------------------------------------
+
+            ExprKind::Ident(name) => {
+                let value =
+                    self.eval_value(
+                        rhs_expr
+                    )?;
+
+                self.env.assign_or_define(
+                    name,
+                    value,
+                );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
                 )
             }
 
-            // =========================================================
-            // Unsupported indexing target
-            // =========================================================
-            (
-                other,
-                _,
-            ) => {
-                Err(self.error(
-                    ErrorKind::Type,
-                    format!(
-                        "invalid indexed assignment on {}",
-                        other.type_name()
-                    ),
-                    whole,
-                ))
-            }
-        }
-    }
+            // -----------------------------------------------------
+            // Index / field:
+            // -----------------------------------------------------
 
-    fn eval_assign_field(
-        &mut self,
-        obj: &Expr,
-        name: &str,
-        rhs: &Expr,
-        whole: &Expr,
-    ) -> Result<ControlFlow> {
-        let target = self.eval_value(obj)?;
-        let value = self.eval_value(rhs)?;
-
-        match target {
-            Value::Object(object) => {
-                let mut object = object.borrow_mut();
-
-                if object.get_method(name).is_some() {
-                    return Err(self.error(
-                        ErrorKind::Runtime,
-                        format!(
-                            "cannot assign to object method '{}'",
-                            name
-                        ),
+            ExprKind::Index(_, _)
+            | ExprKind::Field { .. } => {
+                let target =
+                    self.resolve_assign_target(
+                        target_expr,
                         whole,
-                    ));
-                }
+                    )?;
 
-                object.set_field(
-                    name.to_owned(),
-                    value.clone(),
-                );
+                let value =
+                    self.eval_value(
+                        rhs_expr
+                    )?;
 
-                Ok(ControlFlow::Value(value))
-            }
-
-            // Deny module modification
-            Value::Module(module) => {
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "cannot modify module '{}'",
-                        module.borrow().name()
-                    ),
-                    whole,
-                ))
-            }
-
-            other => Err(self.error(
-                ErrorKind::Type,
-                format!(
-                    "cannot assign field '{}' on {}",
-                    name,
-                    other.type_name()
-                ),
-                whole,
-            )),
-        }
-    }
-
-    /// Helper for `eval_index()`
-    fn eval_matrix_single_index(
-        &mut self,
-        index: &IndexExpr,
-        axis: &str,
-        whole: &Expr,
-    ) -> Result<usize> {
-        match index {
-            IndexExpr::Single(expr) => {
-                let v = self.eval_value(expr)?;
-                
-                let v: i64 = self.expect(
-                    v,
+                self.write_assign_target(
+                    target,
+                    value,
                     whole,
                 )?;
 
-                if v >= 0 { Ok(v as usize) }
-                else {
-                    Err(self.error(
-                        ErrorKind::Index,
-                        format!(
-                            "negative Matrix {} index",
-                            axis
-                        ),
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "invalid assignment target",
                         whole,
-                    ))
-                }
-            }
-
-            IndexExpr::Range { .. } => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    format!(
-                        "Matrix {} slicing is not implemented yet",
-                        axis
-                    ),
-                    whole,
-                ))
-            }
-
-            IndexExpr::Tuple(_) => {
-                Err(self.error(
-                    ErrorKind::Index,
-                    format!(
-                        "nested Matrix {} index is not supported",
-                        axis
-                    ),
-                    whole,
-                ))
+                    )
+                )
             }
         }
+    }
+
+    fn eval_assign_op(
+        &mut self,
+        target_expr: &Expr,
+        op: BinOp,
+        rhs_expr: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let target =
+            self.resolve_assign_target(
+                target_expr,
+                whole,
+            )?;
+
+        let current =
+            self.read_assign_target(
+                &target,
+                whole,
+            )?;
+
+        let rhs =
+            self.eval_value(
+                rhs_expr
+            )?;
+
+        let value =
+            operator::apply_binop(
+                op,
+                current,
+                rhs,
+            )
+            .map_err(|error| {
+                self.error(
+                    ErrorKind::Runtime,
+                    error,
+                    whole,
+                )
+            })?;
+
+        self.write_assign_target(
+            target,
+            value,
+            whole,
+        )?;
+
+        Ok(
+            ControlFlow::Value(
+                Value::Unit
+            )
+        )
     }
 
     fn eval_index(
@@ -2112,9 +2909,10 @@ impl Interpreter {
                 IndexExpr::Single(index),
             ) => {
                 let idx =
-                    self.eval_index_int(
+                    self.expect_index(
                         index,
                         whole,
+                        "index"
                     )?;
 
                 let list_ref =
@@ -2180,9 +2978,10 @@ impl Interpreter {
                 IndexExpr::Single(index),
             ) => {
                 let idx =
-                    self.eval_index_int(
+                    self.expect_index(
                         index,
                         whole,
+                        "index",
                     )?;
 
                 s.chars()
@@ -2473,24 +3272,6 @@ impl Interpreter {
         }
     }
 
-    fn eval_index_int(&mut self, expr: &Expr, whole: &Expr) -> Result<usize> {
-        let v = self.eval_value(expr)?;
-        
-        let v: i64 = self.expect(
-            v,
-            whole,
-        )?;
-
-        if v >= 0 { Ok(v as usize) }
-        else {
-            Err(self.error(
-                ErrorKind::Index, 
-                "negative index is not supported", 
-                whole,
-            ))
-        }
-    }
-
     fn resolve_matrix_range(
         &mut self,
         start: Option<&Expr>,
@@ -2703,12 +3484,14 @@ impl Interpreter {
         whole: &Expr
     ) -> Result<(usize,usize)> {
         let s = match start { 
-            Some(e) => self.eval_index_int(e, whole)?, 
+            Some(e) => self.expect_index(
+                e, whole, "slice start")?, 
             None => 0 
         };
 
         let mut e = match end { 
-            Some(e) => self.eval_index_int(e, whole)?, 
+            Some(e) => self.expect_index(
+                e, whole, "slice end")?, 
             None => len 
         };
 
@@ -2725,194 +3508,18 @@ impl Interpreter {
 
     fn eval_iterable(
         &mut self,
-        index: &IndexExpr,
+        expr: &Expr,
         whole: &Expr,
     ) -> Result<IteratorRef> {
-        match index {
-            // =====================================================
-            // Single iterable expression
-            // =====================================================
-            IndexExpr::Single(expr) => {
-                let value =
-                    self.eval_value(expr)?;
+        let value =
+            self.eval_value(
+                expr
+            )?;
 
-                self.make_iterator(
-                    value,
-                    whole,
-                )
-            }
-
-            // =====================================================
-            // Range
-            // =====================================================
-            IndexExpr::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                let start =
-                    match start {
-                        Some(expr) => {
-                            let v = self.eval_value(expr)?;
-
-                            let v: i64 = self.expect(
-                                v,
-                                whole,
-                            )?;
-
-                            if v >= 0 { v }
-                            else {
-                                return Err(
-                                    self.error(
-                                        ErrorKind::Index,
-                                        "negative range start",
-                                        whole,
-                                    )
-                                );
-                            }
-                        }
-
-                        None => 0,
-                    };
-
-                let mut end =
-                    match end {
-                        Some(expr) => {
-                            let v = self.eval_value(expr)?;
-
-                            self.expect::<i64>(
-                                v,
-                                whole,
-                            )?
-                        }
-
-                        None => i64::MAX,
-                    };
-
-                if *inclusive {
-                    end =
-                        end.checked_add(1)
-                            .ok_or_else(|| {
-                                self.error(
-                                    ErrorKind::Overflow,
-                                    "inclusive range endpoint overflow",
-                                    whole,
-                                )
-                            })?;
-                }
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            }
-
-            // =====================================================
-            // Tuple index expression is not an iterable itself
-            // =====================================================
-            IndexExpr::Tuple(_) => {
-                Err(
-                    self.error(
-                        ErrorKind::Type,
-                        "tuple index is not iterable",
-                        whole,
-                    )
-                )
-            }
-        }
-    }
-
-    /// Helper for `eval_iterable()`
-    fn make_iterator(
-        &mut self,
-        value: Value,
-        whole: &Expr,
-    ) -> Result<IteratorRef> {
-        match value {
-            Value::Iterator(iterator) => {
-                Ok(iterator)
-            }
-
-            Value::List(data) => {
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::List {
-                                data,
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            }
-
-            Value::Str(string) => {
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Str {
-                                data: Rc::new(
-                                    string
-                                        .chars()
-                                        .collect()
-                                ),
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            }
-
-            Value::Range(
-                start,
-                end,
-                inclusive,
-            ) => {
-                let end =
-                    if inclusive {
-                        end.checked_add(1)
-                            .ok_or_else(|| {
-                                self.error(
-                                    ErrorKind::Overflow,
-                                    "inclusive range endpoint overflow",
-                                    whole,
-                                )
-                            })?
-                    } else {
-                        end
-                    };
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            }
-
-            other => {
-                Err(
-                    self.error(
-                        ErrorKind::Type,
-                        format!(
-                            "{} is not iterable",
-                            other.type_name()
-                        ),
-                        whole,
-                    )
-                )
-            }
-        }
+        self.iterator_from_value(
+            value,
+            whole,
+        )
     }
 
     fn eval_while(
@@ -2987,12 +3594,9 @@ impl Interpreter {
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let value =
-            self.eval_value(iterable)?;
-
         let iterator =
-            self.make_iterator(
-                value,
+            self.eval_iterable(
+                iterable,
                 whole,
             )?;
 
@@ -3386,14 +3990,17 @@ impl Interpreter {
     fn eval_block(
         &mut self,
         exprs: &[Expr],
-        _: bool,
+        scoped: bool,
     ) -> Result<ControlFlow> {
-        let new_env = self.env.child();
         let old_env =
-            std::mem::replace(
-                &mut self.env,
-                new_env,
-            );
+            self.env.clone();
+
+        if scoped {
+            self.env =
+                self.env.child();
+
+            self.block_depth += 1;
+        }
 
         let result = (|| {
             let mut last =
@@ -3416,7 +4023,10 @@ impl Interpreter {
             )
         })();
 
-        self.env = old_env;
+        if scoped {
+            self.block_depth -= 1;
+            self.env = old_env;
+        }
 
         result
     }
@@ -3759,15 +4369,16 @@ impl Interpreter {
                         string
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -3790,15 +4401,16 @@ impl Interpreter {
                         list.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -3821,15 +4433,16 @@ impl Interpreter {
                         set.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -3852,15 +4465,16 @@ impl Interpreter {
                         dict.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -3989,21 +4603,54 @@ impl Interpreter {
                 )
             }
 
+            Value::Path(path) => {
+                let receiver =
+                    MethodReceiver::Path(
+                        path
+                    );
+
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
+                    return Ok(
+                        ControlFlow::Value(
+                            value
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Path has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Vector(vector) => {
                 let receiver =
                     MethodReceiver::Vector(
                         vector.clone()
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4026,6 +4673,7 @@ impl Interpreter {
                         matrix.clone()
                     );
 
+                // intentionally not using `make_bound_method` here, because we don't want to decide its iterator semantics yet.
                 if receiver.supports_method(name) {
                     return Ok(
                         ControlFlow::Value(
@@ -4258,15 +4906,16 @@ impl Interpreter {
                         iterator
                     );
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4295,15 +4944,16 @@ impl Interpreter {
                         inclusive,
                     };
 
-                if receiver.supports_method(name) {
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
                     return Ok(
                         ControlFlow::Value(
-                            Value::BoundMethod(
-                                BoundMethod::new(
-                                    receiver,
-                                    name,
-                                )
-                            )
+                            value
                         )
                     );
                 }
@@ -4579,6 +5229,15 @@ impl Interpreter {
             MethodReceiver::GroupedDataFrame(grouped) => {
                 self.call_grouped_dataframe_method(
                     grouped.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+        
+            MethodReceiver::Path(path) => {
+                self.call_path_method(
+                    path.clone(),
                     method.name(),
                     args,
                     whole,
@@ -6774,7 +7433,7 @@ impl Interpreter {
 
     /// Helper for `call_range_method()`
     fn make_range_iterator(
-        &mut self,
+        &self,
         start: i64,
         end: i64,
         inclusive: bool,
@@ -7374,29 +8033,16 @@ impl Interpreter {
                     );
                 }
 
-                let other =
-                    match &args[0] {
-                        Value::Iterator(other) =>
-                            other,
+                let other 
+                    = self.iterator_from_value(
+                        args[0].clone(),
+                        whole
+                    )?;
 
-                        other => {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Type,
-                                    format!(
-                                        "zip() expects Iterator, got {}",
-                                        other.type_name()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    };
-
-                let result =
+                let iterator =
                     IteratorObj::Zip {
                         left: iterator.clone(),
-                        right: other.clone(),
+                        right: other,
                     };
 
                 Ok(
@@ -7404,7 +8050,7 @@ impl Interpreter {
                         Value::Iterator(
                             Rc::new(
                                 RefCell::new(
-                                    result
+                                    iterator
                                 )
                             )
                         )
@@ -8969,6 +9615,289 @@ impl Interpreter {
                     ),
                     whole,
                 ))
+            }
+        }
+    }
+
+    fn call_path_method(
+        &mut self,
+        path: PathRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "to_str" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_str() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                path.to_string_lossy()
+                            )
+                        )
+                    )
+                )
+            }
+
+            "name" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "name() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.name() {
+                    Some(name) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(name)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "extension" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "extension() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.extension() {
+                    Some(extension) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(
+                                            extension
+                                        )
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "stem" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "stem() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.stem() {
+                    Some(stem) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(stem)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "parent" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "parent() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.parent() {
+                    Some(parent) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Path(
+                                        Rc::new(parent)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "join" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "join() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let child =
+                    args.remove(0);
+
+                let joined =
+                    match child {
+                        Value::Str(value) =>
+                            path.join(
+                                value.as_ref()
+                            ),
+
+                        Value::Path(value) =>
+                            path.join(
+                                value.as_path()
+                            ),
+
+                        other =>
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "join() expects Str or Path, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            ),
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Path(
+                            Rc::new(joined)
+                        )
+                    )
+                )
+            }
+
+            "exists" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "exists() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.exists()
+                        )
+                    )
+                )
+            }
+
+            "is_file" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "is_file() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.is_file()
+                        )
+                    )
+                )
+            }
+
+            "is_dir" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "is_dir() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.is_dir()
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Path has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
         }
     }

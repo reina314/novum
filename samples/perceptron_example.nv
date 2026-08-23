@@ -1,0 +1,62 @@
+import math
+
+// define Perceptron structure
+pub struct Perceptron {
+    weights,
+    bias,
+    learning_rate,
+    epochs,
+
+    init: |self, input_dim, learning_rate, epochs| { 
+        self.weights = [0.0] * input_dim
+        self.bias = 0.0
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+    },
+
+    predict: |self, x| {
+        sum = 0
+        for (w, xi) in zip(self.weights, x) {
+            sum += w * xi
+        }
+
+        activation = sum + self.bias
+
+        if activation >= 0 { 
+            return 1 
+        } else { 
+            return 0 
+        }
+    },
+
+    fit: |self, X, y| {
+        for epoch in range(self.epochs) {
+            total_error = 0
+
+            for (xi, target) in zip(X, y) {
+                prediction = self.predict(xi)
+                error = target - prediction
+
+                if error != 0 {
+                    i = 0
+                    for (w, x_val) in zip(self.weights, xi) {
+                        self.weights[i] = 
+                            w + self.learning_rate * error * x_val
+                        
+                        i += 1
+                    }
+
+                    self.bias = self.bias + self.learning_rate * error 
+                    total_error += math.abs(error)
+                }
+            }
+
+            if total_error == 0 {
+                print("Epochs: "+ (epoch + 1) + ", converged")
+                break
+            }
+        }
+    }
+}
+
+

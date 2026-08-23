@@ -59,49 +59,79 @@ impl ModuleLoader {
     // =========================================================
 
     pub fn resolve(
-        &self,
-        module_path: &ModulePath,
-    ) -> Result<PathBuf, Error> {
-        let mut path =
-            self.root.clone();
+    &self,
+    module_path: &ModulePath,
+    base_dir: Option<&Path>,
+) -> Result<PathBuf, Error> {
+    let mut candidates =
+        Vec::new();
 
-        for component
-            in module_path.parts()
-        {
-            path.push(component);
+    // ---------------------------------------------------------
+    // 1. Relative to importing module
+    // ---------------------------------------------------------
+
+    if let Some(base_dir) = base_dir {
+        let mut path =
+            base_dir.to_path_buf();
+
+        for part in module_path.parts() {
+            path.push(part);
         }
 
         path.set_extension("nv");
 
-        if !path.is_file() {
-            return Err(
+        candidates.push(path);
+    }
+
+    // ---------------------------------------------------------
+    // 2. Relative to project root
+    // ---------------------------------------------------------
+
+    let mut root_path =
+        self.root.clone();
+
+    for part in module_path.parts() {
+        root_path.push(part);
+    }
+
+    root_path.set_extension("nv");
+
+    candidates.push(root_path);
+
+    // ---------------------------------------------------------
+    // 3. First existing candidate wins
+    // ---------------------------------------------------------
+
+    for path in candidates {
+        if path.is_file() {
+            return std::fs::canonicalize(
+                &path
+            )
+            .map_err(|error| {
                 Error::new(
                     ErrorKind::Import,
                     format!(
-                        "module '{:?}' not found at '{}'",
-                        module_path,
+                        "failed to resolve module '{}': {}",
                         path.display(),
+                        error
                     ),
                     None,
                 )
-            );
+            });
         }
-
-        std::fs::canonicalize(
-            &path
-        )
-        .map_err(|error| {
-            Error::new(
-                ErrorKind::Import,
-                format!(
-                    "failed to resolve module '{}': {}",
-                    path.display(),
-                    error
-                ),
-                None,
-            )
-        })
     }
+
+    Err(
+        Error::new(
+            ErrorKind::Import,
+            format!(
+                "module '{}' not found",
+                module_path
+            ),
+            None,
+        )
+    )
+}
 
     // =========================================================
     // Read and parse a module source.

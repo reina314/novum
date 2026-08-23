@@ -67,7 +67,10 @@ pub enum ExprKind {
     },
     EnumDecl(EnumDef),
 
-    Import(Vec<String>),
+    Import {
+        path: Vec<String>,
+        alias: Option<String>,
+    },
 
     // Assignment & Deassignment
     Let {
@@ -75,9 +78,16 @@ pub enum ExprKind {
         pattern: Pattern, 
         value: Box<Expr>,
     },
-    Assign(String, Box<Expr>),
-    AssignIndex(Box<Expr>, IndexExpr, Box<Expr>),
-    AssignField(Box<Expr>, String, Box<Expr>),
+
+    Assign {
+        target: Box<Expr>, 
+        value: Box<Expr>,
+    },
+    AssignOp {
+        target: Box<Expr>,
+        op: BinOp,
+        value: Box<Expr>,
+    },
     Drop(String),
 
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -104,8 +114,14 @@ pub enum ExprKind {
     Block(Vec<Expr>),
     Lambda(Vec<String>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
-    Field(Box<Expr>, String),
-    Index(Box<Expr>, IndexExpr),
+    Index(
+        Box<Expr>,
+        IndexExpr,
+    ),
+    Field {
+        object: Box<Expr>, 
+        name: String,
+    },
 
     Range {
         start: Option<Box<Expr>>,
@@ -129,6 +145,17 @@ pub enum IndexExpr {
 
     Tuple(Vec<IndexExpr>),
 }
+
+impl IndexExpr {
+    pub fn as_single(&self) -> Option<&Expr> {
+        match self {
+            IndexExpr::Single(expr) => Some(expr),
+            _ => None,
+        }
+    }
+}
+
+
 
 #[derive(Debug, Clone)]
 pub enum ListItem {
