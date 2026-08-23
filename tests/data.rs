@@ -1634,26 +1634,25 @@ fn process_args() {
 }
 
 #[test]
-fn process_cwd() {
+fn process_cwd_is_path() {
     let result =
         run(
             r#"
             import process
+
             process.cwd()?
             "#
         );
 
     match result {
-        Value::Str(path) => {
-            assert!(
-                !path.is_empty()
+        Value::Path(_) => {}
+
+        other => {
+            panic!(
+                "expected Path, got {:?}",
+                other
             );
         }
-
-        other => panic!(
-            "expected Str, got {:?}",
-            other
-        ),
     }
 }
 
@@ -1681,5 +1680,28 @@ fn process_run() {
                 "hello".into()
             )
         )
+    );
+}
+
+#[test]
+fn process_run_nonzero_exit_is_not_result_error() {
+    let result =
+        run(
+            r#"
+            import process
+
+            let result =
+                process.run(
+                    "false",
+                    []
+                )?
+
+            result.status
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
     );
 }

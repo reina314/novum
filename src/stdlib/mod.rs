@@ -17,6 +17,9 @@ pub mod csv;
 pub mod json;
 pub mod stats;
 
+// For internal use
+pub mod general;
+
 /// Defines eager stdlib module
 pub fn install_builtins(
     env: &Env

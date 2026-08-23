@@ -8,7 +8,11 @@ use crate::{
     interpreter::{ModuleLoader, operator}, 
     runtime::{
         BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef,
-    }, stdlib, 
+    }, 
+    stdlib::{
+        self,
+        general,
+    },
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program,
         ast::{
@@ -5686,7 +5690,7 @@ impl Interpreter {
                         Value::Int(_) =>
                             return Ok(
                                 ControlFlow::Value(
-                                    option_none()
+                                    general::option_none()
                                 )
                             ),
 
@@ -5719,10 +5723,10 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(value),
+                                general::option_some(value),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -5962,7 +5966,7 @@ impl Interpreter {
                         Value::Int(_) => {
                             return Ok(
                                 ControlFlow::Value(
-                                    option_none()
+                                    general::option_none()
                                 )
                             );
                         }
@@ -5990,12 +5994,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -6774,12 +6778,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -6845,12 +6849,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -7552,10 +7556,10 @@ impl Interpreter {
                     ControlFlow::Value(
                         match next {
                             Some(value) =>
-                                option_some(value),
+                                general::option_some(value),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -7757,7 +7761,7 @@ impl Interpreter {
                 else {
                     return Ok(
                         ControlFlow::Value(
-                            option_none()
+                            general::option_none()
                         )
                     );
                 };
@@ -7781,7 +7785,7 @@ impl Interpreter {
 
                 Ok(
                     ControlFlow::Value(
-                        option_some(
+                        general::option_some(
                             accumulator
                         )
                     )
@@ -9664,7 +9668,7 @@ impl Interpreter {
                     Some(name) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(name)
                                     )
@@ -9675,7 +9679,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9696,7 +9700,7 @@ impl Interpreter {
                     Some(extension) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(
                                             extension
@@ -9709,7 +9713,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9730,7 +9734,7 @@ impl Interpreter {
                     Some(stem) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(stem)
                                     )
@@ -9741,7 +9745,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9762,7 +9766,7 @@ impl Interpreter {
                     Some(parent) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Path(
                                         Rc::new(parent)
                                     )
@@ -9773,7 +9777,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9914,34 +9918,6 @@ impl Interpreter {
             Some(expr.span))
                 .with_stack(&self.stack)
     }
-}
-
-/// Helper to wrap Value with Option
-fn option_some(
-    value: Value,
-) -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "Some",
-                vec![value],
-            )
-        )
-    )
-}
-
-/// Helper to create Option.None
-fn option_none() -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "None",
-                vec![],
-            )
-        )
-    )
 }
 
 /// Helper for `eval_match()`

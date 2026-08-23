@@ -1,14 +1,19 @@
 use std::{
     cell::RefCell,
     rc::Rc,
+    process::Command,
 };
 
-use crate::runtime::{
-    Module,
-    ModuleRef,
-    Value,
-    EnumValue,
-    Object,
+use crate::{
+    stdlib::general,
+    runtime::{
+        List,
+        Module,
+        ModuleRef,
+        Value,
+        Object,
+        PathValue,
+    },
 };
 
 pub fn module() -> ModuleRef {
@@ -71,7 +76,9 @@ pub fn args(
     Ok(
         Value::List(
             Rc::new(
-                RefCell::new(values)
+                RefCell::new(
+                    values
+                )
             )
         )
     )
@@ -92,14 +99,13 @@ pub fn env(
             Value::Str(name) =>
                 name,
 
-            other => {
+            other =>
                 return Err(
                     format!(
                         "process.env() expects Str, got {}",
                         other.type_name()
                     )
-                );
-            }
+                ),
         };
 
     match std::env::var(
@@ -107,16 +113,18 @@ pub fn env(
     ) {
         Ok(value) =>
             Ok(
-                option_some(
+                general::option_some(
                     Value::Str(
                         Rc::new(value)
                     )
                 )
             ),
 
-        Err(std::env::VarError::NotPresent) =>
+        Err(
+            std::env::VarError::NotPresent
+        ) =>
             Ok(
-                option_none()
+                general::option_none()
             ),
 
         Err(error) =>
@@ -142,11 +150,10 @@ pub fn cwd(
     match std::env::current_dir() {
         Ok(path) =>
             Ok(
-                result_ok(
-                    Value::Str(
+                general::result_ok(
+                    Value::Path(
                         Rc::new(
-                            path.to_string_lossy()
-                                .into_owned()
+                            PathValue::new(path)
                         )
                     )
                 )
@@ -154,7 +161,7 @@ pub fn cwd(
 
         Err(error) =>
             Ok(
-                result_err(
+                general::result_err(
                     format!(
                         "failed to get current directory: {}",
                         error
@@ -176,17 +183,16 @@ pub fn set_env(
 
     let name =
         match args.remove(0) {
-            Value::Str(name) =>
-                name,
+            Value::Str(value) =>
+                value,
 
-            other => {
+            other =>
                 return Err(
                     format!(
                         "process.set_env() expects first argument as Str, got {}",
                         other.type_name()
                     )
-                );
-            }
+                ),
         };
 
     let value =
@@ -194,28 +200,26 @@ pub fn set_env(
             Value::Str(value) =>
                 value,
 
-            other => {
+            other =>
                 return Err(
                     format!(
                         "process.set_env() expects second argument as Str, got {}",
                         other.type_name()
                     )
-                );
-            }
+                ),
         };
 
-    // This may cause conflicts when multiple threads are trying to set the same environment variable at the same time.
-    match std::env::set_var(
+    // concurrency might cause race condition
+    std::env::set_var(
         name.as_ref(),
         value.as_ref(),
-    ) {
-        () =>
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            ),
-    }
+    );
+
+    Ok(
+        general::result_ok(
+            Value::Unit
+        )
+    )
 }
 
 pub fn run(
@@ -233,68 +237,43 @@ pub fn run(
             Value::Str(command) =>
                 command,
 
-            other => {
+            other =>
                 return Err(
                     format!(
                         "process.run() expects command as Str, got {}",
                         other.type_name()
                     )
-                );
-            }
+                ),
         };
 
     let argv =
-        match args.remove(0) {
-            Value::List(list) =>
-                list,
+        expect_string_list(
+            args.remove(0),
+            "process.run()",
+        )?;
 
-            other => {
-                return Err(
-                    format!(
-                        "process.run() expects arguments as List, got {}",
-                        other.type_name()
-                    )
-                );
-            }
-        };
-
-    let values =
-        argv.borrow();
-
-    let mut command_builder =
-        std::process::Command::new(
-            command.as_ref()
-        );
-
-    for value in values.iter() {
-        let argument =
-            match value {
-                Value::Str(value) =>
-                    value.as_str(),
-
-                other => {
-                    return Err(
-                        format!(
-                            "process.run() arguments must be Str, got {}",
-                            other.type_name()
-                        )
-                    );
-                }
-            };
-
-        command_builder.arg(argument);
-    }
+    let argv =
+        collect_string_args(
+            &argv,
+            "process.run()",
+        )?;
 
     let output =
-        match command_builder.output() {
+        match Command::new(
+            command.as_ref()
+        )
+        .args(&argv)
+        .output()
+        {
             Ok(output) =>
                 output,
 
             Err(error) =>
                 return Ok(
-                    result_err(
+                    general::result_err(
                         format!(
-                            "failed to execute process: {}",
+                            "failed to execute '{}': {}",
+                            command,
                             error
                         )
                     )
@@ -320,8 +299,8 @@ pub fn run(
         .into_owned();
 
     Ok(
-        result_ok(
-            process_result(
+        general::result_ok(
+            make_process_result(
                 status as i64,
                 stdout,
                 stderr,
@@ -330,8 +309,60 @@ pub fn run(
     )
 }
 
+// Helper for `run()`
+fn expect_string_list(
+    value: Value,
+    function: &str,
+) -> Result<List, String> {
+    match value {
+        Value::List(list) =>
+            Ok(list),
 
-fn process_result(
+        other =>
+            Err(
+                format!(
+                    "{} expects List, got {}",
+                    function,
+                    other.type_name()
+                )
+            ),
+    }
+}
+
+fn collect_string_args(
+    list: &List,
+    function: &str,
+) -> Result<Vec<String>, String> {
+    let list =
+        list.borrow();
+
+    let mut result =
+        Vec::with_capacity(
+            list.len()
+        );
+
+    for value in list.iter() {
+        match value {
+            Value::Str(value) =>
+                result.push(
+                    value.as_ref().clone()
+                ),
+
+            other =>
+                return Err(
+                    format!(
+                        "{} expects List<Str>, got element of type {}",
+                        function,
+                        other.type_name()
+                    )
+                ),
+        }
+    }
+
+    Ok(result)
+}
+
+fn make_process_result(
     status: i64,
     stdout: String,
     stderr: String,
@@ -360,63 +391,8 @@ fn process_result(
 
     Value::Object(
         Rc::new(
-            RefCell::new(object)
-        )
-    )
-}
-
-fn result_ok(value: Value) -> Value {
-    // Use your existing Result constructor helper here
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Result",
-                "Ok",
-                vec![value],
-            )
-        )
-    )
-}
-
-fn result_err(message: impl Into<String>) -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Result",
-                "Err",
-                vec![
-                    Value::Str(
-                        Rc::new(
-                            message.into()
-                        )
-                    )
-                ],
-            )
-        )
-    )
-}
-
-fn option_some(value: Value) -> Value {
-    // Use your existing Option constructor helper here.
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "Some",
-                vec![value],
-            )
-        )
-    )
-}
-
-fn option_none() -> Value {
-    // Use your existing Option constructor helper here.
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "None",
-                vec![],
+            RefCell::new(
+                object
             )
         )
     )
