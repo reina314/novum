@@ -830,13 +830,30 @@ impl Interpreter {
                 fields,
                 methods,
             } => {
-                self.eval_struct_decl(
+                self.eval_type_decl(
                     name,
+                    fields,
                     methods,
                     *visibility,
                     expr,
                 )
-            },
+            }
+
+            ClassDecl {
+                visibility,
+                name,
+                fields,
+                methods,
+            } => {
+                self.eval_type_decl(
+                    name,
+                    fields,
+                    methods,
+                    *visibility,
+                    expr,
+                )
+            }
+
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -1304,10 +1321,15 @@ impl Interpreter {
         ))
     }
 
-    fn eval_struct_decl(
+    fn eval_type_decl(
         &mut self,
         name: &str,
-        methods: &[(String, Box<Expr>)],
+        fields: &[
+            (String, Option<Box<Expr>>)
+        ],
+        methods: &[
+            (String, Box<Expr>)
+        ],
         visibility: Visibility,
         whole: &Expr,
     ) -> Result<ControlFlow> {
@@ -1315,6 +1337,25 @@ impl Interpreter {
             Class::new(
                 name.to_owned()
             );
+
+        // =========================================================
+        // Fields
+        // =========================================================
+
+        for (
+            field_name,
+            default,
+        ) in fields
+        {
+            class.add_field(
+                field_name.clone(),
+                default.clone(),
+            );
+        }
+
+        // =========================================================
+        // Methods
+        // =========================================================
 
         for (
             method_name,
@@ -1333,7 +1374,7 @@ impl Interpreter {
                             self.error(
                                 ErrorKind::Type,
                                 format!(
-                                    "struct method '{}' must be Function, got {}",
+                                    "method '{}' must be Function, got {}",
                                     method_name,
                                     other.type_name()
                                 ),
@@ -1355,14 +1396,19 @@ impl Interpreter {
             }
         }
 
-        let class = Rc::new(class);
+        let class =
+            Rc::new(class);
+
+        // =========================================================
+        // Visibility
+        // =========================================================
 
         if visibility == Visibility::Public {
             if self.block_depth != 0 {
                 return Err(
                     self.error(
                         ErrorKind::Name,
-                        "'pub struct' is only allowed at top-level",
+                        "'pub struct/class' is only allowed at top-level",
                         whole,
                     )
                 );
@@ -1376,6 +1422,10 @@ impl Interpreter {
                 );
             }
         }
+
+        // =========================================================
+        // Declaration
+        // =========================================================
 
         self.env
             .declare(
@@ -4276,73 +4326,13 @@ impl Interpreter {
             }
 
             Value::Class(class) => {
-                let object =
-                    class.instantiate();
-
-                let constructor =
-                    class.constructor();
-
-                match constructor {
-                    Some(function) => {
-                        let mut call_args =
-                            Vec::with_capacity(
-                                values.len() + 1
-                            );
-
-                        call_args.push(
-                            Value::Object(
-                                object.clone()
-                            )
-                        );
-
-                        call_args.extend(
-                            values
-                        );
-
-                        match self.call_function(
-                            function,
-                            call_args,
-                            whole,
-                        )? {
-                            ControlFlow::Value(_) => {}
-
-                            ControlFlow::Return(_) => {}
-
-                            ControlFlow::Break |
-                            ControlFlow::Continue => {
-                                return Err(
-                                    self.error(
-                                        ErrorKind::Control,
-                                        "control flow cannot escape constructor",
-                                        whole,
-                                    )
-                                );
-                            }
-                        }
-                    }
-
-                    None => {
-                        if !values.is_empty() {
-                            return Err(
-                                self.error(
-                                    ErrorKind::Arity,
-                                    format!(
-                                        "{} constructor expects 0 arguments, got {}",
-                                        class.name(),
-                                        values.len()
-                                    ),
-                                    whole,
-                                )
-                            );
-                        }
-                    }
-                }
-
                 Ok(
                     ControlFlow::Value(
-                        Value::Object(
-                            object
-                        )
+                        self.instantiate_class(
+                            class,
+                            values,
+                            whole,
+                        )?
                     )
                 )
             }
@@ -4407,71 +4397,209 @@ impl Interpreter {
         }
     }
 
-    /// Helper for `eval_call()`
-    fn initialize_object(
+    fn instantiate_class(
+        &mut self,
+        class: ClassRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<Value> {
+        let object =
+            class.instantiate();
+
+        // ---------------------------------------------------------
+        // Defaults must exist before init().
+        // ---------------------------------------------------------
+
+        self.initialize_defaults(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        // ---------------------------------------------------------
+        // Explicit constructor.
+        // ---------------------------------------------------------
+
+        if let Some(init) =
+            class.constructor()
+        {
+            let mut call_args =
+                Vec::with_capacity(
+                    args.len() + 1
+                );
+
+            call_args.push(
+                Value::Object(
+                    object.clone()
+                )
+            );
+
+            call_args.extend(
+                args
+            );
+
+            match self.call_function(
+                init,
+                call_args,
+                whole,
+            )? {
+                ControlFlow::Value(_) |
+                ControlFlow::Return(_) => {}
+
+                ControlFlow::Break |
+                ControlFlow::Continue => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "control flow cannot escape constructor",
+                            whole,
+                        )
+                    );
+                }
+            }
+
+            self.ensure_all_fields_initialized(
+                &object,
+                &class,
+                whole,
+            )?;
+
+            return Ok(
+                Value::Object(
+                    object
+                )
+            );
+        }
+
+        // ---------------------------------------------------------
+        // No constructor:
+        // positional arguments initialize fields.
+        // ---------------------------------------------------------
+
+        let fields =
+            class.fields();
+
+        if args.len() >
+            fields.len()
+        {
+            return Err(
+                self.error(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects at most {} arguments, got {}",
+                        class.name(),
+                        fields.len(),
+                        args.len()
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        for (
+            index,
+            value,
+        ) in args.into_iter().enumerate()
+        {
+            let field =
+                &fields[index];
+
+            object
+                .borrow_mut()
+                .set_field(
+                    field.name(),
+                    value,
+                );
+        }
+
+        self.initialize_defaults(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        self.ensure_all_fields_initialized(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        Ok(
+            Value::Object(
+                object
+            )
+        )
+    }
+
+    fn initialize_defaults(
         &mut self,
         object: &ObjectRef,
         class: &ClassRef,
-        args: Vec<Value>,
         whole: &Expr,
     ) -> Result<()> {
-        let Some(constructor) =
-            class.constructor()
-        else {
-            if !args.is_empty() {
+        for field in class.fields() {
+            // Already initialized explicitly.
+            if object
+                .borrow()
+                .has_field(
+                    field.name()
+                )
+            {
+                continue;
+            }
+
+            let Some(expression) =
+                field.default()
+            else {
+                // Leave unresolved fields for now.
+                continue;
+            };
+
+            let value =
+                self.eval_field_default(
+                    object,
+                    expression,
+                    whole,
+                )?;
+
+            object
+                .borrow_mut()
+                .set_field(
+                    field.name(),
+                    value,
+                );
+        }
+
+        Ok(())
+    }
+
+    fn ensure_all_fields_initialized(
+        &self,
+        object: &ObjectRef,
+        class: &ClassRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        for field in class.fields() {
+            if !object
+                .borrow()
+                .has_field(
+                    field.name()
+                )
+            {
                 return Err(
                     self.error(
                         ErrorKind::Arity,
                         format!(
-                            "{} constructor expects 0 arguments, got {}",
-                            class.name(),
-                            args.len()
+                            "field '{}' has no value or default",
+                            field.name()
                         ),
                         whole,
                     )
                 );
             }
-
-            return Ok(());
-        };
-
-        let mut call_args =
-            Vec::with_capacity(
-                args.len() + 1
-            );
-
-        call_args.push(
-            Value::Object(
-                object.clone()
-            )
-        );
-
-        call_args.extend(args);
-
-        match self.call_function(
-            constructor,
-            call_args,
-            whole,
-        )? {
-            ControlFlow::Value(_) => {
-                Ok(())
-            }
-
-            ControlFlow::Return(_) => {
-                Ok(())
-            }
-
-            ControlFlow::Break |
-            ControlFlow::Continue => {
-                Err(
-                    self.error(
-                        ErrorKind::Control,
-                        "control flow cannot escape constructor",
-                        whole,
-                    )
-                )
-            }
         }
+
+        Ok(())
     }
 
     fn eval_field(
@@ -5110,6 +5238,40 @@ impl Interpreter {
                 whole,
             )),
         }
+    }
+
+    fn eval_field_default(
+        &mut self,
+        object: &ObjectRef,
+        expression: &Expr,
+        _: &Expr,
+    ) -> Result<Value> {
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            self.env.child();
+
+        self.env.define(
+            "self",
+            Value::Object(
+                object.clone()
+            )
+        );
+
+        let result =
+            self.eval_value(
+                expression
+            );
+
+        self.env =
+            old_env;
+
+        result.map_err(|error| {
+            // Keep original error if already attached;
+            // otherwise callers can attach `whole`.
+            error
+        })
     }
 
     fn call_predicate(

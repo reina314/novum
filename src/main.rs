@@ -440,15 +440,17 @@ impl NovumUi {
 
             TokenKind::If
             | TokenKind::Else
+            | TokenKind::For
             | TokenKind::While
             | TokenKind::Break
             | TokenKind::Continue
             | TokenKind::Return
-            | TokenKind::For
             | TokenKind::In
+            | TokenKind::As
             | TokenKind::Let
             | TokenKind::Pub
             | TokenKind::Match
+            | TokenKind::Class
             | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Import => {
@@ -461,6 +463,10 @@ impl NovumUi {
 
             TokenKind::LParen
             | TokenKind::RParen => {
+                Self::paren_style()
+            }
+
+            TokenKind::Pipe => {
                 Self::paren_style()
             }
 

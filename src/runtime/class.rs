@@ -4,6 +4,8 @@ use super::{
     ObjectRef,
 };
 
+use crate::syntax::Expr;
+
 use std::{
     collections::HashMap,
     fmt,
@@ -13,8 +15,39 @@ use std::{
 
 pub type ClassRef = Rc<Class>;
 
+pub struct FieldDefinition {
+    name: String,
+    default: Option<Box<Expr>>,
+}
+
+impl FieldDefinition {
+    pub fn new(
+        name: impl Into<String>,
+        default: Option<Box<Expr>>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            default,
+        }
+    }
+
+    pub fn name(
+        &self,
+    ) -> &str {
+        &self.name
+    }
+
+    pub fn default(
+        &self,
+    ) -> Option<&Expr> {
+        self.default.as_deref()
+    }
+}
+
+
 pub struct Class {
     name: String,
+    fields: Vec<FieldDefinition>,
     constructor: Option<FuncRef>,
     methods: HashMap<String, FuncRef>,
 }
@@ -25,9 +58,9 @@ impl Class {
     ) -> Self {
         Self {
             name: name.into(),
+            fields: Vec::new(),
             constructor: None,
-            methods:
-                HashMap::new(),
+            methods: HashMap::new(),
         }
     }
 
@@ -35,6 +68,25 @@ impl Class {
         &self,
     ) -> &str {
         &self.name
+    }
+
+    pub fn add_field(
+        &mut self,
+        name: impl Into<String>,
+        default: Option<Box<Expr>>,
+    ) {
+        self.fields.push(
+            FieldDefinition::new(
+                name,
+                default,
+            )
+        );
+    }
+
+    pub fn fields(
+        &self,
+    ) -> &[FieldDefinition] {
+        &self.fields
     }
 
     pub fn set_constructor(
@@ -48,8 +100,7 @@ impl Class {
     pub fn constructor(
         &self,
     ) -> Option<FuncRef> {
-        self.constructor
-            .clone()
+        self.constructor.clone()
     }
 
     pub fn add_method(
@@ -103,6 +154,13 @@ impl fmt::Debug for Class {
             .field(
                 "name",
                 &self.name,
+            )
+            .field(
+                "fields",
+                &self.fields
+                    .iter()
+                    .map(FieldDefinition::name)
+                    .collect::<Vec<_>>(),
             )
             .field(
                 "constructor",
