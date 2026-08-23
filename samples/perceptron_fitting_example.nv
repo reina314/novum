@@ -10,12 +10,14 @@ model_and = perceptron_example.Perceptron(0,0,0,0)
 model_and.init(2, 0.005, 20)
 model_and.fit(X_and, y_and)
 
-print("weights after fitting: "+model_and.weights)
-print("bias after fitting: "+model_and.bias+"\n")
+print("Weights after fitting: " + model_and.weights)
+print("Bias after fitting: " + model_and.bias)
 
-print("Prediction: ")
+print("\nPrediction: ")
 for (x, y) in zip(X_and, y_and) {
-    print("\t"+ x +" -> "+model_and.predict(x) + "   Answer: "+y)
+    print(
+        "\t" + x + " -> " + model_and.predict(x) + "   Answer: " + y
+    )
 }
 
 
@@ -27,12 +29,14 @@ model_or = perceptron_example.Perceptron(0,0,0,0)
 model_or.init(2, 0.005, 20)
 model_or.fit(X_or, y_or)
 
-print("weights after fitting: "+model_or.weights)
-print("bias after fitting: "+model_or.bias+"\n")
+print("Weights after fitting: " + model_or.weights)
+print("Bias after fitting: " + model_or.bias)
 
-print("Prediction: ")
+print("\nPrediction: ")
 for (x, y) in zip(X_or, y_or) {
-    print("\t"+ x +" -> "+model_or.predict(x) + "   Answer: "+y)
+    print(
+        "\t" + x + " -> " + model_or.predict(x) + "   Answer: " + y
+    )
 }
 
 // Example Output

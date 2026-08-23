@@ -55,6 +55,11 @@ fn builtins()
     );
 
     map.insert(
+        "zeros".into(),
+        Value::Builtin(zeros),
+    );
+
+    map.insert(
         "range".into(),
         Value::Builtin(range),
     );
@@ -456,6 +461,51 @@ pub fn zip(
                         left,
                         right,
                     }
+                )
+            )
+        )
+    )
+}
+
+pub fn zeros(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "zeros() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let count =
+        match args.remove(0) {
+            Value::Int(value)
+                if value >= 0 =>
+            {
+                value as usize
+            }
+
+            Value::Int(_) =>
+                return Err(
+                    "zeros() does not accept a negative count"
+                        .into()
+                ),
+
+            other =>
+                return Err(format!(
+                    "zeros() expects Int, got {}",
+                    other.type_name()
+                )),
+        };
+
+    Ok(
+        Value::List(
+            Rc::new(
+                RefCell::new(
+                    vec![
+                        Value::Int(0);
+                        count
+                    ]
                 )
             )
         )

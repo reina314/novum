@@ -2816,3 +2816,64 @@ fn float_from_string() {
         Value::Float(3.14)
     );
 }
+
+#[test]
+fn list_repetition() {
+    let result =
+        run(
+            "[0] * 5"
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ])
+            )
+        )
+    );
+}
+
+#[test]
+fn string_repetition() {
+    let result =
+        run(
+            r#""=" * 20"#
+        );
+
+    assert_eq!(
+        result,
+        Value::Str(
+            Rc::new(
+                "=".repeat(20)
+            )
+        )
+    );
+}
+
+#[test]
+fn zeros_builtin() {
+    let result =
+        run(
+            "zeros(3)"
+        );
+
+    assert_eq!(
+        result,
+        Value::List(
+            Rc::new(
+                RefCell::new(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ])
+            )
+        )
+    );
+}

@@ -577,9 +577,16 @@ impl PartialEq for Value {
 fn format_float(value: f64) -> String {
     let s = format!("{value:.8}");
 
-    s.trim_end_matches('0')
+    let s = s
+        .trim_end_matches('0')
         .trim_end_matches('.')
-        .to_string()
+        .to_string();
+
+    if s.contains('.') {
+        s
+    } else {
+        format!("{s}.0")
+    }
 }
 
 

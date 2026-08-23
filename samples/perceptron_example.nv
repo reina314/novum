@@ -8,10 +8,7 @@ pub struct Perceptron {
     epochs,
 
     init: |self, input_dim, learning_rate, epochs| { 
-        self.weights = [0.0]
-        for _ in range(input_dim) {
-            self.weights.push(0.0)
-        }
+        self.weights = [0.0] * input_dim
         self.bias = 0.0
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -55,7 +52,7 @@ pub struct Perceptron {
             }
 
             if total_error == 0 {
-                print("Epochs: "+(epoch+1)+", converged")
+                print("Epochs: "+ (epoch + 1) + ", converged")
                 break
             }
         }
