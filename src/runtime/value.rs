@@ -3,7 +3,8 @@ use super::{
     FuncRef,
     IteratorRef,
     ObjectRef,
-    StructRef,
+    ClassRef,
+    // StructRef,
     EnumRef,
     EnumValueRef,
     EnumConstructor,
@@ -51,7 +52,8 @@ pub enum Value {
     GroupedDataFrame(GroupedDataFrameRef),
 
     Object(ObjectRef),
-    Struct(StructRef),
+    Class(ClassRef),
+    // Struct(StructRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -96,7 +98,8 @@ impl Value {
             Self::GroupedDataFrame(_) => Type::GroupedDataFrame,
 
             Self::Object(_) => Type::Object,
-            Self::Struct(_) => Type::Struct,
+            Self::Class(_) => Type::Class,
+            // Self::Struct(_) => Type::Struct,
             Self::Module(_) => Type::Module,
 
             Self::Enum(_) => Type::Enum,
@@ -377,7 +380,10 @@ impl fmt::Debug for Value {
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
 
-            Self::Struct(def) => write!(f, "<struct {}>", def.name),
+            Self::Class(class) => 
+            write!(f, "<class {}>", class.name()),
+
+            // Self::Struct(def) => write!(f, "<struct {}>", def.name),
 
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
@@ -528,8 +534,11 @@ impl fmt::Display for Value {
             Self::Object(object) => 
                 object.borrow().fmt_display(f),
 
-            Self::Struct(def) =>
-                write!(f, "<struct {}>", def.name),
+            Self::Class(class) => 
+            write!(f, "<class {}>", class.name()),
+
+            // Self::Struct(def)  =>
+            // write!(f, "<struct {}>", def.name),
 
             Self::Module(module) =>
                 write!(f, "<module {}>", module.borrow().name()),
@@ -667,6 +676,24 @@ impl FromValue for List {
 
     fn expected_type() -> Type {
         Type::List
+    }
+}
+
+impl FromValue for ClassRef {
+    fn from_value(
+        value: Value,
+    ) -> Result<Self, Value> {
+        match value {
+            Value::Class(class) =>
+                Ok(class),
+
+            other =>
+                Err(other),
+        }
+    }
+
+    fn expected_type() -> Type {
+        Type::Class
     }
 }
 

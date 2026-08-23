@@ -546,7 +546,7 @@ impl Parser {
                 ));
             }
 
-            if self.eat_if(TokenKind::Colon) {
+            if self.eat_if(TokenKind::Equals) {
                 // method
                 let method_expr = self.parse_lambda()?;
 

@@ -4,7 +4,7 @@ use common::{
     run, run_result
 };
 use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
+use novum::runtime::{BoundMethod, Class, FuncRef, Function, MethodReceiver, Object, Series, Value};
 use std::{cell::RefCell, rc::Rc};
 
 
@@ -2784,7 +2784,7 @@ fn str_conversion() {
             Rc::new("123".into())
         )
     );
-    
+
     assert_eq!(
         run(r#"str(true)"#),
         Value::Str(
@@ -2877,3 +2877,50 @@ fn zeros_builtin() {
         )
     );
 }
+
+#[test]
+fn object_has_class() {
+    let class =
+        Class::new("Point");
+
+    let class =
+        Rc::new(class);
+
+    let object =
+        class.instantiate();
+
+    assert_eq!(
+        object.borrow().type_name(),
+        "Point"
+    );
+}
+
+#[test]
+fn object_gets_method_from_class() {
+    let mut class =
+        Class::new("Point");
+
+    let function = match run("|| {}") {
+        Value::Func(function) => function,
+        other => panic!("expected Function, got {:?}", other),
+    };
+
+    class.add_method(
+        "move",
+        function,
+    );
+
+    let class =
+        Rc::new(class);
+
+    let object =
+        class.instantiate();
+
+    assert!(
+        object
+            .borrow()
+            .get_method("move")
+            .is_some()
+    );
+}
+

@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef, Class, ClassRef,
     }, 
     stdlib::{
         self,
@@ -831,10 +831,9 @@ impl Interpreter {
                 methods,
             } => {
                 self.eval_struct_decl(
-                    *visibility,
                     name,
-                    fields,
                     methods,
+                    *visibility,
                     expr,
                 )
             },
@@ -1307,75 +1306,56 @@ impl Interpreter {
 
     fn eval_struct_decl(
         &mut self,
-        visibility: Visibility,
         name: &str,
-        fields: &[String],
         methods: &[(String, Box<Expr>)],
+        visibility: Visibility,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        if self.env.contains_local(name) {
-            return Err(self.error(
-                ErrorKind::Name,
-                format!(
-                    "struct '{}' is already defined in this scope",
-                    name
-                ),
-                whole,
-            ));
+        let mut class =
+            Class::new(
+                name.to_owned()
+            );
+
+        for (
+            method_name,
+            method_expr,
+        ) in methods
+        {
+            let function =
+                match self.eval_value(
+                    method_expr
+                )? {
+                    Value::Func(function) =>
+                        function,
+
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "struct method '{}' must be Function, got {}",
+                                    method_name,
+                                    other.type_name()
+                                ),
+                                method_expr,
+                            )
+                        );
+                    }
+                };
+
+            if method_name == "init" {
+                class.set_constructor(
+                    function
+                );
+            } else {
+                class.add_method(
+                    method_name.clone(),
+                    function,
+                );
+            }
         }
 
-                let mut method_map = std::collections::HashMap::new();
-
-        for (method_name, method_expr) in methods {
-            let value = self.eval_value(method_expr)?;
-
-            let function = match value {
-                Value::Func(function) => function,
-
-                _ => {
-                    return Err(self.error(
-                        ErrorKind::Type,
-                        format!(
-                            "struct method '{}' must be a function",
-                            method_name
-                        ),
-                        method_expr,
-                    ));
-                }
-            };
-
-            method_map.insert(
-                method_name.clone(),
-                function,
-            );
-        }
-
-        let definition =
-            StructDefinition::new(
-                name,
-                fields.to_vec(),
-                method_map,
-            );
-
-        let value =
-            Value::Struct(
-                Rc::new(
-                    definition
-                )
-            );
-
-        self.env
-            .declare(
-                name.to_owned(),
-                value,
-            )
-            .map_err(|message| {
-                self.error(
-                    ErrorKind::Name,
-                    message,
-                    whole,
-                )
-            })?;
+        let class = Rc::new(class);
 
         if visibility == Visibility::Public {
             if self.block_depth != 0 {
@@ -1396,6 +1376,19 @@ impl Interpreter {
                 );
             }
         }
+
+        self.env
+            .declare(
+                name.to_owned(),
+                Value::Class(class),
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Name,
+                    message,
+                    whole,
+                )
+            })?;
 
         Ok(
             ControlFlow::Value(
@@ -4282,20 +4275,76 @@ impl Interpreter {
                 )
             }
 
-            Value::Struct(definition) => {
-                let object = definition
-                    .instantiate(values)
-                    .map_err(|message| {
-                        self.error(
-                            ErrorKind::Arity,
-                            message,
-                            whole,
-                        )
-                    })?;
+            Value::Class(class) => {
+                let object =
+                    class.instantiate();
 
-                Ok(ControlFlow::Value(
-                    Value::Object(object)
-                ))
+                let constructor =
+                    class.constructor();
+
+                match constructor {
+                    Some(function) => {
+                        let mut call_args =
+                            Vec::with_capacity(
+                                values.len() + 1
+                            );
+
+                        call_args.push(
+                            Value::Object(
+                                object.clone()
+                            )
+                        );
+
+                        call_args.extend(
+                            values
+                        );
+
+                        match self.call_function(
+                            function,
+                            call_args,
+                            whole,
+                        )? {
+                            ControlFlow::Value(_) => {}
+
+                            ControlFlow::Return(_) => {}
+
+                            ControlFlow::Break |
+                            ControlFlow::Continue => {
+                                return Err(
+                                    self.error(
+                                        ErrorKind::Control,
+                                        "control flow cannot escape constructor",
+                                        whole,
+                                    )
+                                );
+                            }
+                        }
+                    }
+
+                    None => {
+                        if !values.is_empty() {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Arity,
+                                    format!(
+                                        "{} constructor expects 0 arguments, got {}",
+                                        class.name(),
+                                        values.len()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Object(
+                            object
+                        )
+                    )
+                )
             }
 
             Value::EnumConstructor(constructor) => {
@@ -4355,6 +4404,73 @@ impl Interpreter {
             }
 
             other => Err(self.error(ErrorKind::Type,format!("{} is not callable",other.type_name()),whole)),
+        }
+    }
+
+    /// Helper for `eval_call()`
+    fn initialize_object(
+        &mut self,
+        object: &ObjectRef,
+        class: &ClassRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<()> {
+        let Some(constructor) =
+            class.constructor()
+        else {
+            if !args.is_empty() {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "{} constructor expects 0 arguments, got {}",
+                            class.name(),
+                            args.len()
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            return Ok(());
+        };
+
+        let mut call_args =
+            Vec::with_capacity(
+                args.len() + 1
+            );
+
+        call_args.push(
+            Value::Object(
+                object.clone()
+            )
+        );
+
+        call_args.extend(args);
+
+        match self.call_function(
+            constructor,
+            call_args,
+            whole,
+        )? {
+            ControlFlow::Value(_) => {
+                Ok(())
+            }
+
+            ControlFlow::Return(_) => {
+                Ok(())
+            }
+
+            ControlFlow::Break |
+            ControlFlow::Continue => {
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "control flow cannot escape constructor",
+                        whole,
+                    )
+                )
+            }
         }
     }
 
@@ -4496,10 +4612,15 @@ impl Interpreter {
             }
 
             Value::Object(object) => {
-                if object.borrow()
+                let object_ref =
+                    object.borrow();
+
+                if object_ref
                     .get_method(name)
-                    .is_some() 
+                    .is_some()
                 {
+                    drop(object_ref);
+
                     return Ok(
                         ControlFlow::Value(
                             Value::BoundMethod(
@@ -4515,21 +4636,26 @@ impl Interpreter {
                 }
 
                 if let Some(value) =
-                    object.borrow().get_field(name)
+                    object_ref.get_field(name)
                 {
                     return Ok(
-                        ControlFlow::Value(value)
+                        ControlFlow::Value(
+                            value
+                        )
                     );
                 }
 
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "object has no field or method '{}'",
-                        name
-                    ),
-                    whole,
-                ))
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "{} has no field or method '{}'",
+                            object_ref.type_name(),
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Module(module) => {
@@ -5197,7 +5323,7 @@ impl Interpreter {
             MethodReceiver::Object(object) => {
                 self.call_object_method(
                     object.clone(),
-                    method.name(),
+                    method,
                     args,
                     whole,
                 )
@@ -7472,57 +7598,47 @@ impl Interpreter {
     fn call_object_method(
         &mut self,
         object: ObjectRef,
-        name: &str,
-        mut args: Vec<Value>,
+        method: BoundMethod,
+        args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        // ---------------------------------------------------------
-        // Find the method definition.
-        // ---------------------------------------------------------
-
-        let function = {
-            let object_ref = object.borrow();
-
-            object_ref
-                .get_method(name)
+        let function =
+            object
+                .borrow()
+                .get_method(
+                    method.name()
+                )
                 .ok_or_else(|| {
                     self.error(
                         ErrorKind::Runtime,
                         format!(
-                            "object has no method '{}'",
-                            name
+                            "{} has no method '{}'",
+                            object
+                                .borrow()
+                                .type_name(),
+                            method.name()
                         ),
                         whole,
                     )
-                })?
-        };
+                })?;
 
-        // ---------------------------------------------------------
-        // Bind implicit self.
-        // ---------------------------------------------------------
-
-        let mut call_args =
+        let mut values =
             Vec::with_capacity(
                 args.len() + 1
             );
 
-        call_args.push(
+        // self
+        values.push(
             Value::Object(
                 object.clone()
             )
         );
 
-        call_args.append(
-            &mut args
-        );
-
-        // ---------------------------------------------------------
-        // Invoke the actual function.
-        // ---------------------------------------------------------
+        values.extend(args);
 
         self.call_function(
             function,
-            call_args,
+            values,
             whole,
         )
     }
