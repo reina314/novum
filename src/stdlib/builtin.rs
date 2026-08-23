@@ -4,6 +4,7 @@ use crate::{
         IteratorObj,
         Env,
         Set,
+        PathValue,
     }
 };
 
@@ -115,6 +116,11 @@ fn builtins()
     );
 
     map.insert(
+        "path".into(),
+        Value::Builtin(path),
+    );
+
+    map.insert(
         "sleep".into(),
         Value::Builtin(sleep),
     );
@@ -205,9 +211,16 @@ pub fn str(args: Vec<Value>) -> Result<Value, String> {
         );
     }
 
-    Ok(Value::Str(
-        Rc::new(args[0].to_string())
-    ))
+    let value = args.into_iter().next().unwrap();
+
+    let text = match value {
+        Value::Path(path) =>
+            path.to_string_lossy().to_owned(),
+
+        value => value.to_string(),
+    };
+
+    Ok(Value::Str(Rc::new(text)))
 }
 
 pub fn int(
@@ -357,6 +370,42 @@ pub fn bool(
             )
         }
     }
+}
+
+pub fn path(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "path() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let path =
+        match args.remove(0) {
+            Value::Str(value) =>
+                PathValue::new(
+                    value.as_ref()
+                ),
+
+            Value::Path(value) =>
+                value.as_ref().clone(),
+
+            other =>
+                return Err(
+                    format!(
+                        "path() expects Str or Path, got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    Ok(
+        Value::Path(
+            Rc::new(path)
+        )
+    )
 }
 
 pub fn r#typeof(args: Vec<Value>) -> Result<Value, String> {

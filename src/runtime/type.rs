@@ -41,6 +41,8 @@ pub enum Type {
     Enum,
     EnumValue,
     EnumConstructor,
+
+    Path,
 }
 
 impl Type {
@@ -70,6 +72,8 @@ impl Type {
             Self::Enum => "Enum",
             Self::EnumValue => "EnumValue",
             Self::EnumConstructor => "EnumConstructor",
+
+            Self::Path => "Path",
 
             Self::Range => "Range",
 

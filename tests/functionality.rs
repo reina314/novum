@@ -344,6 +344,72 @@ fn pub_local_is_error() {
     );
 }
 
+#[test]
+fn path_api() {
+    let result =
+        run(
+            r#"
+            let p =
+                path("data/result.csv")
 
+            p.name()?
+                "#
+        );
 
+    // "result.csv"
+}
+
+#[test]
+fn path_extension() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .extension()?
+            "#
+        );
+
+    // "csv"
+}
+
+#[test]
+fn path_stem() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .stem()?
+            "#
+        );
+
+    // "result"
+}
+
+#[test]
+fn path_parent() {
+    let result =
+        run(
+            r#"
+            path("data/result.csv")
+                .parent()?
+                .to_str()
+            "#
+        );
+
+    // "data"
+}
+
+#[test]
+fn path_join() {
+    let result =
+        run(
+            r#"
+            path("data")
+                .join("result.csv")
+                .to_str()
+            "#
+        );
+
+    // OS-dependent path representation
+}
 

@@ -10,6 +10,7 @@ use super::{
     ObjectRef,
     SeriesRef,
     IteratorRef,
+    PathRef,
 };
 
 use std::{
@@ -37,6 +38,8 @@ pub enum MethodReceiver {
     DataFrame(DataFrameRef),
     GroupedDataFrame(GroupedDataFrameRef),
     Iterator(IteratorRef),
+
+    Path(PathRef),
 }
 
 impl MethodReceiver {
@@ -150,6 +153,19 @@ impl MethodReceiver {
                     | "zip"
                     | "take"
                     | "skip"
+            ),
+
+            Self::Path(_) => matches!(
+                name,
+                "to_str"
+                    | "name"
+                    | "extension"
+                    | "stem"
+                    | "parent"
+                    | "join"
+                    | "exists"
+                    | "is_file"
+                    | "is_dir"
             ),
 
             // Existing cases...

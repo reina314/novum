@@ -2784,7 +2784,7 @@ fn str_conversion() {
             Rc::new("123".into())
         )
     );
-
+    
     assert_eq!(
         run(r#"str(true)"#),
         Value::Str(

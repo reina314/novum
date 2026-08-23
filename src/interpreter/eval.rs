@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef,
     }, stdlib, 
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program,
@@ -4603,6 +4603,38 @@ impl Interpreter {
                 )
             }
 
+            Value::Path(path) => {
+                let receiver =
+                    MethodReceiver::Path(
+                        path
+                    );
+
+                if let Some(value) =
+                    self.make_bound_method(
+                        receiver,
+                        name,
+                        whole,
+                    )?
+                {
+                    return Ok(
+                        ControlFlow::Value(
+                            value
+                        )
+                    );
+                }
+
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Path has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
+            }
+
             Value::Vector(vector) => {
                 let receiver =
                     MethodReceiver::Vector(
@@ -5197,6 +5229,15 @@ impl Interpreter {
             MethodReceiver::GroupedDataFrame(grouped) => {
                 self.call_grouped_dataframe_method(
                     grouped.clone(),
+                    method.name(),
+                    args,
+                    whole,
+                )
+            }
+        
+            MethodReceiver::Path(path) => {
+                self.call_path_method(
+                    path.clone(),
                     method.name(),
                     args,
                     whole,
@@ -9574,6 +9615,289 @@ impl Interpreter {
                     ),
                     whole,
                 ))
+            }
+        }
+    }
+
+    fn call_path_method(
+        &mut self,
+        path: PathRef,
+        name: &str,
+        mut args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        match name {
+            "to_str" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "to_str() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Str(
+                            Rc::new(
+                                path.to_string_lossy()
+                            )
+                        )
+                    )
+                )
+            }
+
+            "name" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "name() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.name() {
+                    Some(name) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(name)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "extension" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "extension() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.extension() {
+                    Some(extension) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(
+                                            extension
+                                        )
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "stem" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "stem() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.stem() {
+                    Some(stem) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Str(
+                                        Rc::new(stem)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "parent" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "parent() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                match path.parent() {
+                    Some(parent) =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_some(
+                                    Value::Path(
+                                        Rc::new(parent)
+                                    )
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            ControlFlow::Value(
+                                option_none()
+                            )
+                        ),
+                }
+            }
+
+            "join" => {
+                if args.len() != 1 {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "join() expects exactly 1 argument",
+                            whole,
+                        )
+                    );
+                }
+
+                let child =
+                    args.remove(0);
+
+                let joined =
+                    match child {
+                        Value::Str(value) =>
+                            path.join(
+                                value.as_ref()
+                            ),
+
+                        Value::Path(value) =>
+                            path.join(
+                                value.as_path()
+                            ),
+
+                        other =>
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "join() expects Str or Path, got {}",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            ),
+                    };
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Path(
+                            Rc::new(joined)
+                        )
+                    )
+                )
+            }
+
+            "exists" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "exists() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.exists()
+                        )
+                    )
+                )
+            }
+
+            "is_file" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "is_file() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.is_file()
+                        )
+                    )
+                )
+            }
+
+            "is_dir" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "is_dir() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Bool(
+                            path.is_dir()
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "Path has no method '{}'",
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
         }
     }
