@@ -46,8 +46,10 @@ pub enum TokenKind {
     As,
     Let,
     Match,
+    Pub,
 
     Struct,
+    Class,
     Enum,
 
     Import,
@@ -69,8 +71,6 @@ pub enum TokenKind {
 
     DoubleDot,
     DoubleDotEq,
-
-    Pub,
 
     Null,
     Eof,

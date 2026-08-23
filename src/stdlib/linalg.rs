@@ -433,10 +433,6 @@ pub fn linear_regression(
     let mut result =
         Object::new();
 
-    result.set_type_name(
-        "LinearRegressionResult"
-    );
-
     result.set_field(
         "coefficients",
         result_matrix(coefficients),

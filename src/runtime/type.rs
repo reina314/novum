@@ -35,6 +35,7 @@ pub enum Type {
     BoundMethod,
 
     Object,
+    Class,
     Struct,
     Module,
 
@@ -66,6 +67,7 @@ impl Type {
             Self::GroupedDataFrame => "GroupedDataFrame",
 
             Self::Object => "Object",
+            Self::Class => "Class",
             Self::Struct => "Struct",
             Self::Module => "Module",
 

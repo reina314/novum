@@ -10,6 +10,7 @@ pub mod dataframe;
 pub mod grouped_dataframe;
 pub mod module;
 pub mod object;
+pub mod class;
 pub mod r#struct;
 pub mod r#enum;
 pub mod bound_method;
@@ -60,6 +61,10 @@ pub use module::{
 pub use object::{
     Object,
     ObjectRef,
+};
+pub use class::{
+    Class,
+    ClassRef,
 };
 pub use r#struct::{
     StructDefinition,

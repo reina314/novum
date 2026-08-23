@@ -1,17 +1,21 @@
-use super::{FuncRef, Object, ObjectRef, Value};
+use super::{
+    FuncRef,
+    Class,
+    ClassRef,
+    ObjectRef,
+};
 use std::{
-    cell::RefCell,
-    collections::HashMap,
     fmt,
     rc::Rc,
+    collections::HashMap,
 };
 
 pub type StructRef = Rc<StructDefinition>;
 
 pub struct StructDefinition {
-    pub name: String,
-    pub fields: Vec<String>,
-    pub methods: HashMap<String, FuncRef>,
+    name: String,
+    fields: Vec<String>,
+    methods: HashMap<String, FuncRef>,
 }
 
 impl StructDefinition {
@@ -27,37 +31,41 @@ impl StructDefinition {
         }
     }
 
+    pub fn to_class(
+        &self,
+    ) -> ClassRef {
+        let mut class =
+            Class::new(
+                self.name.clone()
+            );
+
+        for (name, function)
+            in &self.methods
+        {
+            if name == "init" {
+                class.set_constructor(
+                    function.clone()
+                );
+            } else {
+                class.add_method(
+                    name.clone(),
+                    function.clone(),
+                );
+            }
+        }
+
+        Rc::new(class)
+    }
+
     pub fn instantiate(
         &self,
-        args: Vec<Value>,
     ) -> Result<ObjectRef, String> {
-        if args.len() != self.fields.len() {
-            return Err(format!(
-                "{} expects {} arguments, got {}",
-                self.name,
-                self.fields.len(),
-                args.len()
-            ));
-        }
+        let class =
+            self.to_class();
 
-        let mut object = Object::new();
-
-        for (field, value) in self.fields.iter().zip(args) {
-            object.set_field(field.clone(), value);
-        }
-
-        for (name, function) in &self.methods {
-            object.add_method(
-                name.clone(),
-                function.clone(),
-            );
-        }
-
-        object.set_type_name(self.name.clone());
-
-        Ok(Rc::new(
-            RefCell::new(object)
-        ))
+        Ok(
+            class.instantiate()
+        )
     }
 }
 

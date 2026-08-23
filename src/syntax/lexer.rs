@@ -265,6 +265,7 @@ impl<'a> Lexer<'a> {
             "import" => TokenKind::Import,
 
             "struct" => TokenKind::Struct,
+            "class" => TokenKind::Class,
             "enum" => TokenKind::Enum,
 
             "pub" => TokenKind::Pub,

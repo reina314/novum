@@ -7,8 +7,12 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, StructDefinition, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef,
-    }, stdlib, 
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef, Class, ClassRef,
+    }, 
+    stdlib::{
+        self,
+        general,
+    },
     syntax::{
         BinOp, Expr, ExprKind, IndexExpr, ListItem, Program,
         ast::{
@@ -826,14 +830,30 @@ impl Interpreter {
                 fields,
                 methods,
             } => {
-                self.eval_struct_decl(
-                    *visibility,
+                self.eval_type_decl(
                     name,
                     fields,
                     methods,
+                    *visibility,
                     expr,
                 )
-            },
+            }
+
+            ClassDecl {
+                visibility,
+                name,
+                fields,
+                methods,
+            } => {
+                self.eval_type_decl(
+                    name,
+                    fields,
+                    methods,
+                    *visibility,
+                    expr,
+                )
+            }
+
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -1301,84 +1321,94 @@ impl Interpreter {
         ))
     }
 
-    fn eval_struct_decl(
+    fn eval_type_decl(
         &mut self,
-        visibility: Visibility,
         name: &str,
-        fields: &[String],
-        methods: &[(String, Box<Expr>)],
+        fields: &[
+            (String, Option<Box<Expr>>)
+        ],
+        methods: &[
+            (String, Box<Expr>)
+        ],
+        visibility: Visibility,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        if self.env.contains_local(name) {
-            return Err(self.error(
-                ErrorKind::Name,
-                format!(
-                    "struct '{}' is already defined in this scope",
-                    name
-                ),
-                whole,
-            ));
-        }
+        let mut class =
+            Class::new(
+                name.to_owned()
+            );
 
-                let mut method_map = std::collections::HashMap::new();
+        // =========================================================
+        // Fields
+        // =========================================================
 
-        for (method_name, method_expr) in methods {
-            let value = self.eval_value(method_expr)?;
-
-            let function = match value {
-                Value::Func(function) => function,
-
-                _ => {
-                    return Err(self.error(
-                        ErrorKind::Type,
-                        format!(
-                            "struct method '{}' must be a function",
-                            method_name
-                        ),
-                        method_expr,
-                    ));
-                }
-            };
-
-            method_map.insert(
-                method_name.clone(),
-                function,
+        for (
+            field_name,
+            default,
+        ) in fields
+        {
+            class.add_field(
+                field_name.clone(),
+                default.clone(),
             );
         }
 
-        let definition =
-            StructDefinition::new(
-                name,
-                fields.to_vec(),
-                method_map,
-            );
+        // =========================================================
+        // Methods
+        // =========================================================
 
-        let value =
-            Value::Struct(
-                Rc::new(
-                    definition
-                )
-            );
+        for (
+            method_name,
+            method_expr,
+        ) in methods
+        {
+            let function =
+                match self.eval_value(
+                    method_expr
+                )? {
+                    Value::Func(function) =>
+                        function,
 
-        self.env
-            .declare(
-                name.to_owned(),
-                value,
-            )
-            .map_err(|message| {
-                self.error(
-                    ErrorKind::Name,
-                    message,
-                    whole,
-                )
-            })?;
+                    other => {
+                        return Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "method '{}' must be Function, got {}",
+                                    method_name,
+                                    other.type_name()
+                                ),
+                                method_expr,
+                            )
+                        );
+                    }
+                };
+
+            if method_name == "init" {
+                class.set_constructor(
+                    function
+                );
+            } else {
+                class.add_method(
+                    method_name.clone(),
+                    function,
+                );
+            }
+        }
+
+        let class =
+            Rc::new(class);
+
+        // =========================================================
+        // Visibility
+        // =========================================================
 
         if visibility == Visibility::Public {
             if self.block_depth != 0 {
                 return Err(
                     self.error(
                         ErrorKind::Name,
-                        "'pub struct' is only allowed at top-level",
+                        "'pub struct/class' is only allowed at top-level",
                         whole,
                     )
                 );
@@ -1392,6 +1422,23 @@ impl Interpreter {
                 );
             }
         }
+
+        // =========================================================
+        // Declaration
+        // =========================================================
+
+        self.env
+            .declare(
+                name.to_owned(),
+                Value::Class(class),
+            )
+            .map_err(|message| {
+                self.error(
+                    ErrorKind::Name,
+                    message,
+                    whole,
+                )
+            })?;
 
         Ok(
             ControlFlow::Value(
@@ -4278,20 +4325,16 @@ impl Interpreter {
                 )
             }
 
-            Value::Struct(definition) => {
-                let object = definition
-                    .instantiate(values)
-                    .map_err(|message| {
-                        self.error(
-                            ErrorKind::Arity,
-                            message,
+            Value::Class(class) => {
+                Ok(
+                    ControlFlow::Value(
+                        self.instantiate_class(
+                            class,
+                            values,
                             whole,
-                        )
-                    })?;
-
-                Ok(ControlFlow::Value(
-                    Value::Object(object)
-                ))
+                        )?
+                    )
+                )
             }
 
             Value::EnumConstructor(constructor) => {
@@ -4352,6 +4395,211 @@ impl Interpreter {
 
             other => Err(self.error(ErrorKind::Type,format!("{} is not callable",other.type_name()),whole)),
         }
+    }
+
+    fn instantiate_class(
+        &mut self,
+        class: ClassRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<Value> {
+        let object =
+            class.instantiate();
+
+        // ---------------------------------------------------------
+        // Defaults must exist before init().
+        // ---------------------------------------------------------
+
+        self.initialize_defaults(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        // ---------------------------------------------------------
+        // Explicit constructor.
+        // ---------------------------------------------------------
+
+        if let Some(init) =
+            class.constructor()
+        {
+            let mut call_args =
+                Vec::with_capacity(
+                    args.len() + 1
+                );
+
+            call_args.push(
+                Value::Object(
+                    object.clone()
+                )
+            );
+
+            call_args.extend(
+                args
+            );
+
+            match self.call_function(
+                init,
+                call_args,
+                whole,
+            )? {
+                ControlFlow::Value(_) |
+                ControlFlow::Return(_) => {}
+
+                ControlFlow::Break |
+                ControlFlow::Continue => {
+                    return Err(
+                        self.error(
+                            ErrorKind::Control,
+                            "control flow cannot escape constructor",
+                            whole,
+                        )
+                    );
+                }
+            }
+
+            self.ensure_all_fields_initialized(
+                &object,
+                &class,
+                whole,
+            )?;
+
+            return Ok(
+                Value::Object(
+                    object
+                )
+            );
+        }
+
+        // ---------------------------------------------------------
+        // No constructor:
+        // positional arguments initialize fields.
+        // ---------------------------------------------------------
+
+        let fields =
+            class.fields();
+
+        if args.len() >
+            fields.len()
+        {
+            return Err(
+                self.error(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects at most {} arguments, got {}",
+                        class.name(),
+                        fields.len(),
+                        args.len()
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        for (
+            index,
+            value,
+        ) in args.into_iter().enumerate()
+        {
+            let field =
+                &fields[index];
+
+            object
+                .borrow_mut()
+                .set_field(
+                    field.name(),
+                    value,
+                );
+        }
+
+        self.initialize_defaults(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        self.ensure_all_fields_initialized(
+            &object,
+            &class,
+            whole,
+        )?;
+
+        Ok(
+            Value::Object(
+                object
+            )
+        )
+    }
+
+    fn initialize_defaults(
+        &mut self,
+        object: &ObjectRef,
+        class: &ClassRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        for field in class.fields() {
+            // Already initialized explicitly.
+            if object
+                .borrow()
+                .has_field(
+                    field.name()
+                )
+            {
+                continue;
+            }
+
+            let Some(expression) =
+                field.default()
+            else {
+                // Leave unresolved fields for now.
+                continue;
+            };
+
+            let value =
+                self.eval_field_default(
+                    object,
+                    expression,
+                    whole,
+                )?;
+
+            object
+                .borrow_mut()
+                .set_field(
+                    field.name(),
+                    value,
+                );
+        }
+
+        Ok(())
+    }
+
+    fn ensure_all_fields_initialized(
+        &self,
+        object: &ObjectRef,
+        class: &ClassRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        for field in class.fields() {
+            if !object
+                .borrow()
+                .has_field(
+                    field.name()
+                )
+            {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "field '{}' has no value or default",
+                            field.name()
+                        ),
+                        whole,
+                    )
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn eval_field(
@@ -4492,10 +4740,15 @@ impl Interpreter {
             }
 
             Value::Object(object) => {
-                if object.borrow()
+                let object_ref =
+                    object.borrow();
+
+                if object_ref
                     .get_method(name)
-                    .is_some() 
+                    .is_some()
                 {
+                    drop(object_ref);
+
                     return Ok(
                         ControlFlow::Value(
                             Value::BoundMethod(
@@ -4511,21 +4764,26 @@ impl Interpreter {
                 }
 
                 if let Some(value) =
-                    object.borrow().get_field(name)
+                    object_ref.get_field(name)
                 {
                     return Ok(
-                        ControlFlow::Value(value)
+                        ControlFlow::Value(
+                            value
+                        )
                     );
                 }
 
-                Err(self.error(
-                    ErrorKind::Runtime,
-                    format!(
-                        "object has no field or method '{}'",
-                        name
-                    ),
-                    whole,
-                ))
+                Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        format!(
+                            "{} has no field or method '{}'",
+                            object_ref.type_name(),
+                            name
+                        ),
+                        whole,
+                    )
+                )
             }
 
             Value::Module(module) => {
@@ -4982,6 +5240,40 @@ impl Interpreter {
         }
     }
 
+    fn eval_field_default(
+        &mut self,
+        object: &ObjectRef,
+        expression: &Expr,
+        _: &Expr,
+    ) -> Result<Value> {
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            self.env.child();
+
+        self.env.define(
+            "self",
+            Value::Object(
+                object.clone()
+            )
+        );
+
+        let result =
+            self.eval_value(
+                expression
+            );
+
+        self.env =
+            old_env;
+
+        result.map_err(|error| {
+            // Keep original error if already attached;
+            // otherwise callers can attach `whole`.
+            error
+        })
+    }
+
     fn call_predicate(
         &mut self,
         predicate: &Value,
@@ -5193,7 +5485,7 @@ impl Interpreter {
             MethodReceiver::Object(object) => {
                 self.call_object_method(
                     object.clone(),
-                    method.name(),
+                    method,
                     args,
                     whole,
                 )
@@ -5686,7 +5978,7 @@ impl Interpreter {
                         Value::Int(_) =>
                             return Ok(
                                 ControlFlow::Value(
-                                    option_none()
+                                    general::option_none()
                                 )
                             ),
 
@@ -5719,10 +6011,10 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(value),
+                                general::option_some(value),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -5962,7 +6254,7 @@ impl Interpreter {
                         Value::Int(_) => {
                             return Ok(
                                 ControlFlow::Value(
-                                    option_none()
+                                    general::option_none()
                                 )
                             );
                         }
@@ -5990,12 +6282,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -6774,12 +7066,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -6845,12 +7137,12 @@ impl Interpreter {
                     ControlFlow::Value(
                         match value {
                             Some(value) =>
-                                option_some(
+                                general::option_some(
                                     value
                                 ),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -7468,57 +7760,47 @@ impl Interpreter {
     fn call_object_method(
         &mut self,
         object: ObjectRef,
-        name: &str,
-        mut args: Vec<Value>,
+        method: BoundMethod,
+        args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        // ---------------------------------------------------------
-        // Find the method definition.
-        // ---------------------------------------------------------
-
-        let function = {
-            let object_ref = object.borrow();
-
-            object_ref
-                .get_method(name)
+        let function =
+            object
+                .borrow()
+                .get_method(
+                    method.name()
+                )
                 .ok_or_else(|| {
                     self.error(
                         ErrorKind::Runtime,
                         format!(
-                            "object has no method '{}'",
-                            name
+                            "{} has no method '{}'",
+                            object
+                                .borrow()
+                                .type_name(),
+                            method.name()
                         ),
                         whole,
                     )
-                })?
-        };
+                })?;
 
-        // ---------------------------------------------------------
-        // Bind implicit self.
-        // ---------------------------------------------------------
-
-        let mut call_args =
+        let mut values =
             Vec::with_capacity(
                 args.len() + 1
             );
 
-        call_args.push(
+        // self
+        values.push(
             Value::Object(
                 object.clone()
             )
         );
 
-        call_args.append(
-            &mut args
-        );
-
-        // ---------------------------------------------------------
-        // Invoke the actual function.
-        // ---------------------------------------------------------
+        values.extend(args);
 
         self.call_function(
             function,
-            call_args,
+            values,
             whole,
         )
     }
@@ -7552,10 +7834,10 @@ impl Interpreter {
                     ControlFlow::Value(
                         match next {
                             Some(value) =>
-                                option_some(value),
+                                general::option_some(value),
 
                             None =>
-                                option_none(),
+                                general::option_none(),
                         }
                     )
                 )
@@ -7757,7 +8039,7 @@ impl Interpreter {
                 else {
                     return Ok(
                         ControlFlow::Value(
-                            option_none()
+                            general::option_none()
                         )
                     );
                 };
@@ -7781,7 +8063,7 @@ impl Interpreter {
 
                 Ok(
                     ControlFlow::Value(
-                        option_some(
+                        general::option_some(
                             accumulator
                         )
                     )
@@ -9664,7 +9946,7 @@ impl Interpreter {
                     Some(name) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(name)
                                     )
@@ -9675,7 +9957,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9696,7 +9978,7 @@ impl Interpreter {
                     Some(extension) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(
                                             extension
@@ -9709,7 +9991,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9730,7 +10012,7 @@ impl Interpreter {
                     Some(stem) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Str(
                                         Rc::new(stem)
                                     )
@@ -9741,7 +10023,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9762,7 +10044,7 @@ impl Interpreter {
                     Some(parent) =>
                         Ok(
                             ControlFlow::Value(
-                                option_some(
+                                general::option_some(
                                     Value::Path(
                                         Rc::new(parent)
                                     )
@@ -9773,7 +10055,7 @@ impl Interpreter {
                     None =>
                         Ok(
                             ControlFlow::Value(
-                                option_none()
+                                general::option_none()
                             )
                         ),
                 }
@@ -9914,34 +10196,6 @@ impl Interpreter {
             Some(expr.span))
                 .with_stack(&self.stack)
     }
-}
-
-/// Helper to wrap Value with Option
-fn option_some(
-    value: Value,
-) -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "Some",
-                vec![value],
-            )
-        )
-    )
-}
-
-/// Helper to create Option.None
-fn option_none() -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Option",
-                "None",
-                vec![],
-            )
-        )
-    )
 }
 
 /// Helper for `eval_match()`

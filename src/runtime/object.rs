@@ -1,4 +1,9 @@
-use super::{FuncRef, Value};
+use super::{
+    ClassRef,
+    FuncRef,
+    Value,
+};
+
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -10,36 +15,54 @@ pub type ObjectRef = Rc<RefCell<Object>>;
 
 #[derive(Clone)]
 pub struct Object {
-    type_name: String,
+    class: Option<ClassRef>,
     fields: HashMap<String, Value>,
-    methods: HashMap<String, FuncRef>,
 }
 
 impl Object {
     pub fn new() -> Self {
         Self {
-            type_name: "Object".to_string(),
-            fields: HashMap::new(),
-            methods: HashMap::new(),
+            class: None,
+            fields:
+                HashMap::new(),
         }
     }
 
-    pub fn type_name(&self) -> &str {
-        &self.type_name
+    pub fn with_class(
+        class: ClassRef,
+    ) -> Self {
+        Self {
+            class: Some(class),
+            fields:
+                HashMap::new(),
+        }
     }
 
-    pub fn set_type_name(
-        &mut self,
-        name: impl Into<String>,
-    ) {
-        self.type_name = name.into();
+    pub fn class(
+        &self,
+    ) -> Option<ClassRef> {
+        self.class.clone()
+    }
+
+    pub fn type_name(
+        &self,
+    ) -> &str {
+        match &self.class {
+            Some(class) =>
+                class.name(),
+
+            None =>
+                "Object",
+        }
     }
 
     pub fn get_field(
         &self,
         name: &str,
     ) -> Option<Value> {
-        self.fields.get(name).cloned()
+        self.fields
+            .get(name)
+            .cloned()
     }
 
     pub fn set_field(
@@ -57,32 +80,33 @@ impl Object {
         &self,
         name: &str,
     ) -> bool {
-        self.fields.contains_key(name)
-    }
-
-    pub fn add_method(
-        &mut self,
-        name: impl Into<String>,
-        function: FuncRef,
-    ) {
-        self.methods.insert(
-            name.into(),
-            function,
-        );
+        self.fields.contains_key(
+            name
+        )
     }
 
     pub fn get_method(
         &self,
         name: &str,
     ) -> Option<FuncRef> {
-        self.methods.get(name).cloned()
+        self.class
+            .as_ref()
+            .and_then(|class| {
+                class.get_method(
+                    name
+                )
+            })
     }
 
     pub fn fmt_display(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        write!(f, "{{")?;
+        write!(
+            f,
+            "{} {{",
+            self.type_name()
+        )?;
 
         let mut fields =
             self.fields
@@ -90,13 +114,16 @@ impl Object {
                 .collect::<Vec<_>>();
 
         fields.sort_by(
-            |(a, _), (b, _)| a.cmp(b)
+            |(a, _), (b, _)|
+                a.cmp(b)
         );
 
-        for (i, (name, value)) in
-            fields.iter().enumerate()
+        for (
+            index,
+            (name, value)
+        ) in fields.iter().enumerate()
         {
-            if i > 0 {
+            if index > 0 {
                 write!(f, ", ")?;
             }
 
@@ -119,39 +146,17 @@ impl Default for Object {
 }
 
 impl fmt::Debug for Object {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Object")
-            .field("fields", &self.fields)
-            .field("methods", &self.methods.keys().collect::<Vec<_>>())
-            .finish()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime::Value;
-
-    #[test]
-    fn object_fields() {
-        let object = Object::new();
-
-        let object_ref = Rc::new(
-            RefCell::new(object)
-        );
-
-        object_ref
-            .borrow_mut()
-            .set_field(
-                "x",
-                Value::Int(10)
-            );
-
-        assert_eq!(
-            object_ref
-                .borrow()
-                .get_field("x"),
-            Some(Value::Int(10))
-        );
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        f.debug_struct(
+            self.type_name()
+        )
+        .field(
+            "fields",
+            &self.fields
+        )
+        .finish()
     }
 }

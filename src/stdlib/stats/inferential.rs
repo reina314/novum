@@ -27,10 +27,6 @@ fn result_object(
 ) -> Value {
     let mut object = Object::new();
 
-    object.set_type_name(
-        "TestResult"
-    );
-
     object.set_field(
         "test",
         Value::Str(

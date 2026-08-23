@@ -4,7 +4,7 @@ use common::{
     run, run_result
 };
 use novum::{Interpreter, Lexer, Parser};
-use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
+use novum::runtime::{BoundMethod, Class, MethodReceiver, Object, Series, Value};
 use std::{cell::RefCell, rc::Rc};
 
 
@@ -734,7 +734,7 @@ fn struct_method() {
                 x,
                 y,
 
-                move: |self, dx, dy| {
+                move = |self, dx, dy| {
                     self.x = self.x + dx;
                     self.y = self.y + dy;
                 }
@@ -760,7 +760,7 @@ fn struct_method_updates_multiple_fields() {
                 x,
                 y,
 
-                move: |self, dx, dy| {
+                move = |self, dx, dy| {
                     self.x = self.x + dx;
                     self.y = self.y + dy;
                 }
@@ -2784,7 +2784,7 @@ fn str_conversion() {
             Rc::new("123".into())
         )
     );
-    
+
     assert_eq!(
         run(r#"str(true)"#),
         Value::Str(
@@ -2877,3 +2877,117 @@ fn zeros_builtin() {
         )
     );
 }
+
+#[test]
+fn object_has_class() {
+    let class =
+        Class::new("Point");
+
+    let class =
+        Rc::new(class);
+
+    let object =
+        class.instantiate();
+
+    assert_eq!(
+        object.borrow().type_name(),
+        "Point"
+    );
+}
+
+#[test]
+fn object_gets_method_from_class() {
+    let mut class =
+        Class::new("Point");
+
+    let function = match run("|| {}") {
+        Value::Func(function) => function,
+        other => panic!("expected Function, got {:?}", other),
+    };
+
+    class.add_method(
+        "move",
+        function,
+    );
+
+    let class =
+        Rc::new(class);
+
+    let object =
+        class.instantiate();
+
+    assert!(
+        object
+            .borrow()
+            .get_method("move")
+            .is_some()
+    );
+}
+
+#[test]
+fn struct_init_does_not_require_field_defaults() {
+    let result =
+        run(
+            r#"
+            struct Test {
+                x
+                y
+
+                init = |self| {
+                    self.x = 1
+                    self.y = 2
+                }
+            }
+
+            let test =
+                Test()
+
+            test.x
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
+    );
+}
+
+#[test]
+fn struct_without_init_requires_defaults_or_arguments() {
+    let result =
+        run_result(
+            r#"
+            struct Test {
+                x
+                y
+            }
+
+            Test(1)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn class_init_must_initialize_required_fields() {
+    let result =
+        run_result(
+            r#"
+            class Test {
+                x
+
+                init = |self| {}
+            }
+
+            Test()
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+

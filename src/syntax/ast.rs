@@ -62,7 +62,13 @@ pub enum ExprKind {
     StructDecl {
         visibility: Visibility,
         name: String,
-        fields: Vec<String>,
+        fields: Vec<(String, Option<Box<Expr>>)>,
+        methods: Vec<(String, Box<Expr>)>,
+    },
+    ClassDecl {
+        visibility: Visibility,
+        name: String,
+        fields: Vec<(String, Option<Box<Expr>>)>,
         methods: Vec<(String, Box<Expr>)>,
     },
     EnumDecl(EnumDef),

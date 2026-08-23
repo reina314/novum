@@ -1,20 +1,19 @@
 import math
 
-// define Perceptron structure
-pub struct Perceptron {
-    weights,
-    bias,
+// define Perceptron class
+pub class Perceptron {
+    weights = [0.0],
+    bias = 0.0,
     learning_rate,
     epochs,
 
-    init: |self, input_dim, learning_rate, epochs| { 
-        self.weights = [0.0] * input_dim
-        self.bias = 0.0
+    init = |self, input_dim, learning_rate, epochs| { 
+        self.weights *= input_dim
         self.learning_rate = learning_rate
         self.epochs = epochs
     },
 
-    predict: |self, x| {
+    predict = |self, x| {
         sum = 0
         for (w, xi) in zip(self.weights, x) {
             sum += w * xi
@@ -29,7 +28,7 @@ pub struct Perceptron {
         }
     },
 
-    fit: |self, X, y| {
+    fit = |self, X, y| {
         for epoch in range(self.epochs) {
             total_error = 0
 

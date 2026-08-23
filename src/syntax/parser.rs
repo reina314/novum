@@ -374,7 +374,8 @@ impl Parser {
 
             TokenKind::Return => self.parse_return(),
             TokenKind::Let => self.parse_let(),
-            TokenKind::Struct => self.parse_struct(), 
+            TokenKind::Struct => self.parse_struct_or_class(false),
+            TokenKind::Class => self.parse_struct_or_class(true),
             TokenKind::Enum => self.parse_enum(),
             TokenKind::Import => self.parse_import(),
 
@@ -458,15 +459,23 @@ impl Parser {
             }
 
             TokenKind::Struct => {
-                self.parse_struct_with_visibility(
-                    Visibility::Public
+                self.parse_struct_or_class_with_visibility(
+                    Visibility::Public,
+                    false,
+                )
+            }
+
+            TokenKind::Class => {
+                self.parse_struct_or_class_with_visibility(
+                    Visibility::Public,
+                    true,
                 )
             }
 
             _ => {
                 Err(
                     Error::parse(
-                        "expected 'let' or 'struct' after 'pub'",
+                        "expected 'let', 'struct', or 'class' after 'pub'",
                         self.peek().span,
                     )
                 )
@@ -474,131 +483,237 @@ impl Parser {
         }
     }
 
-    fn parse_struct(&mut self) -> Result<Expr> {
-        self.parse_struct_with_visibility(
-            Visibility::Private
+    fn parse_struct_or_class(
+        &mut self,
+        is_class: bool,
+    ) -> Result<Expr> {
+        self.parse_struct_or_class_with_visibility(
+            Visibility::Private,
+            is_class,
         )
     }
 
-    fn parse_struct_with_visibility(
+    fn parse_struct_or_class_with_visibility(
         &mut self,
         visibility: Visibility,
+        is_class: bool,
     ) -> Result<Expr> {
-        let start = self.expect(TokenKind::Struct)?.span;
+        let start =
+            if is_class {
+                self.expect(
+                    TokenKind::Class
+                )?
+                .span
+            } else {
+                self.expect(
+                    TokenKind::Struct
+                )?
+                .span
+            };
 
-        // struct name
-        let name_token = self.peek().clone();
+        let name_token =
+            self.peek().clone();
 
-        let name = match name_token.kind {
-            TokenKind::Ident(name) => {
-                self.eat();
-                name
-            }
-
-            _ => {
-                return Err(Error::parse(
-                    "struct expects an identifier",
-                    name_token.span,
-                ));
-            }
-        };
-
-        self.expect(TokenKind::LBrace)?;
-
-        let mut fields = Vec::new();
-        let mut methods = Vec::new();
-
-        let mut member_names =
-            std::collections::HashSet::new();
-
-        while !self.check(TokenKind::RBrace) {
-            if self.check(TokenKind::Eof) {
-                return Err(Error::parse(
-                    "unterminated struct declaration",
-                    start,
-                ));
-            }
-
-            let member_token = self.peek().clone();
-
-            let member_name = match member_token.kind {
+        let name =
+            match name_token.kind {
                 TokenKind::Ident(name) => {
                     self.eat();
                     name
                 }
 
                 _ => {
-                    return Err(Error::parse(
-                        "expected field or method name",
-                        member_token.span,
-                    ));
+                    return Err(
+                        Error::parse(
+                            if is_class {
+                                "class expects an identifier"
+                            } else {
+                                "struct expects an identifier"
+                            },
+                            name_token.span,
+                        )
+                    );
                 }
             };
 
-            // duplicate member check
-            if !member_names.insert(member_name.clone()) {
-                return Err(Error::parse(
-                    format!(
-                        "duplicate struct member '{}'",
-                        member_name
-                    ),
-                    member_token.span,
-                ));
+        self.expect(
+            TokenKind::LBrace
+        )?;
+
+        let mut fields =
+            Vec::new();
+
+        let mut methods =
+            Vec::new();
+
+        let mut member_names =
+            std::collections::HashSet::new();
+
+        while !self.check(
+            TokenKind::RBrace
+        ) {
+            if self.check(
+                TokenKind::Eof
+            ) {
+                return Err(
+                    Error::parse(
+                        if is_class {
+                            "unterminated class declaration"
+                        } else {
+                            "unterminated struct declaration"
+                        },
+                        start,
+                    )
+                );
             }
 
-            if self.eat_if(TokenKind::Colon) {
-                // method
-                let method_expr = self.parse_lambda()?;
+            let member_token =
+                self.peek().clone();
 
-                let lambda = match method_expr.kind {
-                    ExprKind::Lambda(params, body) => {
-                        if params.first().map(String::as_str)
-                            != Some("self")
-                        {
-                            return Err(Error::parse(
-                                format!(
-                                    "method '{}' must have 'self' as its first parameter",
-                                    member_name
-                                ),
-                                method_expr.span,
-                            ));
-                        }
-
-                        Expr::new(
-                            ExprKind::Lambda(params, body),
-                            method_expr.span,
-                        )
+            let member_name =
+                match member_token.kind {
+                    TokenKind::Ident(name) => {
+                        self.eat();
+                        name
                     }
 
-                    _ => unreachable!(
-                        "parse_lambda() must return ExprKind::Lambda"
-                    ),
+                    _ => {
+                        return Err(
+                            Error::parse(
+                                "expected field or method name",
+                                member_token.span,
+                            )
+                        );
+                    }
                 };
 
-                methods.push((
-                    member_name,
-                    Box::new(lambda),
-                ));
-            } else {
-                // field
-                fields.push(member_name);
+            // -----------------------------------------------------
+            // Duplicate member
+            // -----------------------------------------------------
+
+            if !member_names.insert(
+                member_name.clone()
+            ) {
+                return Err(
+                    Error::parse(
+                        format!(
+                            "duplicate {} member '{}'",
+                            if is_class {
+                                "class"
+                            } else {
+                                "struct"
+                            },
+                            member_name,
+                        ),
+                        member_token.span,
+                    )
+                );
             }
 
-            // optional comma
-            self.eat_if(TokenKind::Comma);
+            // -----------------------------------------------------
+            // `name = ...`
+            //
+            // Lambda -> method
+            // Other expression -> default field value
+            // -----------------------------------------------------
+
+            if self.eat_if(
+                TokenKind::Equals
+            ) {
+                let value =
+                    self.parse_expr()?;
+
+                match &value.kind {
+                    ExprKind::Lambda(
+                        params,
+                        _,
+                    ) => {
+                        if params.first()
+                            .map(String::as_str)
+                            != Some("self")
+                        {
+                            return Err(
+                                Error::parse(
+                                    format!(
+                                        "method '{}' must have 'self' as its first parameter",
+                                        member_name
+                                    ),
+                                    value.span,
+                                )
+                            );
+                        }
+
+                        methods.push(
+                            (
+                                member_name,
+                                Box::new(value),
+                            )
+                        );
+                    }
+
+                    _ => {
+                        fields.push(
+                            (
+                                member_name,
+                                Some(
+                                    Box::new(value)
+                                ),
+                            )
+                        );
+                    }
+                }
+            } else {
+                // -------------------------------------------------
+                // Bare field declaration:
+                //
+                // x
+                // -------------------------------------------------
+
+                fields.push(
+                    (
+                        member_name,
+                        None,
+                    )
+                );
+            }
+
+            // -----------------------------------------------------
+            // Optional comma
+            // -----------------------------------------------------
+
+            self.eat_if(
+                TokenKind::Comma
+            );
         }
 
-        let close = self.expect(TokenKind::RBrace)?.span;
+        let close =
+            self.expect(
+                TokenKind::RBrace
+            )?
+            .span;
 
-        Ok(Expr::new(
-            ExprKind::StructDecl {
-                visibility,
-                name,
-                fields,
-                methods,
-            },
-            start.join(close),
-        ))
+        let kind =
+            if is_class {
+                ExprKind::ClassDecl {
+                    visibility,
+                    name,
+                    fields,
+                    methods,
+                }
+            } else {
+                ExprKind::StructDecl {
+                    visibility,
+                    name,
+                    fields,
+                    methods,
+                }
+            };
+
+        Ok(
+            Expr::new(
+                kind,
+                start.join(close),
+            )
+        )
     }
 
     fn parse_enum(&mut self) -> Result<Expr> {
