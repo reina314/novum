@@ -20,7 +20,7 @@ pub struct Perceptron {
     predict: |self, x| {
         sum = 0
         for (w, xi) in self.weights.iter().zip(x.iter()) {
-            sum = sum + w * xi
+            sum += w * xi
         }
 
         activation = sum + self.bias
@@ -46,11 +46,11 @@ pub struct Perceptron {
                         self.weights[i] = 
                             w + self.learning_rate * error * x_val
                         
-                        i = i + 1
+                        i += 1
                     }
 
                     self.bias = self.bias + self.learning_rate * error 
-                    total_error = total_error + math.abs(error)
+                    total_error += math.abs(error)
                 }
             }
 

@@ -155,74 +155,96 @@ impl Parser {
     fn parse_expr(&mut self) -> Result<Expr> { self.parse_assignment() }
 
     fn parse_assignment(&mut self) -> Result<Expr> {
-        let left =
-            self.parse_range()?;
+        let lhs = self.parse_range()?;
 
-        if self.peek().kind
-            == TokenKind::Equals
-        {
-            let eq =
-                self.eat();
+        // ---------------------------------------------------------
+        // Simple assignment
+        // ---------------------------------------------------------
 
-            let right =
+        if self.check(TokenKind::Equals) {
+            self.eat();
+
+            let rhs =
                 self.parse_assignment()?;
 
-            let span =
-                left.span.join(
-                    right.span
-                );
-
-            return match left.kind {
-                ExprKind::Ident(name) => {
-                    Ok(
-                        Expr::new(
-                            ExprKind::Assign(
-                                name,
-                                Box::new(right),
-                            ),
-                            span,
-                        )
-                    )
-                }
-
-                ExprKind::Index(obj, index) => {
-                    Ok(
-                        Expr::new(
-                            ExprKind::AssignIndex(
-                                obj,
-                                index,
-                                Box::new(right),
-                            ),
-                            span,
-                        )
-                    )
-                }
-
-                ExprKind::Field(obj, name) => {
-                    Ok(
-                        Expr::new(
-                            ExprKind::AssignField(
-                                obj,
-                                name,
-                                Box::new(right),
-                            ),
-                            span,
-                        )
-                    )
-                }
+            match &lhs.kind {
+                ExprKind::Ident(_)
+                | ExprKind::Index(_, _)
+                | ExprKind::Field { .. } => {}
 
                 _ => {
-                    Err(
+                    return Err(
                         Error::parse(
                             "invalid assignment target",
-                            eq.span,
+                            lhs.span,
                         )
-                    )
+                    );
                 }
-            };
+            }
+
+            let span =
+                lhs.span.join(rhs.span);
+
+            return Ok(
+                Expr::new(
+                    ExprKind::Assign {
+                        target:
+                            Box::new(lhs),
+                        value:
+                            Box::new(rhs),
+                    },
+                    span,
+                )
+            );
         }
 
-        Ok(left)
+        // ---------------------------------------------------------
+        // Compound assignment
+        // ---------------------------------------------------------
+
+        if let Some(op) =
+            assignment_binop(
+                &self.peek().kind
+            )
+        {
+            self.eat();
+
+            let rhs =
+                self.parse_assignment()?;
+
+            match &lhs.kind {
+                ExprKind::Ident(_)
+                | ExprKind::Index(_, _)
+                | ExprKind::Field { .. } => {}
+
+                _ => {
+                    return Err(
+                        Error::parse(
+                            "invalid assignment target",
+                            lhs.span,
+                        )
+                    );
+                }
+            }
+
+            let span =
+                lhs.span.join(rhs.span);
+
+            return Ok(
+                Expr::new(
+                    ExprKind::AssignOp {
+                        target:
+                            Box::new(lhs),
+                        op,
+                        value:
+                            Box::new(rhs),
+                    },
+                    span,
+                )
+            );
+        }
+
+        Ok(lhs)
     }
 
     fn parse_range(&mut self) -> Result<Expr> {
@@ -983,10 +1005,10 @@ impl Parser {
                                 expr.span;
 
                             expr = Expr::new(
-                                ExprKind::Field(
-                                    Box::new(expr),
+                                ExprKind::Field{
+                                    object: Box::new(expr),
                                     name,
-                                ),
+                                },
                                 start.join(
                                     token.span
                                 ),
@@ -1746,3 +1768,27 @@ impl Parser {
     }
 
 }
+
+/// Helper for `parse_assignment()`
+    fn assignment_binop(
+        token: &TokenKind,
+    ) -> Option<BinOp> {
+        match token {
+            TokenKind::PlusEq =>
+                Some(BinOp::Add),
+
+            TokenKind::MinusEq =>
+                Some(BinOp::Sub),
+
+            TokenKind::StarEq =>
+                Some(BinOp::Mul),
+
+            TokenKind::SlashEq =>
+                Some(BinOp::Div),
+
+            TokenKind::PercentEq =>
+                Some(BinOp::Mod),
+
+            _ => None,
+        }
+    }

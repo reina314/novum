@@ -7,6 +7,68 @@ use novum::{Interpreter, Lexer, Parser};
 use novum::runtime::{Value, Object, Series, BoundMethod, MethodReceiver};
 use std::{cell::RefCell, rc::Rc};
 
+
+#[test]
+fn compound_assignment_add() {
+    let result = run(
+        r#"
+        x = 10
+        x += 5
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(15)
+    );
+}
+
+#[test]
+fn compound_assignment_sub() {
+    let result = run(
+        r#"
+        x = 10
+        x -= 3
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(7)
+    );
+}
+
+#[test]
+fn compound_assignment_mul() {
+    let result = run(
+        r#"
+        x = 10
+        x *= 3
+        x
+        "#
+    );
+
+    assert_eq!(
+        result,
+        Value::Int(30)
+    );
+}
+
+#[test]
+fn compound_assignment_div() {
+    let result = run(
+        r#"
+        x = 10
+        x /= 4
+        x
+        "#
+    );
+
+    // 現在の division semantics に合わせる
+}
+
 #[test]
 fn mathematical_precedence() {
     assert_eq!(run("2 + 3 * 4"), Value::Int(14));

@@ -75,14 +75,16 @@ pub enum ExprKind {
         pattern: Pattern, 
         value: Box<Expr>,
     },
-    Assign(String, Box<Expr>),
+
+    Assign {
+        target: Box<Expr>, 
+        value: Box<Expr>,
+    },
     AssignOp {
         target: Box<Expr>,
         op: BinOp,
         value: Box<Expr>,
     },
-    AssignIndex(Box<Expr>, IndexExpr, Box<Expr>),
-    AssignField(Box<Expr>, String, Box<Expr>),
     Drop(String),
 
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -109,8 +111,14 @@ pub enum ExprKind {
     Block(Vec<Expr>),
     Lambda(Vec<String>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
-    Field(Box<Expr>, String),
-    Index(Box<Expr>, IndexExpr),
+    Index(
+        Box<Expr>,
+        IndexExpr,
+    ),
+    Field {
+        object: Box<Expr>, 
+        name: String,
+    },
 
     Range {
         start: Option<Box<Expr>>,

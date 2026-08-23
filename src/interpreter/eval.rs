@@ -678,13 +678,15 @@ impl Interpreter {
                 name,
                 fields,
                 methods,
-            } => self.eval_struct_decl(
+            } => {
+                self.eval_struct_decl(
                     *visibility,
                     name,
                     fields,
                     methods,
                     expr,
-            ),
+                )
+            },
             EnumDecl(definition) => {
                 self.eval_enum_decl(
                     definition,
@@ -698,19 +700,22 @@ impl Interpreter {
                 visibility,
                 pattern,
                 value,
-            } => self.eval_let(
-                *visibility, 
-                pattern, 
-                value
-            ),
+            } => {
+                self.eval_let(
+                    *visibility, 
+                    pattern, 
+                    value
+                )
+            }
 
-            Assign(
-                name, 
-                value
-            ) => {
+            Assign {
+                target, 
+                value,
+            } => {
                 self.eval_assign(
-                    name, 
-                    value, 
+                    target,
+                    value,
+                    expr,
                 )
             }
 
@@ -727,9 +732,6 @@ impl Interpreter {
                 )
             }
 
-            AssignIndex(obj, index, rhs) => self.eval_assign_index(obj, index, rhs, expr),
-            AssignField(obj, name, rhs) => self.eval_assign_field(obj, name, rhs, expr),
-
             Drop(name) => {
                 if self.env.remove_local(name).is_none() {
                     return Err(self.error(ErrorKind::Name, format!("{} does not exist in current scope", name), expr));
@@ -739,7 +741,11 @@ impl Interpreter {
 
             Binary(BinOp::And, lhs, rhs) => self.eval_and(lhs, rhs, expr),
             Binary(BinOp::Or, lhs, rhs) => self.eval_or(lhs, rhs, expr),
-            Binary(op, lhs, rhs) => {
+            Binary(
+                op, 
+                lhs, 
+                rhs
+            ) => {
                 let l = self.eval_value(lhs)?;
                 let r = self.eval_value(rhs)?;
 
@@ -908,7 +914,16 @@ impl Interpreter {
 
             Call(callee, args) => self.eval_call(callee, args, expr),
 
-            Field(obj, name) => self.eval_field(obj, name, expr),
+            Field {
+                object, 
+                name
+            } => {
+                self.eval_field(
+                    object, 
+                    name, 
+                    expr
+                )
+            }
 
             Index(obj, index) => self.eval_index(obj, index, expr),
 
@@ -1825,32 +1840,118 @@ impl Interpreter {
 
     fn eval_assign(
         &mut self,
-        name: &str,
-        value_expr: &Expr,
+        target: &Expr,
+        rhs: &Expr,
+        whole: &Expr,
     ) -> Result<ControlFlow> {
-        let value =
-            self.eval_value(value_expr)?;
+        match &target.kind {
+            ExprKind::Ident(name) => {
+                let value =
+                    self.eval_value(rhs)?;
 
-        self.env.assign_or_define(
-            name,
-            value,
-        );
+                self.env.assign_or_define(
+                    name,
+                    value,
+                );
 
-        Ok(
-            ControlFlow::Value(
-                Value::Unit
-            )
-        )
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            ExprKind::Index(
+                object,
+                index,
+            ) => {
+                self.eval_assign_index(
+                    object,
+                    index,
+                    rhs,
+                    whole,
+                )
+            }
+
+            ExprKind::Field {
+                object,
+                name,
+            } => {
+                self.eval_assign_field(
+                    object,
+                    name,
+                    rhs,
+                    whole,
+                )
+            }
+
+            _ => {
+                Err(
+                    self.error(
+                        ErrorKind::Type,
+                        "invalid assignment target",
+                        whole,
+                    )
+                )
+            }
+        }
     }
 
     fn eval_assign_op(
         &mut self,
         target: &Expr,
         op: BinOp,
-        rhs_expr: &Expr,
+        rhs: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        todo!()
+        match &target.kind {
+            ExprKind::Ident(name) => {
+                let current =
+                    self.env.get(name)
+                        .ok_or_else(|| {
+                            self.error(
+                                ErrorKind::Name,
+                                format!(
+                                    "{} is not defined",
+                                    name
+                                ),
+                                whole,
+                            )
+                        })?;
+
+                let rhs =
+                    self.eval_value(rhs)?;
+
+                let value =
+                    operator::apply_binop(
+                        op,
+                        current,
+                        rhs,
+                    )
+                    .map_err(|error| {
+                        self.error(
+                            ErrorKind::Type,
+                            error,
+                            whole,
+                        )
+                    })?;
+
+                self.env.assign(
+                    name,
+                    value,
+                );
+
+                Ok(
+                    ControlFlow::Value(
+                        Value::Unit
+                    )
+                )
+            }
+
+            _ => {
+                todo!()
+            }
+        }
     }
 
     fn eval_assign_index(
