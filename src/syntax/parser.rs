@@ -680,9 +680,13 @@ impl Parser {
 
     fn parse_import(&mut self) -> Result<Expr> {
         let start =
-            self.expect(TokenKind::Import)?.span;
+            self.expect(
+                TokenKind::Import
+            )?
+            .span;
 
-        let first = self.peek().clone();
+        let first =
+            self.peek().clone();
 
         let first_name =
             match first.kind {
@@ -707,7 +711,9 @@ impl Parser {
         let mut end_span =
             first.span;
 
-        while self.eat_if(TokenKind::Dot) {
+        while self.eat_if(
+            TokenKind::Dot
+        ) {
             let token =
                 self.peek().clone();
 
@@ -729,15 +735,54 @@ impl Parser {
                 };
 
             end_span =
-                end_span.join(token.span);
+                token.span;
 
             parts.push(name);
         }
 
-        Ok(Expr::new(
-            ExprKind::Import(parts),
-            start.join(end_span),
-        ))
+        let alias =
+            if self.check(
+                TokenKind::As
+            ) {
+                self.eat();
+
+                let token =
+                    self.peek().clone();
+
+                let name =
+                    match token.kind {
+                        TokenKind::Ident(name) => {
+                            self.eat();
+                            name
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::parse(
+                                    "expected identifier after 'as'",
+                                    token.span,
+                                )
+                            );
+                        }
+                    };
+
+                end_span =
+                    token.span;
+
+                Some(name)
+            } else {
+                None
+            };
+
+        Ok(
+            Expr::new(
+                ExprKind::Import {
+                    path: parts,
+                    alias,
+                },
+                start.join(end_span),
+            )
+        )
     }
 
     fn parse_if(&mut self) -> Result<Expr> {

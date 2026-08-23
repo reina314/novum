@@ -67,7 +67,10 @@ pub enum ExprKind {
     },
     EnumDecl(EnumDef),
 
-    Import(Vec<String>),
+    Import {
+        path: Vec<String>,
+        alias: Option<String>,
+    },
 
     // Assignment & Deassignment
     Let {

@@ -841,7 +841,16 @@ impl Interpreter {
                 )
             }
 
-            Import(parts) => self.eval_import(parts, expr),
+            Import {
+                path,
+                alias,
+            } => {
+                self.eval_import(
+                    path,
+                    alias.as_deref(),
+                    expr,
+                )
+            }
 
             Let {
                 visibility,
@@ -1612,8 +1621,13 @@ impl Interpreter {
     fn eval_import(
         &mut self,
         parts: &[String],
+        alias: Option<&str>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
+        // =========================================================
+        // 1. Validate import path
+        // =========================================================
+
         if parts.is_empty() {
             return Err(
                 self.error(
@@ -1629,12 +1643,50 @@ impl Interpreter {
                 parts.to_vec()
             );
 
+        // ---------------------------------------------------------
+        // Name to bind in the current environment.
+        //
+        // import math
+        //     -> math
+        //
+        // import math as m
+        //     -> m
+        //
+        // import tests.modules.a
+        //     -> a
+        //
+        // import tests.modules.a as mod
+        //     -> mod
+        // ---------------------------------------------------------
+
+        let binding_name =
+            alias
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    parts
+                        .last()
+                        .cloned()
+                        .expect(
+                            "validated non-empty module path"
+                        )
+                });
+
+        // =========================================================
+        // 2. Determine importing file directory
+        // =========================================================
+
         let base_dir =
             self.file_stack
                 .last()
                 .and_then(|path| {
                     path.parent()
                 });
+
+        // =========================================================
+        // 3. Resolve physical user module first
+        //
+        // Relative module resolution has priority over stdlib.
+        // =========================================================
 
         let resolved =
             self.module_loader.resolve(
@@ -1649,7 +1701,8 @@ impl Interpreter {
 
                 Err(error) => {
                     // -------------------------------------------------
-                    // If this is a single component import, try stdlib.
+                    // 3a. If a physical module was not found and this
+                    //     is a single-component import, try stdlib.
                     // -------------------------------------------------
 
                     if parts.len() == 1 {
@@ -1657,27 +1710,17 @@ impl Interpreter {
                             &parts[0];
 
                         if let Some(module) =
-                            crate::stdlib::load_module(name)
-                        {
-                            if self.env.contains_local(
+                            crate::stdlib::load_module(
                                 name
-                            ) {
-                                return Err(
-                                    self.error(
-                                        ErrorKind::Name,
-                                        format!(
-                                            "name '{}' is already defined in this scope",
-                                            name
-                                        ),
-                                        whole,
-                                    )
-                                );
-                            }
-
-                            self.env.define(
-                                name.clone(),
-                                Value::Module(module),
-                            );
+                            )
+                        {
+                            self.bind_imported_module(
+                                &requested,
+                                &binding_name,
+                                alias,
+                                module,
+                                whole,
+                            )?;
 
                             return Ok(
                                 ControlFlow::Value(
@@ -1701,12 +1744,21 @@ impl Interpreter {
                 }
             };
 
+        // =========================================================
+        // 4. Cache lookup
+        //
+        // Important:
+        // cache is keyed by physical module path, not alias.
+        // =========================================================
+
         if let Some(module) =
             self.module_loader
                 .get_cached(&canonical)
         {
-            self.bind_module_path(
+            self.bind_imported_module(
                 &requested,
+                &binding_name,
+                alias,
                 module,
                 whole,
             )?;
@@ -1717,6 +1769,14 @@ impl Interpreter {
                 )
             );
         }
+
+        // =========================================================
+        // 5. Cyclic import detection
+        //
+        // Important:
+        // cycle detection uses the physical module path,
+        // never the alias.
+        // =========================================================
 
         if self.module_stack
             .iter()
@@ -1746,21 +1806,32 @@ impl Interpreter {
             );
         }
 
+        // =========================================================
+        // 6. Load + parse
+        // =========================================================
+
         let program =
             self.module_loader
                 .load_program(
                     &canonical
                 )
                 .map_err(|mut error| {
-                    if error.span.is_none() { 
-                        error.span = Some(whole.span); 
+                    if error.span.is_none() {
+                        error.span =
+                            Some(whole.span);
                     }
-                    if error.stack.is_empty() { 
-                        error.stack = self.stack.clone(); 
+
+                    if error.stack.is_empty() {
+                        error.stack =
+                            self.stack.clone();
                     }
 
                     error
                 })?;
+
+        // =========================================================
+        // 7. Create module environment
+        // =========================================================
 
         let module_env =
             self.env.child();
@@ -1770,6 +1841,10 @@ impl Interpreter {
                 &mut self.env,
                 module_env,
             );
+
+        // =========================================================
+        // 8. Push module context
+        // =========================================================
 
         self.module_stack.push(
             ModuleContext::new(
@@ -1781,6 +1856,10 @@ impl Interpreter {
         self.file_stack.push(
             canonical.clone()
         );
+
+        // =========================================================
+        // 9. Evaluate module
+        // =========================================================
 
         let result =
             self.eval_program(
@@ -1809,7 +1888,10 @@ impl Interpreter {
                 previous_env,
             );
 
-        // Module execution must complete normally.
+        // =========================================================
+        // 10. Module execution must complete normally
+        // =========================================================
+
         match result? {
             ControlFlow::Value(_) => {}
 
@@ -1844,6 +1926,10 @@ impl Interpreter {
             }
         }
 
+        // =========================================================
+        // 11. Build runtime Module
+        // =========================================================
+
         let mut module =
             Module::new(
                 requested.name()
@@ -1860,7 +1946,9 @@ impl Interpreter {
             if context.is_exported(
                 &name
             ) {
-                module.export(name);
+                module.export(
+                    name
+                );
             }
         }
 
@@ -1871,14 +1959,23 @@ impl Interpreter {
                 )
             );
 
-        self.module_loader
-            .cache(
-                canonical,
-                module.clone(),
-            );
+        // =========================================================
+        // 12. Cache fully evaluated module
+        // =========================================================
 
-        self.bind_module_path(
+        self.module_loader.cache(
+            canonical,
+            module.clone(),
+        );
+
+        // =========================================================
+        // 13. Bind module
+        // =========================================================
+
+        self.bind_imported_module(
             &requested,
+            &binding_name,
+            alias,
             module,
             whole,
         )?;
@@ -1887,6 +1984,46 @@ impl Interpreter {
             ControlFlow::Value(
                 Value::Unit
             )
+        )
+    }
+
+    /// Helper for `eval_import()` to bind the imported module to the current environment.
+    fn bind_imported_module(
+        &mut self,
+        requested: &ModulePath,
+        binding_name: &str,
+        alias: Option<&str>,
+        module: ModuleRef,
+        whole: &Expr,
+    ) -> Result<()> {
+        if self.env.contains_local(
+            binding_name
+        ) {
+            return Err(
+                self.error(
+                    ErrorKind::Name,
+                    format!(
+                        "name '{}' is already defined in this scope",
+                        binding_name
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        if alias.is_some() {
+            self.env.define(
+                binding_name.to_owned(),
+                Value::Module(module),
+            );
+
+            return Ok(());
+        }
+
+        self.bind_module_path(
+            requested,
+            module,
+            whole,
         )
     }
 

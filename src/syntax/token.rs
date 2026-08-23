@@ -43,6 +43,7 @@ pub enum TokenKind {
     Return,
     For,
     In,
+    As,
     Let,
     Match,
 

@@ -1,4 +1,4 @@
-import perceptron_example
+import perceptron_example as perceptron
 
 // fitting and prediction
 print("\n==AND gate=======================")
@@ -6,7 +6,7 @@ print("\n==AND gate=======================")
 X_and = [[0, 0], [0, 1], [1, 0], [1, 1]]
 y_and = [0, 0, 0, 1]
 
-model_and = perceptron_example.Perceptron(0,0,0,0)
+model_and = perceptron.Perceptron(0,0,0,0)
 model_and.init(2, 0.005, 20)
 model_and.fit(X_and, y_and)
 
@@ -25,7 +25,7 @@ print("\n==OR gate=======================")
 X_or = [[0, 0], [0, 1], [1, 0], [1, 1]]
 y_or = [0, 1, 1, 1]
 
-model_or = perceptron_example.Perceptron(0,0,0,0)
+model_or = perceptron.Perceptron(0,0,0,0)
 model_or.init(2, 0.005, 20)
 model_or.fit(X_or, y_or)
 
