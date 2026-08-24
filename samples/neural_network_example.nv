@@ -1,0 +1,114 @@
+import mlp as nn
+
+print("\n== XOR neural network ==")
+
+
+// ============================================================
+// Dataset
+// ============================================================
+
+let X = [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+]
+
+let y = [
+    0.0,
+    1.0,
+    1.0,
+    0.0,
+]
+
+
+// ============================================================
+// Model
+// ============================================================
+
+let model =
+    nn.MLP(
+        input_dim = 2,
+        hidden_dim = 4,
+    )
+
+
+// ============================================================
+// Training
+// ============================================================
+
+print("\nTraining...")
+
+model.fit(
+    X,
+    y,
+    epochs = 5000,
+    learning_rate = 0.5,
+)
+
+
+// ============================================================
+// Evaluation
+// ============================================================
+
+print("\nPredictions:")
+
+for i in range(len(X)) {
+    let x =
+        X[i]
+
+    let answer =
+        y[i]
+
+    let probability =
+        model.forward(x)
+
+    let prediction =
+        model.predict(x)
+
+    print(
+        x
+        + " -> "
+        + prediction
+        + "   probability = "
+        + probability
+        + "   answer = "
+        + answer
+    )
+}
+
+
+print(
+    "\nAccuracy: "
+    + model.accuracy(X, y)
+)
+
+// Example Output
+//
+// == XOR neural network ==
+//
+// Training...
+// Epoch 1  loss = 0.71173148
+// Epoch 101  loss = 0.4290314
+// Epoch 201  loss = 0.10011787
+// Epoch 301  loss = 0.03572543
+// Epoch 401  loss = 0.01981651
+// Epoch 501  loss = 0.01324365
+// Epoch 601  loss = 0.00974872
+// Epoch 701  loss = 0.00761286
+// Epoch 801  loss = 0.00618809
+// Epoch 901  loss = 0.00517845
+// Epoch 1001  loss = 0.00443043
+// Epoch 1101  loss = 0.00385695
+// Epoch 1201  loss = 0.00340512
+// Epoch 1301  loss = 0.00304115
+// Epoch 1401  loss = 0.00274246
+// Converged at epoch 1499
+//
+// Predictions:
+// [0.0, 0.0] -> 0   probability = 0.00256213   answer = 0.0
+// [0.0, 1.0] -> 1   probability = 0.99846975   answer = 1.0
+// [1.0, 0.0] -> 1   probability = 0.99732281   answer = 1.0
+// [1.0, 1.0] -> 0   probability = 0.00320035   answer = 0.0
+//
+// Accuracy: 1.0

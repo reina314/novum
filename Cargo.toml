@@ -11,6 +11,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 rand = "0.10.2"
 
+[profile.release]
+opt-level = 3        # Maximum optimization for speed
+lto = "fat"          # Enable Link Time Optimization across all crates
+codegen-units = 1    # Reduce number of codegen units to increase optimization power (slower compile time)
+panic = "abort"      # Remove unwinding logic to reduce binary size and speed up panics
+strip = true         # Strip debug symbols and symbols from binary
+
 [lib]
 name = "novum"
 path = "src/lib.rs"

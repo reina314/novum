@@ -1,0 +1,343 @@
+import math
+import dense as nn
+
+pub class MLP {
+    hidden,
+    output,
+
+
+    // ========================================================
+    // Initialization
+    // ========================================================
+
+    init = |self, input_dim, hidden_dim| {
+        self.hidden =
+            nn.Dense(
+                input_dim = input_dim,
+                output_dim = hidden_dim,
+            )
+
+        self.output =
+            nn.Dense(
+                input_dim = hidden_dim,
+                output_dim = 1,
+            )
+    },
+
+
+    // ========================================================
+    // Activation functions
+    // ========================================================
+
+    tanh = |self, x| {
+        math.tanh(x)
+    },
+
+    tanh_vector = |self, xs| {
+        iter(xs)
+            .map(|x| self.tanh(x))
+            .collect()
+    },
+
+    tanh_grad = |self, x| {
+        let y =
+            self.tanh(x)
+
+        1.0 - y * y
+    },
+
+    tanh_grad_vector = |self, xs| {
+        iter(xs)
+            .map(|x| self.tanh_grad(x))
+            .collect()
+    },
+
+    sigmoid = |self, x| {
+        1.0 / (
+            1.0
+            + math.exp(-x)
+        )
+    },
+
+
+    // ========================================================
+    // Forward
+    // ========================================================
+
+    forward = |self, x| {
+        let z1 =
+            self.hidden.forward(x)
+
+        let a1 =
+            self.tanh_vector(z1)
+
+        let z2 =
+            self.output.forward(a1)
+
+        self.sigmoid(z2[0])
+    },
+
+
+    // ========================================================
+    // Prediction
+    // ========================================================
+
+    predict = |self, x| {
+        let probability =
+            self.forward(x)
+
+        if probability >= 0.5 {
+            1
+        } else {
+            0
+        }
+    },
+
+
+    // ========================================================
+    // Binary cross-entropy
+    // ========================================================
+
+    loss = |self, prediction, target| {
+        let epsilon =
+            0.00000001
+
+        let p =
+            if prediction < epsilon {
+                epsilon
+            } else {
+                if prediction > 1.0 - epsilon {
+                    1.0 - epsilon
+                } else {
+                    prediction
+                }
+            }
+
+        -(
+            target * math.log(p)
+            + (1.0 - target)
+                * math.log(1.0 - p)
+        )
+    },
+
+
+    // ========================================================
+    // One sample
+    //
+    // This calculates the gradient for one sample and
+    // accumulates it in the Dense layers.
+    //
+    // It does NOT update any weights.
+    // ========================================================
+
+    train_sample =
+        |self, x, target| {
+
+            // ------------------------------------------------
+            // Forward
+            // ------------------------------------------------
+
+            let z1 =
+                self.hidden.forward(x)
+
+            let a1 =
+                self.tanh_vector(z1)
+
+            let z2 =
+                self.output.forward(a1)
+
+            let prediction =
+                self.sigmoid(z2[0])
+
+            // ------------------------------------------------
+            // BCE + sigmoid
+            //
+            // dL/dz2 = prediction - target
+            // ------------------------------------------------
+
+            let error =
+                prediction - target
+
+            let grad_output = [
+                error
+            ]
+
+
+            // ------------------------------------------------
+            // Output layer
+            // ------------------------------------------------
+
+            let grad_hidden =
+                self.output.backward(
+                    grad_output
+                )
+
+
+            // ------------------------------------------------
+            // tanh derivative
+            // ------------------------------------------------
+
+            let tanh_grad =
+                self.tanh_grad_vector(z1)
+
+            let grad_hidden_layer =
+                range(len(grad_hidden))
+                    .map(|i| {
+                        grad_hidden[i]
+                        * tanh_grad[i]
+                    })
+                    .collect()
+
+
+            // ------------------------------------------------
+            // Hidden layer
+            // ------------------------------------------------
+
+            self.hidden.backward(
+                grad_hidden_layer
+            )
+
+
+            // ------------------------------------------------
+            // Loss
+            // ------------------------------------------------
+
+            self.loss(
+                prediction,
+                target,
+            )
+        },
+
+
+    // ========================================================
+    // Reset all gradients
+    // ========================================================
+
+    zero_grad = |self| {
+        self.hidden.zero_grad()
+        self.output.zero_grad()
+    },
+
+
+    // ========================================================
+    // Apply one batch update
+    // ========================================================
+
+    step =
+        |self, learning_rate, batch_size| {
+            self.hidden.step(
+                learning_rate,
+                batch_size,
+            )
+
+            self.output.step(
+                learning_rate,
+                batch_size,
+            )
+        },
+
+
+    // ========================================================
+    // Full-batch training
+    // ========================================================
+
+    fit =
+        |self, X, y, epochs, learning_rate| {
+
+            let batch_size =
+                len(X)
+
+            for epoch
+                in range(epochs)
+            {
+                // --------------------------------------------
+                // Start a fresh batch
+                // --------------------------------------------
+
+                self.zero_grad()
+
+                let total_loss =
+                    0.0
+
+
+                // --------------------------------------------
+                // Accumulate gradients over the whole dataset
+                // --------------------------------------------
+
+                for i
+                    in range(batch_size)
+                {
+                    total_loss +=
+                        self.train_sample(
+                            X[i],
+                            y[i],
+                        )
+                }
+
+
+                // --------------------------------------------
+                // One weight update per epoch
+                // --------------------------------------------
+
+                self.step(
+                    learning_rate,
+                    batch_size,
+                )
+
+
+                // --------------------------------------------
+                // Progress
+                // --------------------------------------------
+
+                if epoch % 100 == 0 {
+                    let average_loss =
+                        total_loss
+                        / batch_size
+
+                    print(
+                        "Epoch "
+                        + (epoch + 1)
+                        + "  loss = "
+                        + average_loss
+                    )
+                }
+
+
+                // --------------------------------------------
+                // Convergence
+                // --------------------------------------------
+
+                if total_loss < 0.01 {
+                    print(
+                        "Converged at epoch "
+                        + (epoch + 1)
+                    )
+
+                    break
+                }
+            }
+        },
+
+
+    // ========================================================
+    // Accuracy
+    // ========================================================
+
+    accuracy = |self, X, y| {
+        let correct =
+            range(len(X))
+                .map(|i| {
+                    if self.predict(X[i])
+                        == y[i]
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .sum()
+
+        correct * 1.0
+        / len(X)
+    }
+}
