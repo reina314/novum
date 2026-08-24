@@ -925,6 +925,24 @@ fn enum_variant_arity_error() {
 }
 
 #[test]
+fn enum_constructor_too_many_arguments_is_error() {
+    let result =
+        run_result(
+            r#"
+            enum Result {
+                Ok(value),
+            }
+
+            Result.Ok(1, 2)
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
 fn enum_value_equality() {
     let result =
         run(
@@ -2991,3 +3009,176 @@ fn class_init_must_initialize_required_fields() {
     );
 }
 
+#[test]
+fn lambda_named_arguments() {
+    let result =
+        run(
+            r#"
+            f = |x, y| x + y
+
+            f(
+                y = 3,
+                x = 2
+            )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn lambda_mixed_arguments() {
+    let result =
+        run(
+            r#"
+            f = |x, y, z| x + y + z
+
+            f(
+                1,
+                z = 3,
+                y = 2
+            )
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(6)
+    );
+}
+
+#[test]
+fn struct_named_arguments() {
+    let result =
+        run(
+            r#"
+            struct Point {
+                x
+                y
+            }
+
+            let p =
+                Point(
+                    y = 3,
+                    x = 2
+                )
+
+            p.x + p.y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn constructor_named_arguments() {
+    let result =
+        run(
+            r#"
+            class Point {
+                x = 0
+                y = 0
+
+                init =
+                    |self, x, y| {
+                        self.x = x
+                        self.y = y
+                    }
+            }
+
+            let p =
+                Point(
+                    y = 3,
+                    x = 2
+                )
+
+            p.x + p.y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
+    );
+}
+
+#[test]
+fn method_named_arguments() {
+    let result =
+        run(
+            r#"
+            class Point {
+                x = 0
+                y = 0
+
+                move =
+                    |self, dx, dy| {
+                        self.x += dx
+                        self.y += dy
+                    }
+            }
+
+            let p =
+                Point(
+                    x = 10,
+                    y = 20
+                )
+
+            p.move(
+                dy = 3,
+                dx = 5
+            )
+
+            p.x + p.y
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(38)
+    );
+}
+
+#[test]
+fn positional_after_named_is_error() {
+    let result =
+        run_result(
+            r#"
+            f = |x, y| x + y
+
+            f(
+                x = 1,
+                2
+            )
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}
+
+#[test]
+fn unknown_named_argument_is_error() {
+    let result =
+        run_result(
+            r#"
+            f = |x, y| x + y
+
+            f(
+                z = 1,
+                y = 2
+            )
+            "#
+        );
+
+    assert!(
+        result.is_err()
+    );
+}

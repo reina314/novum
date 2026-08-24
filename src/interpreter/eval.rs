@@ -19,7 +19,8 @@ use crate::{
             EnumDef as AstEnumDef,
             MatchArm,
             Pattern,
-            Visibility
+            Visibility,
+            CallArg,
         }
     },
 };
@@ -63,6 +64,11 @@ enum AssignTarget {
         object: ObjectRef,
         name: String,
     },
+}
+
+struct EvaluatedArg {
+    name: Option<String>,
+    value: Value,
 }
 
 pub struct Interpreter {
@@ -1088,8 +1094,17 @@ impl Interpreter {
                 closure: self.env.clone(),
             })))),
 
-            Call(callee, args) => self.eval_call(callee, args, expr),
-
+            Call(
+                callee, 
+                args,
+            ) => {
+                self.eval_call(
+                    callee,
+                    args,
+                    expr
+                )
+            }
+                
             Field {
                 object, 
                 name
@@ -4287,26 +4302,34 @@ impl Interpreter {
     fn eval_call(
         &mut self,
         callee: &Expr,
-        args: &[Expr],
+        args: &[CallArg],
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        
         let callable = self.eval_value(callee)?;
 
-        let values =
-        args.iter()
-            .map(|arg| self.eval_value(arg))
-            .collect::<Result<Vec<_>>>()?;
+        let evaluated = 
+            self.eval_call_args(args)?;
 
         match callable {
-            Value::Func(func) => self.call_function(
-                func, 
-                values, 
-                whole
-            ),
+            Value::Func(func) => {
+                self.call_function_with_evaluated_args(
+                    func, 
+                    evaluated, 
+                    None,
+                    whole
+                )
+            }
 
             Value::Builtin(function) => {
-                function(values)
+                // reject named arguments
+                let args= 
+                    self.positional_values(
+                        evaluated,
+                        "built-in function",
+                        whole,
+                    )?;
+
+                function(args)
                     .map(ControlFlow::Value)
                     .map_err(|message| {
                         self.error(
@@ -4320,7 +4343,7 @@ impl Interpreter {
             Value::BoundMethod(method) => {
                 self.call_bound_method(
                     method,
-                    values,
+                    evaluated,
                     whole,
                 )
             }
@@ -4330,7 +4353,7 @@ impl Interpreter {
                     ControlFlow::Value(
                         self.instantiate_class(
                             class,
-                            values,
+                            evaluated,
                             whole,
                         )?
                     )
@@ -4338,37 +4361,39 @@ impl Interpreter {
             }
 
             Value::EnumConstructor(constructor) => {
-                let variant =
-                    constructor
-                        .enum_def()
-                        .variant(
-                            constructor.variant()
-                        )
-                        .ok_or_else(|| {
-                            self.error(
-                                ErrorKind::Name,
-                                format!(
-                                    "unknown enum variant '{}'",
-                                    constructor.variant()
-                                ),
-                                whole,
-                            )
-                        })?;
+                let fields =
+                    self.positional_values(
+                        evaluated,
+                        &format!(
+                            "{}.{}",
+                            constructor
+                                .enum_def()
+                                .name(),
+                            constructor.variant(),
+                        ),
+                        whole,
+                    )?;
 
-                if values.len()
-                    != variant.arity()
-                {
+                let expected =
+                    constructor.arity();
+
+                if fields.len() != expected {
                     return Err(
                         self.error(
                             ErrorKind::Arity,
                             format!(
-                                "{}.{} expects {} arguments, got {}",
+                                "{}.{} expects {} argument{}, got {}",
                                 constructor
                                     .enum_def()
                                     .name(),
                                 constructor.variant(),
-                                variant.arity(),
-                                values.len(),
+                                expected,
+                                if expected == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                },
+                                fields.len(),
                             ),
                             whole,
                         )
@@ -4381,7 +4406,7 @@ impl Interpreter {
                             .enum_def()
                             .name(),
                         constructor.variant(),
-                        values,
+                        fields,
                     );
 
                 Ok(
@@ -4393,54 +4418,281 @@ impl Interpreter {
                 )
             }
 
-            other => Err(self.error(ErrorKind::Type,format!("{} is not callable",other.type_name()),whole)),
+            other => Err(
+                self.error(
+                    ErrorKind::Type,
+                    format!("{} is not callable",
+                    other.type_name()
+                ),
+                whole)
+            ),
         }
+    }
+
+    fn eval_call_args(
+        &mut self,
+        args: &[CallArg],
+    ) -> Result<Vec<EvaluatedArg>> {
+        let mut values =
+            Vec::with_capacity(
+                args.len()
+            );
+
+        for arg in args {
+            let value =
+                self.eval_value(
+                    &arg.value
+                )?;
+
+            values.push(
+                EvaluatedArg {
+                    name: arg.name.clone(),
+                    value,
+                }
+            );
+        }
+
+        Ok(values)
+    }
+
+    fn bind_arguments(
+        &self,
+        parameter_names: &[String],
+        args: Vec<EvaluatedArg>,
+        injected_self: Option<Value>,
+        whole: &Expr,
+    ) -> Result<Vec<Value>> {
+        let has_injected_self =
+            injected_self.is_some();
+
+        let mut bound =
+            vec![None; parameter_names.len()];
+
+        // =========================================================
+        // 1. Inject self
+        // =========================================================
+
+        let mut next_positional =
+            0usize;
+
+        if let Some(self_value) =
+            injected_self
+        {
+            if parameter_names.first()
+                .map(String::as_str)
+                != Some("self")
+            {
+                return Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "bound method does not have 'self' as its first parameter",
+                        whole,
+                    )
+                );
+            }
+
+            bound[0] =
+                Some(self_value);
+
+            next_positional =
+                1;
+        }
+
+        // =========================================================
+        // 2. Bind arguments
+        // =========================================================
+
+        let mut seen_named =
+            false;
+
+        for arg in args {
+            match arg.name {
+                None => {
+                    // -------------------------------------------------
+                    // Positional
+                    // -------------------------------------------------
+
+                    if seen_named {
+                        return Err(
+                            self.error(
+                                ErrorKind::Arity,
+                                "positional argument cannot appear after named argument",
+                                whole,
+                            )
+                        );
+                    }
+
+                    if next_positional
+                        >= parameter_names.len()
+                    {
+                        let expected =
+                            if has_injected_self {
+                                parameter_names
+                                    .len()
+                                    .saturating_sub(1)
+                            } else {
+                                parameter_names.len()
+                            };
+
+                        return Err(
+                            self.error(
+                                ErrorKind::Arity,
+                                format!(
+                                    "function expects at most {} arguments",
+                                    expected
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+
+                    bound[next_positional] =
+                        Some(arg.value);
+
+                    next_positional += 1;
+                }
+
+                Some(name) => {
+                    // -------------------------------------------------
+                    // Named
+                    // -------------------------------------------------
+
+                    seen_named = true;
+
+                    if has_injected_self
+                        && name == "self"
+                    {
+                        return Err(
+                            self.error(
+                                ErrorKind::Name,
+                                "cannot provide named argument 'self' for a method",
+                                whole,
+                            )
+                        );
+                    }
+
+                    let index =
+                        parameter_names
+                            .iter()
+                            .position(
+                                |parameter| {
+                                    parameter == &name
+                                }
+                            )
+                            .ok_or_else(|| {
+                                self.error(
+                                    ErrorKind::Name,
+                                    format!(
+                                        "function has no parameter named '{}'",
+                                        name
+                                    ),
+                                    whole,
+                                )
+                            })?;
+
+                    if bound[index].is_some() {
+                        return Err(
+                            self.error(
+                                ErrorKind::Arity,
+                                format!(
+                                    "argument '{}' was provided more than once",
+                                    name
+                                ),
+                                whole,
+                            )
+                        );
+                    }
+
+                    bound[index] =
+                        Some(arg.value);
+                }
+            }
+        }
+
+        // =========================================================
+        // 3. Check missing arguments
+        // =========================================================
+
+        for (
+            index,
+            parameter,
+        ) in parameter_names
+            .iter()
+            .enumerate()
+        {
+            if bound[index].is_none() {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "missing argument '{}'",
+                            parameter
+                        ),
+                        whole,
+                    )
+                );
+            }
+        }
+
+        // =========================================================
+        // 4. Flatten
+        // =========================================================
+
+        Ok(
+            bound
+                .into_iter()
+                .map(
+                    |value| {
+                        value.expect(
+                            "argument binding completed with missing value"
+                        )
+                    }
+                )
+                .collect()
+        )
     }
 
     fn instantiate_class(
         &mut self,
         class: ClassRef,
-        args: Vec<Value>,
+        args: Vec<EvaluatedArg>,
         whole: &Expr,
     ) -> Result<Value> {
         let object =
             class.instantiate();
 
-        // ---------------------------------------------------------
-        // Defaults must exist before init().
-        // ---------------------------------------------------------
-
-        self.initialize_defaults(
-            &object,
-            &class,
-            whole,
-        )?;
-
-        // ---------------------------------------------------------
-        // Explicit constructor.
-        // ---------------------------------------------------------
+        // =========================================================
+        // Constructor exists
+        // =========================================================
 
         if let Some(init) =
             class.constructor()
         {
-            let mut call_args =
-                Vec::with_capacity(
-                    args.len() + 1
-                );
+            // Defaults are initialized first.
+            self.initialize_defaults(
+                &object,
+                &class,
+                whole,
+            )?;
 
-            call_args.push(
-                Value::Object(
-                    object.clone()
-                )
-            );
+            let parameter_names =
+                init.parameters();
 
-            call_args.extend(
-                args
-            );
+            let values =
+                self.bind_arguments(
+                    &parameter_names,
+                    args,
+                    Some(
+                        Value::Object(
+                            object.clone()
+                        )
+                    ),
+                    whole,
+                )?;
 
-            match self.call_function(
+            match self.call_function_bound(
                 init,
-                call_args,
+                values,
                 whole,
             )? {
                 ControlFlow::Value(_) |
@@ -4471,39 +4723,36 @@ impl Interpreter {
             );
         }
 
-        // ---------------------------------------------------------
+        // =========================================================
         // No constructor:
-        // positional arguments initialize fields.
-        // ---------------------------------------------------------
+        //
+        // positional / named args correspond to fields.
+        // =========================================================
 
-        let fields =
-            class.fields();
+        let parameter_names =
+            class.fields()
+                .iter()
+                .map(|field| {
+                    field.name().to_owned()
+                })
+                .collect::<Vec<_>>();
 
-        if args.len() >
-            fields.len()
-        {
-            return Err(
-                self.error(
-                    ErrorKind::Arity,
-                    format!(
-                        "{} expects at most {} arguments, got {}",
-                        class.name(),
-                        fields.len(),
-                        args.len()
-                    ),
-                    whole,
-                )
-            );
-        }
+        let bound =
+            self.bind_arguments(
+                &parameter_names,
+                args,
+                None,
+                whole,
+            )?;
 
         for (
-            index,
+            field,
             value,
-        ) in args.into_iter().enumerate()
+        ) in class
+            .fields()
+            .iter()
+            .zip(bound.into_iter())
         {
-            let field =
-                &fields[index];
-
             object
                 .borrow_mut()
                 .set_field(
@@ -5339,17 +5588,41 @@ impl Interpreter {
         &mut self,
         func: crate::runtime::FuncRef,
         args: Vec<Value>,
-        call_site: &Expr,
+        whole: &Expr,
     ) -> Result<ControlFlow> {
-        if func.params.len() != args.len() {
+        let evaluated =
+            args.into_iter()
+                .map(|value| {
+                    EvaluatedArg {
+                        name: None,
+                        value,
+                    }
+                })
+                .collect();
+
+        self.call_function_with_evaluated_args(
+            func,
+            evaluated,
+            None,
+            whole,
+        )
+    }
+
+    fn call_function_bound(
+        &mut self,
+        func: FuncRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        if func.parameters().len() != args.len() {
             return Err(self.error(
                 ErrorKind::Arity,
                 format!(
                     "function expects {} arguments, got {}",
-                    func.params.len(),
+                    func.parameters().len(),
                     args.len(),
                 ),
-                call_site,
+                whole,
             ));
         }
 
@@ -5360,7 +5633,7 @@ impl Interpreter {
 
         self.stack.push(StackFrame {
             function: function_name,
-            span: Some(call_site.span),
+            span: Some(whole.span),
         });
 
         let old_env = std::mem::replace(
@@ -5368,7 +5641,7 @@ impl Interpreter {
             func.closure.child(),
         );
 
-        for (name, value) in func.params.iter().zip(args) {
+        for (name, value) in func.parameters().iter().zip(args) {
             self.env.define(name.clone(), value);
         }
 
@@ -5391,7 +5664,7 @@ impl Interpreter {
                 self.error(
                     ErrorKind::Control,
                     "break escaped function boundary",
-                    call_site,
+                    whole,
                 )
             ),
 
@@ -5400,20 +5673,87 @@ impl Interpreter {
                 self.error(
                     ErrorKind::Control,
                     "continue escaped function boundary",
-                    call_site,
+                    whole,
                 )
             ),
         }
     }
 
+    fn call_function_with_evaluated_args(
+        &mut self,
+        function: FuncRef,
+        args: Vec<EvaluatedArg>,
+        injected_self: Option<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let parameter_names =
+            function.parameters();
+
+        let values =
+            self.bind_arguments(
+                parameter_names,
+                args,
+                injected_self,
+                whole,
+            )?;
+
+        self.call_function_bound(
+            function,
+            values,
+            whole,
+        )
+    }
+
+    /// Helper to convert `Vec<EvaluatedArg>` into `Vec<Value>`, which type many legacy call handlers expect.
+    fn positional_values(
+        &self,
+        args: Vec<EvaluatedArg>,
+        function_name: &str,
+        whole: &Expr,
+    ) -> Result<Vec<Value>> {
+        if args.iter().any(
+            |arg| arg.name.is_some()
+        ) {
+            return Err(
+                self.error(
+                    ErrorKind::Runtime,
+                    format!(
+                        "{} does not support named arguments",
+                        function_name
+                    ),
+                    whole,
+                )
+            );
+        }
+
+        Ok(
+            args.into_iter()
+                .map(
+                    |arg| arg.value
+                )
+                .collect()
+        )
+    }
+
     fn call_bound_method(
         &mut self,
         method: BoundMethod,
-        args: Vec<Value>,
+        args: Vec<EvaluatedArg>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
         match method.receiver() {
             MethodReceiver::Str(string) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+
                 self.call_string_method(
                     string.clone(),
                     method.name(),
@@ -5423,6 +5763,17 @@ impl Interpreter {
             }
             
             MethodReceiver::List(list) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_list_method(
                     list.clone(),
                     method.name(),
@@ -5432,6 +5783,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Set(set) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_set_method(
                     set.clone(),
                     method.name(),
@@ -5441,6 +5803,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Dict(dict) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_dict_method(
                     dict.clone(),
                     method.name(),
@@ -5450,6 +5823,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Vector(vector) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_vector_method(
                     vector.clone(),
                     method.name(),
@@ -5459,6 +5843,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Matrix(matrix) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_matrix_method(
                     matrix.clone(), 
                     method.name(), 
@@ -5472,6 +5867,17 @@ impl Interpreter {
                 end,
                 inclusive,
             } => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_range_method(
                     *start,
                     *end,
@@ -5492,6 +5898,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Iterator(iterator) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_iterator_method(
                     iterator.clone(),
                     method.name(),
@@ -5501,6 +5918,17 @@ impl Interpreter {
             }
 
             MethodReceiver::Series(series) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_series_method(
                     series.clone(),
                     method.name(),
@@ -5510,6 +5938,17 @@ impl Interpreter {
             }
 
             MethodReceiver::DataFrame(dataframe) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_dataframe_method(
                     dataframe.clone(),
                     method.name(),
@@ -5519,6 +5958,17 @@ impl Interpreter {
             }
 
             MethodReceiver::GroupedDataFrame(grouped) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_grouped_dataframe_method(
                     grouped.clone(),
                     method.name(),
@@ -5528,6 +5978,17 @@ impl Interpreter {
             }
         
             MethodReceiver::Path(path) => {
+                // reject named argument for now
+                let args =
+                    self.positional_values(
+                        args,
+                        &format!(
+                            "Str.{}",
+                            method.name()
+                        ), 
+                        whole
+                    )?;
+                
                 self.call_path_method(
                     path.clone(),
                     method.name(),
@@ -7761,7 +8222,7 @@ impl Interpreter {
         &mut self,
         object: ObjectRef,
         method: BoundMethod,
-        args: Vec<Value>,
+        args: Vec<EvaluatedArg>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
         let function =
@@ -7789,18 +8250,16 @@ impl Interpreter {
                 args.len() + 1
             );
 
-        // self
-        values.push(
-            Value::Object(
-                object.clone()
-            )
-        );
-
         values.extend(args);
 
-        self.call_function(
+        self.call_function_with_evaluated_args(
             function,
             values,
+            Some(
+                Value::Object(
+                    object.clone()
+                )
+            ),
             whole,
         )
     }

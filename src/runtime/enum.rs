@@ -86,6 +86,7 @@ impl EnumDef {
     ) -> &HashMap<String, EnumVariant> {
         &self.variants
     }
+
 }
 
 impl EnumVariant {
@@ -264,6 +265,16 @@ impl EnumConstructor {
     pub fn variant(&self) -> &str {
         &self.variant
     }
+
+    pub fn arity(&self) -> usize {
+        self.enum_def()
+            .variant(self.variant())
+            .map(|variant| variant.arity())
+            .expect(
+                "EnumConstructor references an unknown variant"
+            )
+    }
+
 }
 
 impl fmt::Debug for EnumConstructor {

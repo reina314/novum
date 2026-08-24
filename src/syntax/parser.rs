@@ -1234,14 +1234,111 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_args(&mut self) -> Result<Vec<Expr>> {
-        let mut args = Vec::new();
-        if self.peek().kind == TokenKind::RParen { return Ok(args); }
-        loop {
-            args.push(self.parse_expr()?);
-            if !self.at_kind(TokenKind::Comma) { break; }
-            if self.peek().kind == TokenKind::RParen { break; }
+    fn parse_args(
+        &mut self,
+    ) -> Result<Vec<CallArg>> {
+        let mut args =
+            Vec::new();
+
+        let mut seen_named =
+            false;
+
+        let mut named =
+            std::collections::HashSet::new();
+
+        if self.check(
+            TokenKind::RParen
+        ) {
+            return Ok(args);
         }
+
+        loop {
+            let is_named =
+                matches!(
+                    self.peek().kind,
+                    TokenKind::Ident(_)
+                )
+                && self.peek_n(1).kind
+                    == TokenKind::Equals;
+
+            if is_named {
+                seen_named = true;
+
+                let token =
+                    self.peek().clone();
+
+                let name =
+                    match token.kind {
+                        TokenKind::Ident(name) => {
+                            self.eat();
+                            name
+                        }
+
+                        _ => unreachable!(),
+                    };
+
+                if !named.insert(
+                    name.clone()
+                ) {
+                    return Err(
+                        Error::parse(
+                            format!(
+                                "duplicate named argument '{}'",
+                                name
+                            ),
+                            token.span,
+                        )
+                    );
+                }
+
+                self.expect(
+                    TokenKind::Equals
+                )?;
+
+                let value =
+                    self.parse_assignment()?;
+
+                args.push(
+                    CallArg::named(
+                        name,
+                        value,
+                    )
+                );
+            } else {
+                if seen_named {
+                    return Err(
+                        Error::parse(
+                            "positional argument cannot appear after named argument",
+                            self.peek().span,
+                        )
+                    );
+                }
+
+                let value =
+                    self.parse_assignment()?;
+
+                args.push(
+                    CallArg::positional(
+                        value
+                    )
+                );
+            }
+
+            if self.eat_if(
+                TokenKind::Comma
+            ) {
+                if self.check(
+                    TokenKind::RParen
+                ) {
+                    break;
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
         Ok(args)
     }
 

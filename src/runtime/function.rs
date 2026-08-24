@@ -11,6 +11,14 @@ pub struct Function {
     pub closure: Env,
 }
 
+impl Function {
+    pub fn parameters(
+        &self,
+    ) -> &[String] {
+        &self.params
+    }
+}
+
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
 }
