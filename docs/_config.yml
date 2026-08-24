@@ -1,0 +1,27 @@
+title: Novum
+description: A concise, practical programming language for research, data manipulation, and general-purpose scripting.
+baseurl: "/novum"
+url: "https://reina314.github.io"
+theme: minima
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter_opts:
+    block:
+      line_numbers: false
+plugins:
+  - jekyll-feed
+header_pages:
+  - getting-started.md
+  - language/index.md
+  - reference/index.md
+  - std/index.md
+  - guide/index.md
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
+minima:
+  skin: classic
+show_excerpts: false
