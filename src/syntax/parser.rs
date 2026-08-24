@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::{error::{Error, Result}, stdlib::general};
 use super::{ast::*, Span, Token, TokenKind};
 
 pub struct Parser {
@@ -628,8 +628,8 @@ impl Parser {
                         _,
                     ) => {
                         if params.first()
-                            .map(String::as_str)
-                            != Some("self")
+                            .map(general::is_self_pattern)
+                            != Some(true)
                         {
                             return Err(
                                 Error::parse(
@@ -1625,29 +1625,78 @@ impl Parser {
     }
 
     fn parse_lambda(&mut self) -> Result<Expr> {
-        let start = self.expect(TokenKind::Pipe)?.span;
-        let mut params = Vec::new();
-        if self.peek().kind != TokenKind::Pipe {
+        let start =
+            self.expect(
+                TokenKind::Pipe
+            )?
+            .span;
+
+        let mut params =
+            Vec::new();
+
+        if !self.check(
+            TokenKind::Pipe
+        ) {
             loop {
-                let tok = self.peek().clone();
-                let name = match tok.kind {
-                    TokenKind::Ident(name) => { self.eat(); name }
-                    _ => return Err(Error::parse("lambda parameters must be identifiers", tok.span)),
-                };
-                params.push(name);
-                if !self.at_kind(TokenKind::Comma) { break; }
+                params.push(
+                    self.parse_pattern()?
+                );
+
+                if !self.eat_if(
+                    TokenKind::Comma
+                ) {
+                    break;
+                }
+
+                // Allow trailing comma:
+                //
+                // |x, y,|
+                //
+
+                if self.check(
+                    TokenKind::Pipe
+                ) {
+                    break;
+                }
             }
         }
-        self.expect(TokenKind::Pipe)?;
-        let body = if self.peek().kind == TokenKind::LBrace {
-            self.eat();
-            let b = self.parse_block_contents()?;
-            self.expect(TokenKind::RBrace)?;
-            b
-        } else {
-            self.parse_expr()?
-        };
-        Ok(Expr::new(ExprKind::Lambda(params, Box::new(body.clone())), start.join(body.span)))
+
+        self.expect(
+            TokenKind::Pipe
+        )?;
+
+        let body =
+            if self.check(
+                TokenKind::LBrace
+            ) {
+                self.eat();
+
+                let block =
+                    self.parse_block_contents()?;
+
+                self.expect(
+                    TokenKind::RBrace
+                )?;
+
+                block
+            } else {
+                self.parse_expr()?
+            };
+
+        let span =
+            start.join(
+                body.span
+            );
+
+        Ok(
+            Expr::new(
+                ExprKind::Lambda(
+                    params,
+                    Box::new(body),
+                ),
+                span,
+            )
+        )
     }
 
     fn parse_match_expr(

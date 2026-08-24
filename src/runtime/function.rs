@@ -1,4 +1,4 @@
-use crate::{runtime::Env, syntax::Expr};
+use crate::{runtime::Env, syntax::{Expr, Pattern}};
 use std::{fmt, rc::Rc};
 
 pub type FuncRef = Rc<Function>;
@@ -6,7 +6,7 @@ pub type FuncRef = Rc<Function>;
 #[derive(Clone)]
 pub struct Function {
     pub name: Option<String>,
-    pub params: Vec<String>,
+    pub params: Vec<Pattern>,
     pub body: Rc<Expr>,
     pub closure: Env,
 }
@@ -14,8 +14,20 @@ pub struct Function {
 impl Function {
     pub fn parameters(
         &self,
-    ) -> &[String] {
+    ) -> &[Pattern] {
         &self.params
+    }
+
+    pub fn body(
+        &self,
+    ) -> &Expr {
+        &self.body
+    }
+
+    pub fn closure(
+        &self,
+    ) -> Env {
+        self.closure.clone()
     }
 }
 

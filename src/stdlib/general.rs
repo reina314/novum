@@ -1,6 +1,11 @@
-use crate::runtime::{
-    Value,
-    EnumValue,
+use crate::{
+    runtime::{
+        Value,
+        EnumValue,
+    },
+    syntax::{
+        Pattern,
+    },
 };
 
 use std::{
@@ -61,5 +66,15 @@ pub fn option_none() -> Value {
                 vec![],
             )
         )
+    )
+}
+
+pub fn is_self_pattern(
+    pattern: &Pattern,
+) -> bool {
+    matches!(
+        pattern,
+        Pattern::Ident(name)
+            if name == "self"
     )
 }

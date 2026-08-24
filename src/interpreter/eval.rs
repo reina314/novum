@@ -7,7 +7,7 @@ use crate::{
     }, 
     interpreter::{ModuleLoader, operator}, 
     runtime::{
-        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, Value, FromValue, Vector, VectorRef, MatrixRef, Type, StrRef, SetRef, PathRef, Class, ClassRef,
+        BoundMethod, ControlFlow, DataFrameRef, EnumConstructor, EnumDef as RuntimeEnumDef, EnumValue, EnumValueRef, Env, FuncRef, Function, GroupedDataFrame, Dict, GroupedDataFrameRef, IteratorObj, IteratorRef, List, MethodReceiver, Module, ModuleContext, ModulePath, ModuleRef, ObjectRef, Series, SeriesRef, Value, FromValue, Vector, VectorRef, MatrixRef, StrRef, SetRef, PathRef, Class, ClassRef,
     }, 
     stdlib::{
         self,
@@ -76,7 +76,6 @@ pub struct Interpreter {
     stack: Vec<StackFrame>,
     block_depth: usize,
     loop_depth: usize,
-    function_depth: usize,
     module_loader: ModuleLoader,
     module_stack: Vec<ModuleContext>,
     file_stack: Vec<PathBuf>,
@@ -102,7 +101,6 @@ impl Interpreter {
             stack: Vec::new(),
             block_depth: 0,
             loop_depth: 0,
-            function_depth: 0,
             module_loader,
             module_stack: Vec::new(),
             file_stack: Vec::new(),
@@ -475,11 +473,8 @@ impl Interpreter {
         iterator: &IteratorRef,
         whole: &Expr,
     ) -> Result<Option<Value>> {
-        let mut iterator =
-            iterator.borrow_mut();
-
         self.next_iterator_value(
-            &mut iterator,
+            &mut iterator.borrow_mut(),
             whole,
         )
     }
@@ -553,30 +548,6 @@ impl Interpreter {
                 )
             )
         )
-    }
-
-    /// Helper function to validate Value type
-    fn expect_type(
-        &self,
-        actual: &Value,
-        expected: Type,
-        expr: &Expr,
-    ) -> Result<()> {
-        if actual.value_type() == expected {
-            Ok(())
-        } else {
-            Err(
-                self.error(
-                    ErrorKind::Type,
-                    format!(
-                        "expected {}, got {}",
-                        expected.name(),
-                        actual.type_name()
-                    ),
-                    expr,
-                )
-            )
-        }
     }
 
     /// Helper funtion to validate i64, f64 and convert to f64
@@ -4457,7 +4428,7 @@ impl Interpreter {
 
     fn bind_arguments(
         &self,
-        parameter_names: &[String],
+        parameter_patterns: &[Pattern],
         args: Vec<EvaluatedArg>,
         injected_self: Option<Value>,
         whole: &Expr,
@@ -4466,22 +4437,23 @@ impl Interpreter {
             injected_self.is_some();
 
         let mut bound =
-            vec![None; parameter_names.len()];
+            vec![None; parameter_patterns.len()];
+
+        let mut next_positional =
+            0usize;
 
         // =========================================================
         // 1. Inject self
         // =========================================================
 
-        let mut next_positional =
-            0usize;
-
         if let Some(self_value) =
             injected_self
         {
-            if parameter_names.first()
-                .map(String::as_str)
-                != Some("self")
-            {
+            if !matches!(
+                parameter_patterns.first(),
+                Some(Pattern::Ident(name))
+                    if name == "self"
+            ) {
                 return Err(
                     self.error(
                         ErrorKind::Runtime,
@@ -4499,7 +4471,7 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 2. Bind arguments
+        // 2. Bind positional / named arguments
         // =========================================================
 
         let mut seen_named =
@@ -4523,15 +4495,15 @@ impl Interpreter {
                     }
 
                     if next_positional
-                        >= parameter_names.len()
+                        >= parameter_patterns.len()
                     {
                         let expected =
                             if has_injected_self {
-                                parameter_names
+                                parameter_patterns
                                     .len()
                                     .saturating_sub(1)
                             } else {
-                                parameter_names.len()
+                                parameter_patterns.len()
                             };
 
                         return Err(
@@ -4571,12 +4543,21 @@ impl Interpreter {
                         );
                     }
 
+                    // -------------------------------------------------
+                    // Named arguments only make sense for a parameter
+                    // whose pattern has a single identifier.
+                    // -------------------------------------------------
+
                     let index =
-                        parameter_names
+                        parameter_patterns
                             .iter()
                             .position(
                                 |parameter| {
-                                    parameter == &name
+                                    parameter_name(
+                                        parameter
+                                    ) == Some(
+                                        name.as_str()
+                                    )
                                 }
                             )
                             .ok_or_else(|| {
@@ -4616,17 +4597,28 @@ impl Interpreter {
         for (
             index,
             parameter,
-        ) in parameter_names
+        ) in parameter_patterns
             .iter()
             .enumerate()
         {
             if bound[index].is_none() {
+                let description =
+                    match parameter_name(
+                        parameter
+                    ) {
+                        Some(name) =>
+                            name.to_owned(),
+
+                        None =>
+                            "<pattern>".to_owned(),
+                    };
+
                 return Err(
                     self.error(
                         ErrorKind::Arity,
                         format!(
                             "missing argument '{}'",
-                            parameter
+                            description
                         ),
                         whole,
                     )
@@ -4635,19 +4627,20 @@ impl Interpreter {
         }
 
         // =========================================================
-        // 4. Flatten
+        // 4. Convert to positional value list
+        //
+        // Pattern matching itself is performed later by
+        // `call_function_bound()`.
         // =========================================================
 
         Ok(
             bound
                 .into_iter()
-                .map(
-                    |value| {
-                        value.expect(
-                            "argument binding completed with missing value"
-                        )
-                    }
-                )
+                .map(|value| {
+                    value.expect(
+                        "argument binding completed with missing value"
+                    )
+                })
                 .collect()
         )
     }
@@ -4729,17 +4722,19 @@ impl Interpreter {
         // positional / named args correspond to fields.
         // =========================================================
 
-        let parameter_names =
+        let parameter_patterns =
             class.fields()
                 .iter()
                 .map(|field| {
-                    field.name().to_owned()
+                    Pattern::Ident(
+                        field.name().to_owned()
+                    )
                 })
                 .collect::<Vec<_>>();
 
         let bound =
             self.bind_arguments(
-                &parameter_names,
+                &parameter_patterns,
                 args,
                 None,
                 whole,
@@ -5610,73 +5605,147 @@ impl Interpreter {
 
     fn call_function_bound(
         &mut self,
-        func: FuncRef,
+        function: FuncRef,
         args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        if func.parameters().len() != args.len() {
-            return Err(self.error(
-                ErrorKind::Arity,
-                format!(
-                    "function expects {} arguments, got {}",
-                    func.parameters().len(),
-                    args.len(),
-                ),
-                whole,
-            ));
-        }
+        // ---------------------------------------------------------
+        // Save caller environment.
+        // ---------------------------------------------------------
 
-        let function_name =
-            func.name
-                .clone()
-                .unwrap_or_else(|| "<lambda>".into());
+        let old_env =
+            self.env.clone();
 
-        self.stack.push(StackFrame {
-            function: function_name,
-            span: Some(whole.span),
-        });
+        // ---------------------------------------------------------
+        // Create function-local environment whose parent is the
+        // environment captured when the lambda was defined.
+        // ---------------------------------------------------------
 
-        let old_env = std::mem::replace(
-            &mut self.env,
-            func.closure.child(),
-        );
+        self.env =
+            function
+                .closure()
+                .child();
 
-        for (name, value) in func.parameters().iter().zip(args) {
-            self.env.define(name.clone(), value);
-        }
+        let result =
+            (|| {
+                // =================================================
+                // 1. Bind parameter patterns
+                // =================================================
 
-        self.function_depth += 1;
+                let parameters =
+                    function.parameters();
 
-        let result = self.eval(&func.body);
+                if parameters.len()
+                    != args.len()
+                {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            format!(
+                                "function expects {} arguments, got {}",
+                                parameters.len(),
+                                args.len()
+                            ),
+                            whole,
+                        )
+                    );
+                }
 
-        self.function_depth -= 1;
-        self.env = old_env;
-        self.stack.pop();
+                for (
+                    pattern,
+                    value,
+                ) in parameters
+                    .iter()
+                    .zip(args.into_iter())
+                {
+                    let mut bindings =
+                        HashMap::new();
 
-        match result? {
-            ControlFlow::Value(value)
-            | ControlFlow::Return(value) => {
-                Ok(ControlFlow::Value(value))
-            }
+                    let matched =
+                        match_pattern(
+                            pattern,
+                            &value,
+                            &mut bindings,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
 
-            ControlFlow::Break 
-            => Err(
-                self.error(
-                    ErrorKind::Control,
-                    "break escaped function boundary",
-                    whole,
-                )
-            ),
+                    if !matched {
+                        return Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                "function argument does not match parameter pattern",
+                                whole,
+                            )
+                        );
+                    }
 
-            ControlFlow::Continue
-            => Err(
-                self.error(
-                    ErrorKind::Control,
-                    "continue escaped function boundary",
-                    whole,
-                )
-            ),
-        }
+                    for (
+                        name,
+                        value,
+                    ) in bindings
+                    {
+                        self.env.define(
+                            name,
+                            value,
+                        );
+                    }
+                }
+
+                // =================================================
+                // 2. Evaluate function body
+                // =================================================
+
+                match self.eval(
+                    function.body()
+                )? {
+                    ControlFlow::Value(value) =>
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                            )
+                        ),
+
+                    ControlFlow::Return(value) =>
+                        Ok(
+                            ControlFlow::Value(
+                                value
+                            )
+                        ),
+
+                    ControlFlow::Break =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "break cannot escape function body",
+                                whole,
+                            )
+                        ),
+
+                    ControlFlow::Continue =>
+                        Err(
+                            self.error(
+                                ErrorKind::Control,
+                                "continue cannot escape function body",
+                                whole,
+                            )
+                        ),
+                }
+            })();
+
+        // ---------------------------------------------------------
+        // Always restore caller environment.
+        // ---------------------------------------------------------
+
+        self.env =
+            old_env;
+
+        result
     }
 
     fn call_function_with_evaluated_args(
@@ -8923,6 +8992,246 @@ impl Interpreter {
                 )
             }
 
+            "sum" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "sum() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut total =
+                    Value::Int(0);
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    total =
+                        operator::apply_binop(
+                            BinOp::Add,
+                            total,
+                            value,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Type,
+                                message,
+                                whole,
+                            )
+                        })?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        total
+                    )
+                )
+            }
+
+            "product" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "product() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut result =
+                    Value::Int(1);
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    result =
+                        operator::apply_binop(
+                            BinOp::Mul,
+                            result,
+                            value,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Type,
+                                message,
+                                whole,
+                            )
+                        })?;
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        result
+                    )
+                )
+            }
+
+            "min" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "min() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut current =
+                    match self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )? {
+                        Some(value) =>
+                            value,
+
+                        None =>
+                            return Ok(
+                                ControlFlow::Value(
+                                    general::option_none()
+                                )
+                            ),
+                    };
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    let is_less =
+                        operator::apply_binop(
+                            BinOp::Lt,
+                            value.clone(),
+                            current.clone(),
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Type,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                    match is_less {
+                        Value::Bool(true) => {
+                            current = value;
+                        }
+
+                        Value::Bool(false) => {}
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "comparison returned {}, expected Bool",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        general::option_some(
+                            current
+                        )
+                    )
+                )
+            }
+
+            "max" => {
+                if !args.is_empty() {
+                    return Err(
+                        self.error(
+                            ErrorKind::Arity,
+                            "max() expects no arguments",
+                            whole,
+                        )
+                    );
+                }
+
+                let mut current =
+                    match self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )? {
+                        Some(value) =>
+                            value,
+
+                        None =>
+                            return Ok(
+                                ControlFlow::Value(
+                                    general::option_none()
+                                )
+                            ),
+                    };
+
+                while let Some(value) =
+                    self.next_from_iterator(
+                        &iterator,
+                        whole,
+                    )?
+                {
+                    let is_greater =
+                        operator::apply_binop(
+                            BinOp::Gt,
+                            value.clone(),
+                            current.clone(),
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Type,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                    match is_greater {
+                        Value::Bool(true) => {
+                            current = value;
+                        }
+
+                        Value::Bool(false) => {}
+
+                        other => {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "comparison returned {}, expected Bool",
+                                        other.type_name()
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                Ok(
+                    ControlFlow::Value(
+                        general::option_some(
+                            current
+                        )
+                    )
+                )
+            }
+
             _ => {
                 Err(
                     self.error(
@@ -10904,6 +11213,19 @@ fn collect_pattern_names(
                 );
             }
         }
+    }
+}
+
+/// Helper to extract String name from Ident pattern
+fn parameter_name(
+    pattern: &Pattern,
+) -> Option<&str> {
+    match pattern {
+        Pattern::Ident(name) =>
+            Some(name.as_str()),
+
+        _ =>
+            None,
     }
 }
 
