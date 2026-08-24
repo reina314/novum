@@ -1058,12 +1058,23 @@ impl Interpreter {
 
             Block(exprs) => self.eval_block(exprs, true),
 
-            Lambda(params, body) => Ok(ControlFlow::Value(Value::Func(Rc::new(Function {
-                name: None,
-                params: params.clone(),
-                body: Rc::new((**body).clone()),
-                closure: self.env.clone(),
-            })))),
+            Lambda(
+                params, 
+                body
+            ) => Ok(
+                ControlFlow::Value(
+                    Value::Func(
+                        Rc::new(
+                            Function {
+                                name: None,
+                                params: params.clone(),
+                                body: Rc::new((**body).clone()),
+                                closure: self.env.clone(),
+                                }
+                            )
+                        )
+                    )
+                ),
 
             Call(
                 callee, 
@@ -1087,14 +1098,26 @@ impl Interpreter {
                 )
             }
 
-            Index(obj, index) => self.eval_index(obj, index, expr),
+            Index(
+                obj,
+                index
+            ) => {
+                self.eval_index(
+                    obj, 
+                    index, 
+                    expr
+                )
+            }
 
             Null => Ok(ControlFlow::Value(Value::Null)),
             Unit => Ok(ControlFlow::Value(Value::Unit)),
         }
     }
 
-    fn eval_value(&mut self, expr: &Expr) -> Result<Value> {
+    fn eval_value(
+        &mut self,
+        expr: &Expr
+    ) -> Result<Value> {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
             ControlFlow::Return(_) =>
@@ -1124,7 +1147,11 @@ impl Interpreter {
         }
     }
 
-    fn lookup(&self, name: &str, expr: &Expr) -> Result<ControlFlow> {
+    fn lookup(
+        &self,
+        name: &str,
+        expr: &Expr
+    ) -> Result<ControlFlow> {
         self.env.get(name)
             .map(ControlFlow::Value)
             .ok_or_else(|| self.error(ErrorKind::Name, format!("{} is undefined", name), expr))
