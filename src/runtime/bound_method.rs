@@ -137,6 +137,10 @@ impl MethodReceiver {
                     | "zip"
                     | "take"
                     | "skip"
+                    | "sum"
+                    | "product"
+                    | "min"
+                    | "max"
             ),
 
             Self::Range { .. } => matches!(
@@ -190,6 +194,10 @@ impl MethodReceiver {
                 | "zip"
                 | "take"
                 | "skip"
+                | "sum"
+                | "product"
+                | "min"
+                | "max"
         )
     }
 

@@ -56,6 +56,11 @@ fn builtins()
     );
 
     map.insert(
+        "enumerate".into(),
+        Value::Builtin(enumerate),
+    );
+
+    map.insert(
         "zeros".into(),
         Value::Builtin(zeros),
     );
@@ -509,6 +514,35 @@ pub fn zip(
                     IteratorObj::Zip {
                         left,
                         right,
+                    }
+                )
+            )
+        )
+    )
+}
+
+pub fn enumerate(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "enumerate() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let source =
+        IteratorObj::from_value(
+            args.remove(0)
+        )?;
+
+    Ok(
+        Value::Iterator(
+            Rc::new(
+                RefCell::new(
+                    IteratorObj::Enumerate {
+                        source,
+                        index: 0,
                     }
                 )
             )

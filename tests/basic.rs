@@ -57,19 +57,6 @@ fn compound_assignment_mul() {
 }
 
 #[test]
-fn compound_assignment_div() {
-    let result = run(
-        r#"
-        x = 10
-        x /= 4
-        x
-        "#
-    );
-
-    // 現在の division semantics に合わせる
-}
-
-#[test]
 fn compound_assign_list_index() {
     let result =
         run(
@@ -2372,87 +2359,6 @@ fn for_enum_pattern() {
 }
 
 #[test]
-fn iterator_enumerate() {
-    let result =
-        run(
-            r#"
-            [10,20,30]
-                .iter()
-                .enumerate()
-                .collect()
-            "#
-        );
-
-    // expected:
-    // [(0,10), (1,20), (2,30)]
-}
-
-#[test]
-fn iterator_zip() {
-    let result =
-        run(
-            r#"
-            [1,2,3]
-                .iter()
-                .zip(
-                    [4,5,6].iter()
-                )
-                .collect()
-            "#
-        );
-
-    // [(1,4), (2,5), (3,6)]
-}
-
-#[test]
-fn iterator_take() {
-    let result =
-        run(
-            r#"
-            (1..100)
-                .take(3)
-                .collect()
-            "#
-        );
-
-    // [1,2,3]
-}
-
-#[test]
-fn iterator_skip() {
-    let result =
-        run(
-            r#"
-            (1..6)
-                .skip(3)
-                .collect()
-            "#
-        );
-
-    // [4,5]
-}
-
-#[test]
-fn iterator_zip_map() {
-    let result =
-        run(
-            r#"
-            [1,2,3]
-                .iter()
-                .zip(
-                    [10,20,30].iter()
-                )
-                .map(
-                    |pair| pair.0 + pair.1
-                )
-                .collect()
-            "#
-        );
-
-    // [11,22,33]
-}
-
-#[test]
 fn dict_len_method() {
     let result =
         run(
@@ -2465,31 +2371,6 @@ fn dict_len_method() {
         result,
         Value::Int(2)
     );
-}
-
-#[test]
-fn dict_get_method() {
-    let result =
-        run(
-            r#"
-            {"a": 10}.get("a")
-            "#
-        );
-
-    // 既存の option_some helper / equality test に
-    // 合わせて検証
-}
-
-#[test]
-fn dict_get_missing_returns_none() {
-    let result =
-        run(
-            r#"
-            {"a": 10}.get("b")
-            "#
-        );
-
-    // Option.None
 }
 
 #[test]
@@ -2509,34 +2390,6 @@ fn dict_set_method() {
         result,
         Value::Int(2)
     );
-}
-
-#[test]
-fn dict_remove_method() {
-    let result =
-        run(
-            r#"
-            let d = {"a": 1}
-
-            d.remove("a")
-            "#
-        );
-
-    // Option.Some(1)
-}
-
-#[test]
-fn dict_remove_missing_returns_none() {
-    let result =
-        run(
-            r#"
-            let d = {"a": 1}
-
-            d.remove("b")
-            "#
-        );
-
-    // Option.None
 }
 
 #[test]
@@ -3180,5 +3033,81 @@ fn unknown_named_argument_is_error() {
 
     assert!(
         result.is_err()
+    );
+}
+
+#[test]
+fn iterator_sum() {
+    let result =
+        run(
+            r#"
+            [1,2,3,4].sum()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(10)
+    );
+}
+
+#[test]
+fn iterator_product() {
+    let result =
+        run(
+            r#"
+            [1,2,3,4].product()
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(24)
+    );
+}
+
+#[test]
+fn iterator_min() {
+    let result =
+        run(
+            r#"
+            [4,2,9,1].min()?
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(1)
+    );
+}
+
+#[test]
+fn iterator_max() {
+    let result =
+        run(
+            r#"
+            [4,2,9,1].max()?
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(9)
+    );
+}
+
+#[test]
+fn lambda_tuple_parameter() {
+    let result =
+        run(
+            r#"
+            f = |(x, y)| x + y
+            f((2, 3))
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5)
     );
 }

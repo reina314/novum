@@ -4,7 +4,7 @@ pub mod parser;
 pub mod span;
 pub mod token;
 
-pub use ast::{BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, Visibility};
+pub use ast::{BinOp, Expr, ExprKind, IndexExpr, ListItem, Program, Visibility, Pattern};
 pub use lexer::Lexer;
 pub use parser::Parser;
 pub use span::Span;

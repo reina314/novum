@@ -165,7 +165,7 @@ pub enum ExprKind {
     },
     
     Block(Vec<Expr>),
-    Lambda(Vec<String>, Box<Expr>),
+    Lambda(Vec<Pattern>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
     Index(
         Box<Expr>,

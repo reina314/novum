@@ -14,18 +14,13 @@ pub class Perceptron {
     },
 
     predict = |self, x| {
-        sum = 0
-        for (w, xi) in zip(self.weights, x) {
-            sum += w * xi
-        }
+        let sum =
+            zip(self.weights, x)
+            .map(|(w, xi)| w * xi)
+            .sum()
 
-        activation = sum + self.bias
-
-        if activation >= 0 { 
-            return 1 
-        } else { 
-            return 0 
-        }
+        if (sum + self.bias) >= 0 { 1 }
+        else { 0 } 
     },
 
     fit = |self, X, y| {
@@ -37,15 +32,14 @@ pub class Perceptron {
                 error = target - prediction
 
                 if error != 0 {
-                    i = 0
-                    for (w, x_val) in zip(self.weights, xi) {
+                    for (i, (w, x_val)) 
+                        in enumerate(zip(self.weights, xi)) 
+                    {
                         self.weights[i] = 
                             w + self.learning_rate * error * x_val
-                        
-                        i += 1
                     }
 
-                    self.bias = self.bias + self.learning_rate * error 
+                    self.bias += self.learning_rate * error
                     total_error += math.abs(error)
                 }
             }
