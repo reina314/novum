@@ -4,7 +4,6 @@ use super::{
     IteratorRef,
     ObjectRef,
     ClassRef,
-    // StructRef,
     EnumRef,
     EnumValueRef,
     EnumConstructor,
@@ -53,7 +52,6 @@ pub enum Value {
 
     Object(ObjectRef),
     Class(ClassRef),
-    // Struct(StructRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -99,7 +97,6 @@ impl Value {
 
             Self::Object(_) => Type::Object,
             Self::Class(_) => Type::Class,
-            // Self::Struct(_) => Type::Struct,
             Self::Module(_) => Type::Module,
 
             Self::Enum(_) => Type::Enum,
@@ -383,8 +380,6 @@ impl fmt::Debug for Value {
             Self::Class(class) => 
             write!(f, "<class {}>", class.name()),
 
-            // Self::Struct(def) => write!(f, "<struct {}>", def.name),
-
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
             Self::Enum(definition) => write!(f, "<enum {}>", definition.name()),
@@ -536,9 +531,6 @@ impl fmt::Display for Value {
 
             Self::Class(class) => 
             write!(f, "<class {}>", class.name()),
-
-            // Self::Struct(def)  =>
-            // write!(f, "<struct {}>", def.name),
 
             Self::Module(module) =>
                 write!(f, "<module {}>", module.borrow().name()),

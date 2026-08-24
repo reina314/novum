@@ -42,6 +42,53 @@ pub enum Visibility {
     Public,
 }
 
+#[derive(Clone)]
+pub struct CallArg {
+    pub name: Option<String>,
+    pub value: Box<Expr>,
+}
+
+impl CallArg {
+    pub fn positional(
+        value: Expr,
+    ) -> Self {
+        Self {
+            name: None,
+            value: Box::new(value),
+        }
+    }
+
+    pub fn named(
+        name: String,
+        value: Expr,
+    ) -> Self {
+        Self {
+            name: Some(name),
+            value: Box::new(value),
+        }
+    }
+}
+
+impl fmt::Debug for CallArg {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        match &self.name {
+            Some(name) => f
+                .debug_struct("CallArg")
+                .field("name", name)
+                .field("value", &self.value)
+                .finish(),
+
+            None => f
+                .debug_struct("CallArg")
+                .field("value", &self.value)
+                .finish(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
@@ -119,7 +166,7 @@ pub enum ExprKind {
     
     Block(Vec<Expr>),
     Lambda(Vec<String>, Box<Expr>),
-    Call(Box<Expr>, Vec<Expr>),
+    Call(Box<Expr>, Vec<CallArg>),
     Index(
         Box<Expr>,
         IndexExpr,
