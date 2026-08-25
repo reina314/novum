@@ -23,7 +23,8 @@ use super::{
 
 use std::{
     rc::Rc,
-    collections::HashMap
+    cell::RefCell,
+    collections::HashMap,
 };
 
 struct LoopContext {
@@ -31,61 +32,73 @@ struct LoopContext {
     break_jumps: Vec<usize>,
 }
 
-#[derive(Clone)]
-struct CompilerParent {
+type ScopeRef = Rc<RefCell<Scope>>;
+
+struct Scope {
+    parent: Option<ScopeRef>,
     locals: HashMap<String, u16>,
     upvalues: HashMap<String, u16>,
+    upvalue_specs: Vec<UpvalueSpec>,
+}
+
+impl Scope {
+    fn new(
+        parent: Option<ScopeRef>,
+    ) -> ScopeRef {
+        Rc::new(
+            RefCell::new(
+                Self {
+                    parent,
+
+                    locals:
+                        HashMap::new(),
+
+                    upvalues:
+                        HashMap::new(),
+
+                    upvalue_specs:
+                        Vec::new(),
+                }
+            )
+        )
+    }
 }
 
 pub struct Compiler {
     chunk: Chunk,
-    locals: HashMap<String, u16>,
-    upvalues: HashMap<String, u16>,
-    upvalue_specs: Vec<UpvalueSpec>,
+    scope: ScopeRef,
     loops: Vec<LoopContext>,
-    parent: Option<CompilerParent>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
-            chunk:
-                Chunk::default(),
-
-            locals:
-                HashMap::new(),
-
-            upvalues:
-                HashMap::new(),
-
-            upvalue_specs:
-                Vec::new(),
-
-            loops:
-                Vec::new(),
-
-            parent:
-                None,
+            chunk: Chunk::default(),
+            scope: Scope::new(None),
+            loops: Vec::new(),
         }
     }
 
     fn new_function(
-        parent: &Compiler,
+        parent: ScopeRef,
         params: &[Pattern],
     ) -> Result<Self> {
-        let mut compiler =
-            Self::new();
-
-        compiler.parent =
-            Some(
-                CompilerParent {
-                    locals:
-                        parent.locals.clone(),
-
-                    upvalues:
-                        parent.upvalues.clone(),
-                }
+        let scope =
+            Scope::new(
+                Some(parent)
             );
+
+        let compiler =
+            Self {
+                chunk:
+                    Chunk::default(),
+
+                scope:
+                    scope.clone(),
+
+                loops:
+                    Vec::new(),
+            };
 
         for (
             index,
@@ -104,10 +117,13 @@ impl Compiler {
                 );
             };
 
-            compiler.locals.insert(
-                name.clone(),
-                index as u16,
-            );
+            scope
+                .borrow_mut()
+                .locals
+                .insert(
+                    name.clone(),
+                    index as u16,
+                );
         }
 
         Ok(compiler)
@@ -117,10 +133,13 @@ impl Compiler {
         &mut self,
         name: String,
     ) -> u16 {
-        let slot =
-            self.locals.len() as u16;
+        let mut scope =
+            self.scope.borrow_mut();
 
-        self.locals.insert(
+        let slot =
+            scope.locals.len() as u16;
+
+        scope.locals.insert(
             name,
             slot,
         );
@@ -132,64 +151,172 @@ impl Compiler {
         &self,
         name: &str,
     ) -> Option<u16> {
-        self.locals
+        self.scope
+            .borrow()
+            .locals
             .get(name)
             .copied()
     }
-    
+
+    fn add_upvalue(
+        &mut self,
+        name: &str,
+        spec: UpvalueSpec,
+    ) -> u16 {
+        let mut scope =
+            self.scope.borrow_mut();
+
+        if let Some(index) =
+            scope.upvalues.get(name)
+        {
+            return *index;
+        }
+
+        let index =
+            scope.upvalue_specs.len()
+                as u16;
+
+        scope.upvalue_specs.push(
+            spec
+        );
+
+        scope.upvalues.insert(
+            name.to_string(),
+            index,
+        );
+
+        index
+    }
+
+    fn resolve_scope_upvalue(
+        scope: ScopeRef,
+        name: &str,
+    ) -> Option<u16> {
+        if let Some(index) =
+            scope
+                .borrow()
+                .upvalues
+                .get(name)
+                .copied()
+        {
+            return Some(index);
+        }
+
+        let parent =
+            scope
+                .borrow()
+                .parent
+                .clone()?;
+
+        if let Some(local_slot) =
+            parent
+                .borrow()
+                .locals
+                .get(name)
+                .copied()
+        {
+            let mut scope =
+                scope.borrow_mut();
+
+            let index =
+                scope.upvalue_specs.len()
+                    as u16;
+
+            scope.upvalue_specs.push(
+                UpvalueSpec::Local(
+                    local_slot
+                )
+            );
+
+            scope.upvalues.insert(
+                name.to_string(),
+                index,
+            );
+
+            return Some(index);
+        }
+
+        let parent_index =
+            Self::resolve_scope_upvalue(
+                parent,
+                name,
+            )?;
+
+        let mut scope =
+            scope.borrow_mut();
+
+        let index =
+            scope.upvalue_specs.len()
+                as u16;
+
+        scope.upvalue_specs.push(
+            UpvalueSpec::Parent(
+                parent_index
+            )
+        );
+
+        scope.upvalues.insert(
+            name.to_string(),
+            index,
+        );
+
+        Some(index)
+    }
+
     fn resolve_upvalue(
         &mut self,
         name: &str,
     ) -> Option<u16> {
-        if let Some(slot) =
-            self.upvalues.get(name)
+        // Reuse an existing upvalue in the current scope.
+        if let Some(index) =
+            self.scope
+                .borrow()
+                .upvalues
+                .get(name)
+                .copied()
         {
-            return Some(*slot);
+            return Some(index);
         }
 
         let parent =
-            self.parent.as_ref()?;
+            self.scope
+                .borrow()
+                .parent
+                .clone()?;
 
-        if let Some(slot) =
-            parent.locals.get(name)
+        // The immediate parent owns the variable locally.
+        if let Some(local_slot) =
+            parent
+                .borrow()
+                .locals
+                .get(name)
+                .copied()
         {
-            let index =
-                self.upvalue_specs.len()
-                    as u16;
-
-            self.upvalue_specs.push(
-                UpvalueSpec::Local(
-                    *slot
+            return Some(
+                self.add_upvalue(
+                    name,
+                    UpvalueSpec::Local(
+                        local_slot
+                    ),
                 )
             );
-
-            self.upvalues.insert(
-                name.to_string(),
-                index,
-            );
-
-            return Some(index);
         }
 
-        if let Some(slot) =
-            parent.upvalues.get(name)
+        // The variable is itself an upvalue of the parent.
+        if let Some(parent_upvalue) =
+            Self::resolve_scope_upvalue(
+                parent.clone(),
+                name,
+            )
         {
-            let index =
-                self.upvalue_specs.len()
-                    as u16;
-
-            self.upvalue_specs.push(
-                UpvalueSpec::Parent(
-                    *slot
+            return Some(
+                self.add_upvalue(
+                    name,
+                    UpvalueSpec::Parent(
+                        parent_upvalue
+                    ),
                 )
             );
-
-            self.upvalues.insert(
-                name.to_string(),
-                index,
-            );
-
-            return Some(index);
         }
 
         None
@@ -200,7 +327,10 @@ impl Compiler {
             self.chunk;
 
         chunk.local_count =
-            self.locals.len();
+            self.scope
+                .borrow()
+                .locals
+                .len();
 
         chunk
     }
@@ -212,14 +342,17 @@ impl Compiler {
         let mut chunk =
             self.chunk;
 
+        let scope =
+            self.scope.borrow();
+
         chunk.local_count =
-            self.locals.len();
+            scope.locals.len();
 
         FunctionProto {
             arity,
             chunk: Rc::new(chunk),
             upvalue_specs:
-                self.upvalue_specs,
+                scope.upvalue_specs.clone(),
         }
     }
 
@@ -547,11 +680,11 @@ impl Compiler {
 
             ExprKind::Ident(name) => {
                 if let Some(slot) =
-                    self.locals.get(name)
+                    self.resolve_local(name)
                 {
                     self.chunk.emit_operand(
                         OpCode::LoadLocal,
-                        *slot as u32,
+                        slot as u32,
                     );
                 } else if let Some(slot) =
                     self.resolve_upvalue(name)
@@ -747,7 +880,7 @@ impl Compiler {
             ) => {
                 let mut compiler =
                     Compiler::new_function(
-                        self,
+                        self.scope.clone(),
                         params,
                     )?;
 
