@@ -71,36 +71,6 @@ impl Vm {
         }
     }
 
-    fn return_from_function(
-        &mut self,
-    ) -> Result<Value> {
-        let result =
-            self.pop()?;
-
-        let frame =
-            self.frames
-                .pop()
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "VM frame underflow",
-                        None,
-                    )
-                })?;
-
-        self.stack.truncate(
-            frame.base
-        );
-
-        if self.frames.is_empty() {
-            return Ok(result);
-        }
-
-        self.push(result);
-
-        self.execute()
-    }
-
     pub fn run(
         &mut self,
         chunk: Rc<Chunk>,
@@ -112,7 +82,7 @@ impl Vm {
             CallFrame {
                 chunk,
                 ip: 0,
-                base: 0,
+                locals: Vec::new(),
             }
         );
 
@@ -185,37 +155,59 @@ impl Vm {
                     self.push(value);
                 }
 
+                OpCode::Unit => {
+                    self.push(
+                        Value::Unit
+                    );
+                }
+
                 OpCode::Pop => {
                     self.pop()?;
                 }
 
+                OpCode::Dup => {
+                    let value =
+                        self.stack
+                            .last()
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    self.push(value);
+                }
+
                 OpCode::Add => {
                     self.binary_numeric(
-                        |a, b| a + b
+                        OpCode::Add
                     )?;
                 }
 
                 OpCode::Sub => {
                     self.binary_numeric(
-                        |a, b| a - b
+                        OpCode::Sub
                     )?;
                 }
 
                 OpCode::Mul => {
                     self.binary_numeric(
-                        |a, b| a * b
+                        OpCode::Mul
                     )?;
                 }
 
                 OpCode::Div => {
                     self.binary_numeric(
-                        |a, b| a / b
+                        OpCode::Div
                     )?;
                 }
 
                 OpCode::Mod => {
                     self.binary_numeric(
-                        |a, b| a % b
+                        OpCode::Mod
                     )?;
                 }
 
@@ -281,17 +273,20 @@ impl Vm {
 
                 OpCode::LoadLocal => {
                     let index =
-                        self.current_frame().base
-                            + operand as usize;
+                        operand as usize;
 
                     let value =
-                        self.stack
+                        self.current_frame()
+                            .locals
                             .get(index)
                             .cloned()
                             .ok_or_else(|| {
                                 Error::new(
                                     ErrorKind::Runtime,
-                                    "local slot out of bounds",
+                                    format!(
+                                        "local slot out of bounds: {}",
+                                        index
+                                    ),
                                     None,
                                 )
                             })?;
@@ -300,23 +295,23 @@ impl Vm {
                 }
 
                 OpCode::StoreLocal => {
-                    let base =
-                        self.current_frame().base;
-
                     let index =
-                        base + operand as usize;
+                        operand as usize;
 
                     let value =
                         self.pop()?;
 
-                    if index >= self.stack.len() {
-                        self.stack.resize(
+                    let frame =
+                        self.current_frame_mut();
+
+                    if index >= frame.locals.len() {
+                        frame.locals.resize(
                             index + 1,
                             Value::Unit,
                         );
                     }
 
-                    self.stack[index] =
+                    frame.locals[index] =
                         value;
                 }
 
@@ -373,21 +368,46 @@ impl Vm {
                         );
                     }
 
-                    let base =
+                    let args_start =
                         function_index + 1;
+
+                    let args =
+                        self.stack[
+                            args_start..
+                        ].to_vec();
+
+                    self.stack.truncate(
+                        function_index
+                    );
 
                     self.frames.push(
                         CallFrame {
                             chunk:
                                 function.chunk.clone(),
                             ip: 0,
-                            base,
+                            locals: args,
                         }
                     );
                 }
 
                 OpCode::Return => {
-                    return self.return_from_function();
+                    let result =
+                        self.pop()?;
+
+                    self.frames.pop()
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM frame underflow",
+                                None,
+                            )
+                        })?;
+
+                    if self.frames.is_empty() {
+                        return Ok(result);
+                    }
+
+                    self.push(result);
                 }
 
                 OpCode::Halt => {
@@ -410,66 +430,218 @@ impl Vm {
         }
     }
 
-    fn binary_numeric<F>(
+    fn binary_numeric(
         &mut self,
-        op: F,
-    ) -> Result<()>
-    where
-        F: FnOnce(f64, f64) -> f64,
-    {
+        op: OpCode,
+    ) -> Result<()> {
         let right =
             self.pop()?;
 
         let left =
             self.pop()?;
 
-        let left =
-            match left {
-                Value::Int(value) =>
-                    value as f64,
+        let result =
+            match (left, right) {
+                (
+                    Value::Int(a),
+                    Value::Int(b),
+                ) => {
+                    match op {
+                        OpCode::Add =>
+                            a.checked_add(b)
+                                .map(Value::Int)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "integer overflow",
+                                        None,
+                                    )
+                                })?,
 
-                Value::Float(value) =>
-                    value,
+                        OpCode::Sub =>
+                            a.checked_sub(b)
+                                .map(Value::Int)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "integer overflow",
+                                        None,
+                                    )
+                                })?,
 
-                other =>
+                        OpCode::Mul =>
+                            a.checked_mul(b)
+                                .map(Value::Int)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "integer overflow",
+                                        None,
+                                    )
+                                })?,
+
+                        OpCode::Mod => {
+                            if b == 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "division by zero",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            Value::Int(
+                                a % b
+                            )
+                        }
+
+                        OpCode::Div => {
+                            if b == 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "division by zero",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            Value::Float(
+                                a as f64 / b as f64
+                            )
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "invalid numeric opcode",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                (
+                    Value::Float(a),
+                    Value::Float(b),
+                ) => {
+                    match op {
+                        OpCode::Add =>
+                            Value::Float(a + b),
+
+                        OpCode::Sub =>
+                            Value::Float(a - b),
+
+                        OpCode::Mul =>
+                            Value::Float(a * b),
+
+                        OpCode::Div =>
+                            Value::Float(a / b),
+
+                        OpCode::Mod =>
+                            Value::Float(a % b),
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "invalid numeric opcode",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                (
+                    Value::Int(a),
+                    Value::Float(b),
+                ) => {
+                    let a =
+                        a as f64;
+
+                    match op {
+                        OpCode::Add =>
+                            Value::Float(a + b),
+
+                        OpCode::Sub =>
+                            Value::Float(a - b),
+
+                        OpCode::Mul =>
+                            Value::Float(a * b),
+
+                        OpCode::Div =>
+                            Value::Float(a / b),
+
+                        OpCode::Mod =>
+                            Value::Float(a % b),
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "invalid numeric opcode",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                (
+                    Value::Float(a),
+                    Value::Int(b),
+                ) => {
+                    let b =
+                        b as f64;
+
+                    match op {
+                        OpCode::Add =>
+                            Value::Float(a + b),
+
+                        OpCode::Sub =>
+                            Value::Float(a - b),
+
+                        OpCode::Mul =>
+                            Value::Float(a * b),
+
+                        OpCode::Div =>
+                            Value::Float(a / b),
+
+                        OpCode::Mod =>
+                            Value::Float(a % b),
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "invalid numeric opcode",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                (a, b) => {
                     return Err(
                         Error::new(
                             ErrorKind::Type,
                             format!(
-                                "expected numeric value, got {}",
-                                other.type_name()
+                                "numeric operation not defined between {} and {}",
+                                a.type_name(),
+                                b.type_name()
                             ),
                             None,
                         )
-                    ),
+                    );
+                }
             };
 
-        let right =
-            match right {
-                Value::Int(value) =>
-                    value as f64,
-
-                Value::Float(value) =>
-                    value,
-
-                other =>
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            format!(
-                                "expected numeric value, got {}",
-                                other.type_name()
-                            ),
-                            None,
-                        )
-                    ),
-            };
-
-        self.push(
-            Value::Float(
-                op(left, right)
-            )
-        );
+        self.push(result);
 
         Ok(())
     }

@@ -64,6 +64,39 @@ impl Compiler {
         self.chunk
     }
 
+    pub fn compile_program(
+        &mut self,
+        program: &Program,
+    ) -> Result<Chunk> {
+        for (
+            index,
+            expr,
+        ) in program.statements.iter().enumerate()
+        {
+            self.compile_expr(
+                expr
+            )?;
+
+            if index + 1
+                != program.statements.len()
+            {
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+            }
+        }
+
+        self.chunk.emit(
+            OpCode::Halt
+        );
+
+        Ok(
+            std::mem::take(
+                &mut self.chunk
+            )
+        )
+    }
+
     pub fn compile(
         mut self,
         program: &Program,
@@ -91,6 +124,38 @@ impl Compiler {
         );
 
         Ok(self.chunk)
+    }
+
+    pub fn new_function(
+        params: &[Pattern],
+    ) -> Result<Self> {
+        let mut compiler =
+            Self::new();
+
+        for (
+            index,
+            param,
+        ) in params.iter().enumerate()
+        {
+            let Pattern::Ident(name) =
+                param
+            else {
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "VM currently supports only identifier parameters",
+                        None,
+                    )
+                );
+            };
+
+            compiler.locals.insert(
+                name.clone(),
+                index as u16,
+            );
+        }
+
+        Ok(compiler)
     }
 
     fn compile_expr(
@@ -208,6 +273,10 @@ impl Compiler {
                             OpCode::StoreLocal,
                             slot as u32,
                         );
+
+                        self.chunk.emit(
+                            OpCode::Unit
+                        );
                     }
 
                     _ => {
@@ -215,6 +284,108 @@ impl Compiler {
                             Error::new(
                                 ErrorKind::Runtime,
                                 "VM currently supports only identifier bindings",
+                                None,
+                            )
+                        );
+                    }
+                }
+            }
+
+            ExprKind::Assign {
+                target,
+                value,
+            } => {
+                match &target.kind {
+                    ExprKind::Ident(name) => {
+                        self.compile_expr(
+                            value
+                        )?;
+
+                        self.chunk.emit(
+                            OpCode::Dup
+                        );
+
+                        let slot =
+                            match self.find_local(
+                                name
+                            ) {
+                                Some(slot) =>
+                                    slot,
+
+                                None =>
+                                    self.add_local(
+                                        name.clone()
+                                    ),
+                            };
+
+                        self.chunk.emit_operand(
+                            OpCode::StoreLocal,
+                            slot as u32,
+                        );
+                    }
+
+                    _ => {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM currently supports only identifier assignment",
+                                None,
+                            )
+                        );
+                    }
+                }
+            }
+
+            ExprKind::AssignOp {
+                target,
+                op,
+                value,
+            } => {
+                match &target.kind {
+                    ExprKind::Ident(name) => {
+                        let slot =
+                            self.find_local(
+                                name
+                            )
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Name,
+                                    format!(
+                                        "{} is undefined",
+                                        name
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                        self.chunk.emit_operand(
+                            OpCode::LoadLocal,
+                            slot as u32,
+                        );
+
+                        self.compile_expr(
+                            value
+                        )?;
+
+                        self.compile_binop(
+                            *op
+                        )?;
+
+                        self.chunk.emit(
+                            OpCode::Dup
+                        );
+
+                        self.chunk.emit_operand(
+                            OpCode::StoreLocal,
+                            slot as u32,
+                        );
+                    }
+
+                    _ => {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM currently supports only identifier assignment",
                                 None,
                             )
                         );
@@ -334,7 +505,9 @@ impl Compiler {
                 body,
             ) => {
                 let mut compiler =
-                    Compiler::new();
+                    Compiler::new_function(
+                        params
+                    )?;
 
                 compiler.compile_expr(
                     body
@@ -366,6 +539,39 @@ impl Compiler {
                 self.chunk.emit_operand(
                     OpCode::Constant,
                     index,
+                );
+            }
+
+            ExprKind::Call(
+                callee,
+                args,
+            ) => {
+                // Compile the callee first.
+                self.compile_expr(
+                    callee
+                )?;
+
+                // Compile arguments in source order.
+                for arg in args {
+                    // VM currently supports only positional arguments.
+                    if arg.name.is_some() {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM currently does not support named arguments",
+                                None,
+                            )
+                        );
+                    }
+
+                    self.compile_expr(
+                        &arg.value
+                    )?;
+                }
+
+                self.chunk.emit_operand(
+                    OpCode::Call,
+                    args.len() as u32,
                 );
             }
 

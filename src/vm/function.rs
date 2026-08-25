@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use super::chunk::Chunk;
+use crate::runtime::Value;
 
 pub type VmFunctionRef = Rc<VmFunction>;
 
@@ -8,7 +9,7 @@ pub type VmFunctionRef = Rc<VmFunction>;
 pub struct CallFrame {
     pub chunk: Rc<Chunk>,
     pub ip: usize,
-    pub base: usize,
+    pub locals: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]

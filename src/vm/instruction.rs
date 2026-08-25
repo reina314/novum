@@ -2,7 +2,10 @@
 pub enum OpCode {
     Constant,
 
+    Unit,
+
     Pop,
+    Dup,
 
     LoadLocal,
     StoreLocal,
