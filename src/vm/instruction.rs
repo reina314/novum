@@ -9,6 +9,7 @@ pub enum OpCode {
 
     LoadLocal,
     StoreLocal,
+    ResetLocal,
 
     LoadUpvalue,
     StoreUpvalue,

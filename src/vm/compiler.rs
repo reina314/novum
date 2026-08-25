@@ -27,9 +27,18 @@ use std::{
     collections::HashMap,
 };
 
+enum AssignmentTarget {
+    Local(u16),
+    Upvalue(u16),
+    ImplicitLocal(u16),
+}
+
 struct LoopContext {
-    continue_target: usize,
+    condition_target: usize,
+    cleanup_target: Option<usize>,
+    continue_jumps: Vec<usize>,
     break_jumps: Vec<usize>,
+    local_slots: Vec<u16>,
 }
 
 type ScopeRef = Rc<RefCell<Scope>>;
@@ -39,11 +48,13 @@ struct Scope {
     locals: HashMap<String, u16>,
     upvalues: HashMap<String, u16>,
     upvalue_specs: Vec<UpvalueSpec>,
+    function_boundary: bool,
 }
 
 impl Scope {
     fn new(
         parent: Option<ScopeRef>,
+        function_boundary: bool,
     ) -> ScopeRef {
         Rc::new(
             RefCell::new(
@@ -58,6 +69,8 @@ impl Scope {
 
                     upvalue_specs:
                         Vec::new(),
+
+                    function_boundary,
                 }
             )
         )
@@ -67,15 +80,19 @@ impl Scope {
 pub struct Compiler {
     chunk: Chunk,
     scope: ScopeRef,
+    next_local_slot: u16,
     loops: Vec<LoopContext>,
+    loop_local_stack: Vec<Vec<u16>>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
             chunk: Chunk::default(),
-            scope: Scope::new(None),
+            scope: Scope::new(None, true,),
+            next_local_slot: 0,
             loops: Vec::new(),
+            loop_local_stack: Vec::new(),
         }
     }
 
@@ -85,19 +102,17 @@ impl Compiler {
     ) -> Result<Self> {
         let scope =
             Scope::new(
-                Some(parent)
+                Some(parent),
+                true,
             );
 
-        let compiler =
+        let mut compiler =
             Self {
-                chunk:
-                    Chunk::default(),
-
-                scope:
-                    scope.clone(),
-
-                loops:
-                    Vec::new(),
+                chunk: Chunk::default(),
+                scope: scope.clone(),
+                next_local_slot: 0,
+                loops: Vec::new(),
+                loop_local_stack: Vec::new(),
             };
 
         for (
@@ -126,23 +141,65 @@ impl Compiler {
                 );
         }
 
+        compiler.next_local_slot =
+            params.len() as u16;
+
         Ok(compiler)
     }
 
-    fn add_local(
+    fn declare_local(
         &mut self,
         name: String,
-    ) -> u16 {
-        let mut scope =
-            self.scope.borrow_mut();
+    ) -> Result<u16> {
+        {
+            let scope =
+                self.scope.borrow();
+
+            if scope.locals.contains_key(
+                &name
+            ) {
+                return Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "variable '{}' is already declared in this scope",
+                            name
+                        ),
+                        None,
+                    )
+                );
+            }
+        }
 
         let slot =
-            scope.locals.len() as u16;
+            self.next_local_slot;
 
-        scope.locals.insert(
-            name,
-            slot,
-        );
+        self.next_local_slot += 1;
+
+        self.scope
+            .borrow_mut()
+            .locals
+            .insert(
+                name,
+                slot,
+            );
+
+        if let Some(slots) =
+            self.loop_local_stack.last_mut()
+        {
+            slots.push(slot);
+        }
+
+        Ok(slot)
+    }
+
+    fn allocate_temp_local(
+        &mut self,
+    ) -> u16 {
+        let slot =
+            self.next_local_slot;
+
+        self.next_local_slot += 1;
 
         slot
     }
@@ -151,11 +208,104 @@ impl Compiler {
         &self,
         name: &str,
     ) -> Option<u16> {
-        self.scope
-            .borrow()
-            .locals
-            .get(name)
-            .copied()
+        let mut scope =
+            Some(self.scope.clone());
+
+        while let Some(current) =
+            scope
+        {
+            if let Some(slot) =
+                current
+                    .borrow()
+                    .locals
+                    .get(name)
+                    .copied()
+            {
+                return Some(slot);
+            }
+
+            let is_function_boundary =
+                current
+                    .borrow()
+                    .function_boundary;
+
+            if is_function_boundary {
+                break;
+            }
+
+            scope =
+                current
+                    .borrow()
+                    .parent
+                    .clone();
+        }
+
+        None
+    }
+
+    fn resolve_assignment(
+        &mut self,
+        name: &str,
+    ) -> Result<AssignmentTarget> {
+        if let Some(slot) =
+            self.resolve_local(name)
+        {
+            return Ok(
+                AssignmentTarget::Local(
+                    slot
+                )
+            );
+        }
+
+        if let Some(slot) =
+            self.resolve_upvalue(name)
+        {
+            return Ok(
+                AssignmentTarget::Upvalue(
+                    slot
+                )
+            );
+        }
+
+        let slot =
+            self.declare_local(
+                name.to_string()
+            )?;
+
+        Ok(
+            AssignmentTarget::ImplicitLocal(
+                slot
+            )
+        )
+    }
+
+    fn enter_scope(
+        &mut self,
+    ) {
+        let parent =
+            self.scope.clone();
+
+        self.scope =
+            Scope::new(
+                Some(parent),
+                false,
+            );
+    }
+
+    fn exit_scope(
+        &mut self,
+    ) {
+        let parent =
+            self.scope
+                .borrow()
+                .parent
+                .clone()
+                .expect(
+                    "cannot exit root scope"
+                );
+
+        self.scope =
+            parent;
     }
 
     fn add_upvalue(
@@ -188,106 +338,32 @@ impl Compiler {
         index
     }
 
-    fn resolve_scope_upvalue(
-        scope: ScopeRef,
-        name: &str,
-    ) -> Option<u16> {
-        if let Some(index) =
-            scope
-                .borrow()
-                .upvalues
-                .get(name)
-                .copied()
-        {
-            return Some(index);
-        }
-
-        let parent =
-            scope
-                .borrow()
-                .parent
-                .clone()?;
-
-        if let Some(local_slot) =
-            parent
-                .borrow()
-                .locals
-                .get(name)
-                .copied()
-        {
-            let mut scope =
-                scope.borrow_mut();
-
-            let index =
-                scope.upvalue_specs.len()
-                    as u16;
-
-            scope.upvalue_specs.push(
-                UpvalueSpec::Local(
-                    local_slot
-                )
-            );
-
-            scope.upvalues.insert(
-                name.to_string(),
-                index,
-            );
-
-            return Some(index);
-        }
-
-        let parent_index =
-            Self::resolve_scope_upvalue(
-                parent,
-                name,
-            )?;
-
-        let mut scope =
-            scope.borrow_mut();
-
-        let index =
-            scope.upvalue_specs.len()
-                as u16;
-
-        scope.upvalue_specs.push(
-            UpvalueSpec::Parent(
-                parent_index
-            )
-        );
-
-        scope.upvalues.insert(
-            name.to_string(),
-            index,
-        );
-
-        Some(index)
-    }
-
     fn resolve_upvalue(
         &mut self,
         name: &str,
     ) -> Option<u16> {
-        // Reuse an existing upvalue in the current scope.
-        if let Some(index) =
-            self.scope
-                .borrow()
-                .upvalues
-                .get(name)
-                .copied()
-        {
-            return Some(index);
-        }
-
         let parent =
             self.scope
                 .borrow()
                 .parent
                 .clone()?;
 
-        // The immediate parent owns the variable locally.
-        if let Some(local_slot) =
-            parent
-                .borrow()
+        self.resolve_upvalue_from(
+            parent,
+            name,
+        )
+    }
+
+    fn resolve_upvalue_from(
+        &mut self,
+        scope: ScopeRef,
+        name: &str,
+    ) -> Option<u16> {
+        // Search every lexical scope inside the same
+        // function first.
+
+        if let Some(slot) =
+            scope.borrow()
                 .locals
                 .get(name)
                 .copied()
@@ -295,31 +371,42 @@ impl Compiler {
             return Some(
                 self.add_upvalue(
                     name,
-                    UpvalueSpec::Local(
-                        local_slot
-                    ),
+                    UpvalueSpec::Local(slot),
                 )
             );
         }
 
-        // The variable is itself an upvalue of the parent.
-        if let Some(parent_upvalue) =
-            Self::resolve_scope_upvalue(
-                parent.clone(),
-                name,
-            )
+        if let Some(slot) =
+            scope.borrow()
+                .upvalues
+                .get(name)
+                .copied()
         {
             return Some(
                 self.add_upvalue(
                     name,
-                    UpvalueSpec::Parent(
-                        parent_upvalue
-                    ),
+                    UpvalueSpec::Parent(slot),
                 )
             );
         }
 
-        None
+        let parent =
+            scope
+                .borrow()
+                .parent
+                .clone()?;
+
+        if scope
+            .borrow()
+            .function_boundary
+        {
+            return None;
+        }
+
+        self.resolve_upvalue_from(
+            parent,
+            name,
+        )
     }
 
     pub fn finish(self) -> Chunk {
@@ -327,10 +414,7 @@ impl Compiler {
             self.chunk;
 
         chunk.local_count =
-            self.scope
-                .borrow()
-                .locals
-                .len();
+            self.next_local_slot as usize;
 
         chunk
     }
@@ -342,17 +426,19 @@ impl Compiler {
         let mut chunk =
             self.chunk;
 
-        let scope =
-            self.scope.borrow();
-
         chunk.local_count =
-            scope.locals.len();
+            self.next_local_slot as usize;
+
+        let upvalue_specs =
+            self.scope
+                .borrow()
+                .upvalue_specs
+                .clone();
 
         FunctionProto {
             arity,
             chunk: Rc::new(chunk),
-            upvalue_specs:
-                scope.upvalue_specs.clone(),
+            upvalue_specs,
         }
     }
 
@@ -518,24 +604,22 @@ impl Compiler {
                 value,
                 ..
             } => {
-                self.compile_expr(
-                    value
-                )?;
-
                 match pattern {
                     Pattern::Ident(name) => {
+                        self.compile_expr(value)?;
+
+                        self.chunk.emit(
+                            OpCode::Dup
+                        );
+
                         let slot =
-                            self.add_local(
+                            self.declare_local(
                                 name.clone()
-                            );
+                            )?;
 
                         self.chunk.emit_operand(
                             OpCode::StoreLocal,
                             slot as u32,
-                        );
-
-                        self.chunk.emit(
-                            OpCode::Unit
                         );
                     }
 
@@ -567,38 +651,27 @@ impl Compiler {
                     );
                 };
 
-                self.compile_expr(
-                    value
-                )?;
+                self.compile_expr(value)?;
 
                 self.chunk.emit(
                     OpCode::Dup
                 );
 
-                if let Some(slot) =
-                    self.resolve_local(name)
-                {
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        slot as u32,
-                    );
-                } else if let Some(slot) =
-                    self.resolve_upvalue(name)
-                {
-                    self.chunk.emit_operand(
-                        OpCode::StoreUpvalue,
-                        slot as u32,
-                    );
-                } else {
-                    let slot =
-                        self.add_local(
-                            name.clone()
+                match self.resolve_assignment(name)? {
+                    AssignmentTarget::Local(slot) |
+                    AssignmentTarget::ImplicitLocal(slot) => {
+                        self.chunk.emit_operand(
+                            OpCode::StoreLocal,
+                            slot as u32,
                         );
+                    }
 
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        slot as u32,
-                    );
+                    AssignmentTarget::Upvalue(slot) => {
+                        self.chunk.emit_operand(
+                            OpCode::StoreUpvalue,
+                            slot as u32,
+                        );
+                    }
                 }
             }
 
@@ -767,21 +840,51 @@ impl Compiler {
                 cond,
                 body,
             ) => {
-                let loop_start =
+                // Store the value of the most recently
+                // evaluated iteration here.
+                let result_slot =
+                    self.allocate_temp_local();
+
+                // A while expression that executes zero times
+                // evaluates to Unit.
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                let condition_target =
                     self.chunk.code.len();
+
+                let loop_index =
+                    self.loops.len();
 
                 self.loops.push(
                     LoopContext {
-                        continue_target:
-                            loop_start,
+                        condition_target,
+
+                        cleanup_target:
+                            None,
+
+                        continue_jumps:
+                            Vec::new(),
+
                         break_jumps:
+                            Vec::new(),
+
+                        local_slots:
                             Vec::new(),
                     }
                 );
 
-                self.compile_expr(
-                    cond
-                )?;
+                self.loop_local_stack.push(
+                    Vec::new()
+                );
+
+                self.compile_expr(cond)?;
 
                 let exit =
                     self.chunk.emit_operand(
@@ -789,17 +892,64 @@ impl Compiler {
                         0,
                     );
 
-                self.compile_expr(
-                    body
-                )?;
+                self.compile_expr(body)?;
 
+                // Save the current iteration's value.
+                self.chunk.emit(
+                    OpCode::Dup
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                // Discard the copy that was only used
+                // for the expression result storage.
                 self.chunk.emit(
                     OpCode::Pop
                 );
 
+                let cleanup_target =
+                    self.chunk.code.len();
+
+                self.loops[loop_index]
+                    .cleanup_target =
+                    Some(cleanup_target);
+
+                let local_slots =
+                    self.loop_local_stack
+                        .pop()
+                        .unwrap();
+
+                self.loops[loop_index]
+                    .local_slots =
+                    local_slots;
+
+                for jump in
+                    self.loops[loop_index]
+                        .continue_jumps
+                        .iter()
+                {
+                    self.chunk.patch_operand(
+                        *jump,
+                        cleanup_target as u32,
+                    );
+                }
+
+                for slot in
+                    &self.loops[loop_index]
+                        .local_slots
+                {
+                    self.chunk.emit_operand(
+                        OpCode::ResetLocal,
+                        *slot as u32,
+                    );
+                }
+
                 self.chunk.emit_operand(
                     OpCode::Jump,
-                    loop_start as u32,
+                    condition_target as u32,
                 );
 
                 let loop_end =
@@ -811,9 +961,7 @@ impl Compiler {
                 );
 
                 let context =
-                    self.loops
-                        .pop()
-                        .unwrap();
+                    self.loops.pop().unwrap();
 
                 for jump in
                     context.break_jumps
@@ -824,8 +972,10 @@ impl Compiler {
                     );
                 }
 
-                self.chunk.emit(
-                    OpCode::Unit
+                // Return the last iteration's value.
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    result_slot as u32,
                 );
             }
 
@@ -855,7 +1005,7 @@ impl Compiler {
 
             ExprKind::Continue => {
                 let Some(loop_context) =
-                    self.loops.last()
+                    self.loops.last_mut()
                 else {
                     return Err(
                         Error::new(
@@ -866,12 +1016,15 @@ impl Compiler {
                     );
                 };
 
-                self.chunk.emit_operand(
-                    OpCode::Jump,
-                    loop_context
-                        .continue_target
-                        as u32,
-                );
+                let jump =
+                    self.chunk.emit_operand(
+                        OpCode::Jump,
+                        0,
+                    );
+
+                loop_context
+                    .continue_jumps
+                    .push(jump);
             }
 
             ExprKind::Lambda(
@@ -947,6 +1100,8 @@ impl Compiler {
             }
 
             ExprKind::Block(exprs) => {
+                self.enter_scope();
+
                 for (
                     index,
                     expr,
@@ -964,6 +1119,8 @@ impl Compiler {
                         );
                     }
                 }
+
+                self.exit_scope();
             }
 
             _ => {

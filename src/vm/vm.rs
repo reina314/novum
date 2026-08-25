@@ -427,6 +427,36 @@ impl Vm {
                         value;
                 }
 
+                OpCode::ResetLocal => {
+                    let slot =
+                        operand as usize;
+
+                    let frame =
+                        self.current_frame_mut();
+
+                    if slot >= frame.locals.len() {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "local slot out of bounds: {}",
+                                    slot
+                                ),
+                                None,
+                            )
+                        );
+                    }
+
+                    // A captured iteration binding keeps its cell alive
+                    // outside the iteration. The next iteration receives
+                    // a fresh cell.
+                    frame.cells[slot] =
+                        None;
+
+                    frame.locals[slot] =
+                        Value::Unit;
+                }
+
                 OpCode::LoadUpvalue => {
                     let index =
                         operand as usize;
