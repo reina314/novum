@@ -25,6 +25,7 @@ use nu_ansi_term::{Color, Style};
 
 use std::{
     borrow::Cow,
+    rc::Rc,
     env,
     fs,
     path::{
@@ -43,6 +44,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 struct Options {
     display_lexer: bool,
     display_parser: bool,
+    vm: bool,
     file: Option<String>,
 }
 
@@ -54,12 +56,24 @@ enum Command {
 
 impl Options {
     fn parse() -> Result<Command, String> {
-        let mut options = Self::default();
+        let mut options =
+            Self::default();
 
-        for arg in env::args().skip(1) {
+        let mut args =
+            env::args().skip(1);
+
+        while let Some(arg) =
+            args.next()
+        {
             match arg.as_str() {
                 "--version" | "-V" => {
-                    return Ok(Command::Version);
+                    return Ok(
+                        Command::Version
+                    );
+                }
+
+                "--vm" => {
+                    options.vm = true;
                 }
 
                 "-l" | "--lexer" => {
@@ -75,27 +89,41 @@ impl Options {
                     options.display_parser = true;
                 }
 
-                "help" | "--help" | "-h" => {
-                    return Ok(Command::Help);
+                "help"
+                | "--help"
+                | "-h" => {
+                    return Ok(
+                        Command::Help
+                    );
                 }
 
                 _ if arg.starts_with('-') => {
-                    return Err(format!("unknown option: {arg}"));
+                    return Err(
+                        format!(
+                            "unknown option: {arg}"
+                        )
+                    );
                 }
 
                 _ => {
                     if options.file.is_some() {
                         return Err(
-                            "only one input file is allowed".into()
+                            "only one input file is allowed"
+                                .into()
                         );
                     }
 
-                    options.file = Some(arg);
+                    options.file =
+                        Some(arg);
                 }
             }
         }
 
-        Ok(Command::Run(options))
+        Ok(
+            Command::Run(
+                options
+            )
+        )
     }
 
     fn print_help() {
@@ -157,32 +185,48 @@ fn main() {
         }
 
         Command::Run(options) => {
-            let mut interpreter = Interpreter::new();
-
-            match options.file {
-                Some(path) => {
-                    if let Err(error) = run_file(
-                        &mut interpreter,
-                        &path,
-                        options.display_lexer,
-                        options.display_parser,
-                    ) {
-                        eprintln!("{error}");
-                        std::process::exit(1);
-                    }
+            match options.vm {
+                true => {
+                    run_vm(
+                        options
+                    );
                 }
 
-                None => {
-                    println!("novum v{VERSION}\n");
+                false => {
+                    let mut interpreter =
+                        Interpreter::new();
 
-                    repl(
-                        &mut interpreter,
-                        options.display_lexer,
-                        options.display_parser,
-                    );
+                    match options.file {
+                        Some(path) => {
+                            if let Err(error) =
+                                run_file(
+                                    &mut interpreter,
+                                    &path,
+                                    options.display_lexer,
+                                    options.display_parser,
+                                )
+                            {
+                                eprintln!("{error}");
+                                std::process::exit(1);
+                            }
+                        }
+
+                        None => {
+                            println!(
+                                "novum v{VERSION}\n"
+                            );
+
+                            repl(
+                                &mut interpreter,
+                                options.display_lexer,
+                                options.display_parser,
+                            );
+                        }
+                    }
                 }
             }
         }
+
     }
 }
 
@@ -331,6 +375,88 @@ fn run(
 
         Err(error) => {
             error.display(source);
+        }
+    }
+}
+
+fn run_vm(
+    options: Options,
+) {
+    let Some(path) =
+        options.file
+    else {
+        eprintln!(
+            "--vm requires an input file"
+        );
+
+        std::process::exit(1);
+    };
+
+    let source =
+        match fs::read_to_string(&path) {
+            Ok(source) =>
+                source,
+
+            Err(error) => {
+                eprintln!(
+                    "failed to read '{}': {}",
+                    path,
+                    error
+                );
+
+                std::process::exit(1);
+            }
+        };
+
+    let tokens =
+        match Lexer::new(&source).lex() {
+            Ok(tokens) =>
+                tokens,
+
+            Err(error) => {
+                error.display(&source);
+                std::process::exit(1);
+            }
+        };
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        match parser.parse() {
+            Ok(program) =>
+                program,
+
+            Err(error) => {
+                error.display(&source);
+                std::process::exit(1);
+            }
+        };
+
+    let chunk =
+        match novum::vm::Compiler::new()
+            .compile(&program)
+        {
+            Ok(chunk) =>
+                Rc::new(chunk),
+
+            Err(error) => {
+                error.display(&source);
+                std::process::exit(1);
+            }
+        };
+
+    let mut vm =
+        novum::vm::Vm::new();
+
+    match vm.run(chunk) {
+        Ok(value) => {
+            println!("{value}");
+        }
+
+        Err(error) => {
+            error.display(&source);
+            std::process::exit(1);
         }
     }
 }

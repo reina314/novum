@@ -4,6 +4,7 @@
 //! source -> lexer -> parser -> AST -> interpreter.
 
 pub mod error;
+pub mod vm;
 pub mod interpreter;
 pub mod runtime;
 pub mod stdlib;
