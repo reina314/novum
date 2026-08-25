@@ -3,8 +3,7 @@ use crate::{
         Error,
         ErrorKind,
         Result,
-    },
-    runtime::Value,
+    }, interpreter, runtime::{Value}, syntax::BinOp,
 };
 
 use super::{
@@ -18,6 +17,7 @@ use std::rc::Rc;
 pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
+    repl_locals: Vec<Value>,
 }
 
 impl Vm {
@@ -25,6 +25,7 @@ impl Vm {
         Self {
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(32),
+            repl_locals: Vec::with_capacity(64),
         }
     }
 
@@ -87,6 +88,39 @@ impl Vm {
         );
 
         self.execute()
+    }
+
+    pub fn run_repl(
+        &mut self,
+        chunk: Rc<Chunk>,
+    ) -> Result<Value> {
+        self.stack.clear();
+        self.frames.clear();
+
+        let locals =
+            std::mem::take(
+                &mut self.repl_locals
+            );
+
+        self.frames.push(
+            CallFrame {
+                chunk,
+                ip: 0,
+                locals,
+            }
+        );
+
+        let result =
+            self.execute();
+
+        if let Some(frame) =
+            self.frames.pop()
+        {
+            self.repl_locals =
+                frame.locals;
+        }
+
+        result
     }
 
     fn execute(
@@ -181,35 +215,31 @@ impl Vm {
                     self.push(value);
                 }
 
-                OpCode::Add => {
-                    self.binary_numeric(
-                        OpCode::Add
-                    )?;
-                }
+                OpCode::Add
+                    | OpCode::Sub
+                    | OpCode::Mul
+                    | OpCode::Div
+                    | OpCode::Mod
+                    | OpCode::Pow
+                    | OpCode::MatMul
+                    | OpCode::Eq
+                    | OpCode::Neq
+                    | OpCode::Lt
+                    | OpCode::Leq
+                    | OpCode::Gt
+                    | OpCode::Geq => {
+                        let binop =
+                            Self::opcode_to_binop(
+                                opcode
+                            )
+                            .expect(
+                                "numeric opcode must map to BinOp"
+                            );
 
-                OpCode::Sub => {
-                    self.binary_numeric(
-                        OpCode::Sub
-                    )?;
-                }
-
-                OpCode::Mul => {
-                    self.binary_numeric(
-                        OpCode::Mul
-                    )?;
-                }
-
-                OpCode::Div => {
-                    self.binary_numeric(
-                        OpCode::Div
-                    )?;
-                }
-
-                OpCode::Mod => {
-                    self.binary_numeric(
-                        OpCode::Mod
-                    )?;
-                }
+                        self.binary_op(
+                            binop
+                        )?;
+                    }
 
                 OpCode::Neg => {
                     let value =
@@ -430,282 +460,74 @@ impl Vm {
         }
     }
 
-    fn binary_numeric(
-        &mut self,
-        op: OpCode,
-    ) -> Result<()> {
-        let right =
-            self.pop()?;
+    #[inline]
+    fn opcode_to_binop(
+        opcode: OpCode,
+    ) -> Option<BinOp> {
+        match opcode {
+            OpCode::Add =>
+                Some(BinOp::Add),
 
-        let left =
-            self.pop()?;
+            OpCode::Sub =>
+                Some(BinOp::Sub),
 
-        let result =
-            match (left, right) {
-                (
-                    Value::Int(a),
-                    Value::Int(b),
-                ) => {
-                    match op {
-                        OpCode::Add =>
-                            a.checked_add(b)
-                                .map(Value::Int)
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "integer overflow",
-                                        None,
-                                    )
-                                })?,
+            OpCode::Mul =>
+                Some(BinOp::Mul),
 
-                        OpCode::Sub =>
-                            a.checked_sub(b)
-                                .map(Value::Int)
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "integer overflow",
-                                        None,
-                                    )
-                                })?,
+            OpCode::Div =>
+                Some(BinOp::Div),
 
-                        OpCode::Mul =>
-                            a.checked_mul(b)
-                                .map(Value::Int)
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "integer overflow",
-                                        None,
-                                    )
-                                })?,
+            OpCode::Mod =>
+                Some(BinOp::Mod),
 
-                        OpCode::Mod => {
-                            if b == 0 {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "division by zero",
-                                        None,
-                                    )
-                                );
-                            }
+            OpCode::Pow =>
+                Some(BinOp::Pow),
 
-                            Value::Int(
-                                a % b
-                            )
-                        }
+            OpCode::Eq =>
+                Some(BinOp::Eq),
 
-                        OpCode::Div => {
-                            if b == 0 {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "division by zero",
-                                        None,
-                                    )
-                                );
-                            }
+            OpCode::Neq =>
+                Some(BinOp::Neq),
 
-                            Value::Float(
-                                a as f64 / b as f64
-                            )
-                        }
+            OpCode::Lt =>
+                Some(BinOp::Lt),
 
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "invalid numeric opcode",
-                                    None,
-                                )
-                            );
-                        }
-                    }
-                }
+            OpCode::Leq =>
+                Some(BinOp::Leq),
 
-                (
-                    Value::Float(a),
-                    Value::Float(b),
-                ) => {
-                    match op {
-                        OpCode::Add =>
-                            Value::Float(a + b),
+            OpCode::Gt =>
+                Some(BinOp::Gt),
 
-                        OpCode::Sub =>
-                            Value::Float(a - b),
+            OpCode::Geq =>
+                Some(BinOp::Geq),
 
-                        OpCode::Mul =>
-                            Value::Float(a * b),
-
-                        OpCode::Div =>
-                            Value::Float(a / b),
-
-                        OpCode::Mod =>
-                            Value::Float(a % b),
-
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "invalid numeric opcode",
-                                    None,
-                                )
-                            );
-                        }
-                    }
-                }
-
-                (
-                    Value::Int(a),
-                    Value::Float(b),
-                ) => {
-                    let a =
-                        a as f64;
-
-                    match op {
-                        OpCode::Add =>
-                            Value::Float(a + b),
-
-                        OpCode::Sub =>
-                            Value::Float(a - b),
-
-                        OpCode::Mul =>
-                            Value::Float(a * b),
-
-                        OpCode::Div =>
-                            Value::Float(a / b),
-
-                        OpCode::Mod =>
-                            Value::Float(a % b),
-
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "invalid numeric opcode",
-                                    None,
-                                )
-                            );
-                        }
-                    }
-                }
-
-                (
-                    Value::Float(a),
-                    Value::Int(b),
-                ) => {
-                    let b =
-                        b as f64;
-
-                    match op {
-                        OpCode::Add =>
-                            Value::Float(a + b),
-
-                        OpCode::Sub =>
-                            Value::Float(a - b),
-
-                        OpCode::Mul =>
-                            Value::Float(a * b),
-
-                        OpCode::Div =>
-                            Value::Float(a / b),
-
-                        OpCode::Mod =>
-                            Value::Float(a % b),
-
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "invalid numeric opcode",
-                                    None,
-                                )
-                            );
-                        }
-                    }
-                }
-
-                (a, b) => {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            format!(
-                                "numeric operation not defined between {} and {}",
-                                a.type_name(),
-                                b.type_name()
-                            ),
-                            None,
-                        )
-                    );
-                }
-            };
-
-        self.push(result);
-
-        Ok(())
+            _ =>
+                None,
+        }
     }
 
-    fn binary_compare<F>(
+    fn binary_op(
         &mut self,
-        op: F,
-    ) -> Result<()>
-    where
-        F: FnOnce(f64, f64) -> bool,
-    {
-        let right =
-            self.pop()?;
+        op: BinOp,
+    ) -> Result<()> {
+        let right = self.pop()?;
+        let left = self.pop()?;
 
-        let left =
-            self.pop()?;
-
-        let left =
-            match left {
-                Value::Int(value) =>
-                    value as f64,
-
-                Value::Float(value) =>
-                    value,
-
-                other =>
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            format!(
-                                "expected numeric value, got {}",
-                                other.type_name()
-                            ),
-                            None,
-                        )
-                    ),
-            };
-
-        let right =
-            match right {
-                Value::Int(value) =>
-                    value as f64,
-
-                Value::Float(value) =>
-                    value,
-
-                other =>
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            format!(
-                                "expected numeric value, got {}",
-                                other.type_name()
-                            ),
-                            None,
-                        )
-                    ),
-            };
-
-        self.push(
-            Value::Bool(
-                op(left, right)
+        let result =
+            interpreter::apply_binop(
+                op,
+                left,
+                right,
             )
-        );
+            .map_err(|message| {
+                Error::new(
+                    ErrorKind::Runtime,
+                    message,
+                    None,
+                )
+            })?;
+
+        self.push(result);
 
         Ok(())
     }

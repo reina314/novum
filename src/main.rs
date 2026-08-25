@@ -1,6 +1,7 @@
 use novum::{
     runtime::{ControlFlow, Value},
     syntax::TokenKind,
+    vm::{Vm, Compiler},
     Interpreter, Lexer, Parser,
 };
 
@@ -142,6 +143,8 @@ OPTIONS:
     -V, --version    Show version information
 
 REPL:
+    novum            Start the interpreter REPL
+    novum --vm       Start the VM REPL
     help             Show REPL commands
     quit, exit       Exit the REPL
 
@@ -187,9 +190,18 @@ fn main() {
         Command::Run(options) => {
             match options.vm {
                 true => {
-                    run_vm(
-                        options
-                    );
+                    match options.file {
+                        Some(_) => {
+                            run_vm(options);
+                        }
+
+                        None => {
+                            vm_repl(
+                                options.display_lexer,
+                                options.display_parser,
+                            );
+                        }
+                    }
                 }
 
                 false => {
@@ -1288,6 +1300,249 @@ fn repl(
                 );
                 break;
             }
+        }
+    }
+}
+
+fn vm_repl(
+    display_lexer: bool,
+    display_parser: bool,
+) {
+    let history =
+        match FileBackedHistory::with_file(
+            1000,
+            history_path(),
+        ) {
+            Ok(history) => {
+                Box::new(history)
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "warning: failed to initialize history: {error}"
+                );
+
+                Box::new(
+                    FileBackedHistory::default()
+                )
+            }
+        };
+
+    let keybindings =
+        configure_keybindings();
+
+    let edit_mode =
+        Box::new(
+            Emacs::new(
+                keybindings
+            )
+        );
+
+    let mut editor =
+        Reedline::create()
+            .with_history(history)
+            .with_edit_mode(edit_mode)
+            .with_validator(
+                Box::new(
+                    NovumValidator
+                )
+            )
+            .with_highlighter(
+                Box::new(
+                    NovumHighlighter
+                )
+            )
+            .use_kitty_keyboard_enhancement(
+                true
+            )
+            .with_ansi_colors(
+                true
+            );
+
+    let mut compiler =
+        Compiler::new();
+
+    let mut vm =
+        Vm::new();
+
+    let mut line_index =
+        0usize;
+
+    loop {
+        println!();
+
+        let prompt =
+            NovumPrompt::new(
+                line_index
+            );
+
+        match editor.read_line(
+            &prompt
+        ) {
+            Ok(
+                Signal::Success(line)
+            ) => {
+                let command =
+                    line.trim();
+
+                if command.is_empty() {
+                    continue;
+                }
+
+                match command {
+                    "quit"
+                    | "exit" => {
+                        println!(
+                            "\nBye!"
+                        );
+
+                        break;
+                    }
+
+                    "help" => {
+                        print_repl_help();
+                        continue;
+                    }
+
+                    _ => {}
+                }
+
+                run_vm_repl_line(
+                    &mut compiler,
+                    &mut vm,
+                    &line,
+                    display_lexer,
+                    display_parser,
+                    line_index,
+                );
+
+                line_index += 1;
+            }
+
+            Ok(
+                Signal::CtrlC
+            ) => {
+                println!("^C");
+            }
+
+            Ok(
+                Signal::CtrlD
+            ) => {
+                println!(
+                    "\nBye!"
+                );
+
+                break;
+            }
+
+            Ok(signal) => {
+                eprintln!(
+                    "REPL event: {signal:?}"
+                );
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "REPL error: {error}"
+                );
+
+                break;
+            }
+        }
+    }
+}
+
+fn run_vm_repl_line(
+    compiler: &mut Compiler,
+    vm: &mut Vm,
+    source: &str,
+    display_lexer: bool,
+    display_parser: bool,
+    line_index: usize,
+) {
+    let mut lexer =
+        Lexer::new(source);
+
+    let tokens =
+        match lexer.lex() {
+            Ok(tokens) =>
+                tokens,
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    if display_lexer {
+        println!(
+            "\nTokens:\n{tokens:#?}"
+        );
+    }
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        match parser.parse() {
+            Ok(program) =>
+                program,
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    if display_parser {
+        println!(
+            "\nAST:\n{program:#?}"
+        );
+    }
+
+    let chunk =
+        match compiler
+            .compile_program(
+                &program
+            )
+        {
+            Ok(chunk) =>
+                Rc::new(chunk),
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    match vm.run_repl(
+        chunk
+    ) {
+        Ok(value)
+            if value != Value::Unit =>
+        {
+            print_result(
+                value,
+                Some(line_index),
+                true,
+            );
+        }
+
+        Ok(_) => {}
+
+        Err(error) => {
+            error.display(
+                source
+            );
         }
     }
 }

@@ -25,9 +25,15 @@ use std::{
     collections::HashMap
 };
 
+struct LoopContext {
+    continue_target: usize,
+    break_jumps: Vec<usize>,
+}
+
 pub struct Compiler {
     chunk: Chunk,
     locals: HashMap<String, u16>,
+    loops: Vec<LoopContext>,
 }
 
 impl Compiler {
@@ -35,6 +41,7 @@ impl Compiler {
         Self {
             chunk: Chunk::default(),
             locals: HashMap::new(),
+            loops: Vec::new(),
         }
     }
 
@@ -416,8 +423,8 @@ impl Compiler {
             }
 
             ExprKind::If(
-                cond, 
-                then_branch, 
+                cond,
+                then_branch,
                 else_branch,
             ) => {
                 self.compile_expr(
@@ -448,12 +455,18 @@ impl Compiler {
                     else_start as u32,
                 );
 
-                if let Some(else_branch) =
-                    else_branch
-                {
-                    self.compile_expr(
-                        else_branch
-                    )?;
+                match else_branch {
+                    Some(else_branch) => {
+                        self.compile_expr(
+                            else_branch
+                        )?;
+                    }
+
+                    None => {
+                        self.chunk.emit(
+                            OpCode::Unit
+                        );
+                    }
                 }
 
                 let end =
@@ -466,11 +479,20 @@ impl Compiler {
             }
 
             ExprKind::While(
-                cond, 
+                cond,
                 body,
             ) => {
                 let loop_start =
                     self.chunk.code.len();
+
+                self.loops.push(
+                    LoopContext {
+                        continue_target:
+                            loop_start,
+                        break_jumps:
+                            Vec::new(),
+                    }
+                );
 
                 self.compile_expr(
                     cond
@@ -486,6 +508,10 @@ impl Compiler {
                     body
                 )?;
 
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
                 self.chunk.emit_operand(
                     OpCode::Jump,
                     loop_start as u32,
@@ -497,6 +523,69 @@ impl Compiler {
                 self.chunk.patch_operand(
                     exit,
                     loop_end as u32,
+                );
+
+                let context =
+                    self.loops
+                        .pop()
+                        .unwrap();
+
+                for jump in
+                    context.break_jumps
+                {
+                    self.chunk.patch_operand(
+                        jump,
+                        loop_end as u32,
+                    );
+                }
+
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+            }
+
+            ExprKind::Break => {
+                let Some(loop_context) =
+                    self.loops.last_mut()
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Control,
+                            "break outside loop",
+                            None,
+                        )
+                    );
+                };
+
+                let jump =
+                    self.chunk.emit_operand(
+                        OpCode::Jump,
+                        0,
+                    );
+
+                loop_context
+                    .break_jumps
+                    .push(jump);
+            }
+
+            ExprKind::Continue => {
+                let Some(loop_context) =
+                    self.loops.last()
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Control,
+                            "continue outside loop",
+                            None,
+                        )
+                    );
+                };
+
+                self.chunk.emit_operand(
+                    OpCode::Jump,
+                    loop_context
+                        .continue_target
+                        as u32,
                 );
             }
 
@@ -632,6 +721,12 @@ impl Compiler {
 
                 BinOp::Mod =>
                     OpCode::Mod,
+
+                BinOp::Pow =>
+                    OpCode::Pow,
+
+                BinOp::MatMul =>
+                    OpCode::MatMul,
 
                 BinOp::Eq =>
                     OpCode::Eq,

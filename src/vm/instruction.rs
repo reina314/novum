@@ -16,6 +16,7 @@ pub enum OpCode {
     Div,
     Mod,
     Pow,
+    MatMul,
 
     Eq,
     Neq,
