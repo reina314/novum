@@ -4,7 +4,7 @@ let xs =
         .filter(|x| x % 3 == 0)
         .collect()
 
-//________________________________________________________
-//Executed in  656.90 millis    fish           external
-//   usr time  643.38 millis    0.26 millis  643.12 millis
-//   sys time   12.09 millis    1.26 millis   10.84 millis
+// ________________________________________________________
+// Executed in  616.09 millis    fish           external
+//    usr time  601.78 millis    0.23 millis  601.55 millis
+//    sys time   12.23 millis    1.45 millis   10.78 millis

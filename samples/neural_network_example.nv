@@ -42,7 +42,7 @@ print("\nTraining...")
 model.fit(
     X,
     y,
-    epochs = 5000,
+    epochs = 2000,
     learning_rate = 0.5,
 )
 
@@ -88,34 +88,38 @@ print(
 // == XOR neural network ==
 //
 // Training...
-// Epoch 1  loss = 0.71173148
-// Epoch 101  loss = 0.4290314
-// Epoch 201  loss = 0.10011787
-// Epoch 301  loss = 0.03572543
-// Epoch 401  loss = 0.01981651
-// Epoch 501  loss = 0.01324365
-// Epoch 601  loss = 0.00974872
-// Epoch 701  loss = 0.00761286
-// Epoch 801  loss = 0.00618809
-// Epoch 901  loss = 0.00517845
-// Epoch 1001  loss = 0.00443043
-// Epoch 1101  loss = 0.00385695
-// Epoch 1201  loss = 0.00340512
-// Epoch 1301  loss = 0.00304115
-// Epoch 1401  loss = 0.00274246
-// Converged at epoch 1499
+// Epoch 1  loss = 0.68833617
+// Epoch 101  loss = 0.0977914
+// Epoch 201  loss = 0.03406796
+// Epoch 301  loss = 0.02004385
+// Epoch 401  loss = 0.01411092
+// Epoch 501  loss = 0.01086317
+// Epoch 601  loss = 0.00882118
+// Epoch 701  loss = 0.00742104
+// Epoch 801  loss = 0.00640225
+// Epoch 901  loss = 0.00562815
+// Epoch 1001  loss = 0.00502029
+// Epoch 1101  loss = 0.00453045
+// Epoch 1201  loss = 0.00412738
+// Epoch 1301  loss = 0.00378996
+// Epoch 1401  loss = 0.00350338
+// Epoch 1501  loss = 0.00325699
+// Epoch 1601  loss = 0.00304289
+// Epoch 1701  loss = 0.00285515
+// Epoch 1801  loss = 0.00268918
+// Epoch 1901  loss = 0.00254141
 //
 // Predictions:
-// [0.0, 0.0] -> 0   probability = 0.00256213   answer = 0.0
-// [0.0, 1.0] -> 1   probability = 0.99846975   answer = 1.0
-// [1.0, 0.0] -> 1   probability = 0.99732281   answer = 1.0
-// [1.0, 1.0] -> 0   probability = 0.00320035   answer = 0.0
+// [0.0, 0.0] -> 0   probability = 0.00042035   answer = 0.0
+// [0.0, 1.0] -> 1   probability = 0.99727431   answer = 1.0
+// [1.0, 0.0] -> 1   probability = 0.99731503   answer = 1.0
+// [1.0, 1.0] -> 0   probability = 0.00379038   answer = 0.0
 //
 // Accuracy: 1.0
 
 
-// Result of 'time' Command
+// Running Time
 // ________________________________________________________
-// Executed in    1.03 secs    fish           external
-//    usr time    1.02 secs    0.32 millis    1.02 secs
-//    sys time    0.01 secs    1.71 millis    0.01 secs
+// Executed in    1.16 secs    fish           external
+//    usr time    1.14 secs    0.28 millis    1.14 secs
+//    sys time    0.01 secs    1.62 millis    0.01 secs

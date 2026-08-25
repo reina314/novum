@@ -307,14 +307,14 @@ pub class MLP {
                 // Convergence
                 // --------------------------------------------
 
-                if total_loss < 0.01 {
-                    print(
-                        "Converged at epoch "
-                        + (epoch + 1)
-                    )
-
-                    break
-                }
+                // if total_loss < 0.01 {
+                //     print(
+                //         "Converged at epoch "
+                //         + (epoch + 1)
+                //     )
+                //
+                //     break
+                // }
             }
         },
 
