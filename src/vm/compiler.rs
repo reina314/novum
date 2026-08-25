@@ -29,6 +29,13 @@ use std::{
     collections::HashMap,
 };
 
+
+#[derive(Clone, Copy)]
+enum Binding {
+    Local(u16),
+    Upvalue(u16),
+}
+
 enum LValue {
     Local(u16),
     Upvalue(u16),
@@ -403,13 +410,162 @@ impl Compiler {
             parent;
     }
 
-    fn add_upvalue(
-        &mut self,
+    fn find_binding(
+        scope: ScopeRef,
+        name: &str,
+    ) -> Option<Binding> {
+        let mut current =
+            Some(scope);
+
+        while let Some(scope) =
+            current
+        {
+            let borrowed =
+                scope.borrow();
+
+            if let Some(slot) =
+                borrowed.locals
+                    .get(name)
+                    .copied()
+            {
+                return Some(
+                    Binding::Local(slot)
+                );
+            }
+
+            if let Some(slot) =
+                borrowed.upvalues
+                    .get(name)
+                    .copied()
+            {
+                return Some(
+                    Binding::Upvalue(slot)
+                );
+            }
+
+            let parent =
+                borrowed.parent.clone();
+
+            let boundary =
+                borrowed.function_boundary;
+
+            drop(borrowed);
+
+            if boundary {
+                return None;
+            }
+
+            current =
+                parent;
+        }
+
+        None
+    }
+
+    fn find_function_scope(
+        scope: ScopeRef,
+    ) -> Option<ScopeRef> {
+        let mut current =
+            Some(scope);
+
+        while let Some(scope) =
+            current
+        {
+            if scope
+                .borrow()
+                .function_boundary
+            {
+                return Some(scope);
+            }
+
+            current =
+                scope
+                    .borrow()
+                    .parent
+                    .clone();
+        }
+
+        None
+    }
+
+    fn ensure_capture(
+        function_scope: ScopeRef,
+        name: &str,
+    ) -> Option<u16> {
+        if let Some(index) =
+            function_scope
+                .borrow()
+                .upvalues
+                .get(name)
+                .copied()
+        {
+            return Some(index);
+        }
+
+        let parent =
+            function_scope
+                .borrow()
+                .parent
+                .clone()?;
+
+        // A binding in the lexical environment of the
+        // parent function can be captured directly.
+        if let Some(binding) =
+            Self::find_binding(
+                parent.clone(),
+                name,
+            )
+        {
+            let spec =
+                match binding {
+                    Binding::Local(slot) =>
+                        UpvalueSpec::Local(slot),
+
+                    Binding::Upvalue(slot) =>
+                        UpvalueSpec::Parent(slot),
+                };
+
+            return Some(
+                Self::register_upvalue(
+                    &function_scope,
+                    name,
+                    spec,
+                )
+            );
+        }
+
+        // The immediate parent function does not know the
+        // variable yet. Find its function scope and make
+        // that function capture it first.
+        let parent_function =
+            Self::find_function_scope(
+                parent
+            )?;
+
+        let parent_index =
+            Self::ensure_capture(
+                parent_function,
+                name,
+            )?;
+
+        Some(
+            Self::register_upvalue(
+                &function_scope,
+                name,
+                UpvalueSpec::Parent(
+                    parent_index
+                ),
+            )
+        )
+    }
+
+    fn register_upvalue(
+        scope: &ScopeRef,
         name: &str,
         spec: UpvalueSpec,
     ) -> u16 {
         let mut scope =
-            self.scope.borrow_mut();
+            scope.borrow_mut();
 
         if let Some(index) =
             scope.upvalues.get(name)
@@ -437,69 +593,13 @@ impl Compiler {
         &mut self,
         name: &str,
     ) -> Option<u16> {
-        let parent =
-            self.scope
-                .borrow()
-                .parent
-                .clone()?;
+        let function_scope =
+            Self::find_function_scope(
+                self.scope.clone()
+            )?;
 
-        self.resolve_upvalue_from(
-            parent,
-            name,
-        )
-    }
-
-    fn resolve_upvalue_from(
-        &mut self,
-        scope: ScopeRef,
-        name: &str,
-    ) -> Option<u16> {
-        // Search every lexical scope inside the same
-        // function first.
-
-        if let Some(slot) =
-            scope.borrow()
-                .locals
-                .get(name)
-                .copied()
-        {
-            return Some(
-                self.add_upvalue(
-                    name,
-                    UpvalueSpec::Local(slot),
-                )
-            );
-        }
-
-        if let Some(slot) =
-            scope.borrow()
-                .upvalues
-                .get(name)
-                .copied()
-        {
-            return Some(
-                self.add_upvalue(
-                    name,
-                    UpvalueSpec::Parent(slot),
-                )
-            );
-        }
-
-        let parent =
-            scope
-                .borrow()
-                .parent
-                .clone()?;
-
-        if scope
-            .borrow()
-            .function_boundary
-        {
-            return None;
-        }
-
-        self.resolve_upvalue_from(
-            parent,
+        Self::ensure_capture(
+            function_scope,
             name,
         )
     }
