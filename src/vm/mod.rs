@@ -1,9 +1,8 @@
 pub mod chunk;
 pub mod compiler;
+pub mod function;
 pub mod instruction;
 pub mod vm;
-
-pub mod function;
 
 pub use chunk::{
     Chunk,
@@ -14,16 +13,20 @@ pub use compiler::{
     Compiler,
 };
 
+pub use function::{
+    CallFrame,
+    CellRef,
+    Closure,
+    ClosureRef,
+    FunctionProto,
+    FunctionRef,
+    UpvalueSpec,
+};
+
 pub use instruction::{
     OpCode,
 };
 
 pub use vm::{
     Vm,
-};
-
-pub use function::{
-    CallFrame,
-    VmFunction,
-    VmFunctionRef,
 };

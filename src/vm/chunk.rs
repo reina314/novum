@@ -30,10 +30,11 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Chunk {
     pub code: Vec<Instruction>,
     pub constants: Vec<Value>,
+    pub local_count: usize,
 }
 
 impl Chunk {
@@ -94,5 +95,15 @@ impl Chunk {
     ) {
         self.code[index].operand =
             operand;
+    }
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Self {
+            code: Vec::new(),
+            constants: Vec::new(),
+            local_count: 0,
+        }
     }
 }

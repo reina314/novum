@@ -10,14 +10,25 @@ use super::{
     Chunk,
     OpCode,
     CallFrame,
+    FunctionProto,
+    FunctionRef,
+    Closure,
+    ClosureRef,
+    Instruction,
+    UpvalueSpec,
+    CellRef,
 };
 
-use std::rc::Rc;
+use std::{
+    rc::Rc,
+    cell::RefCell,
+};
 
 pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
     repl_locals: Vec<Value>,
+    repl_cells: Vec<Option<CellRef>>,
 }
 
 impl Vm {
@@ -26,6 +37,7 @@ impl Vm {
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(32),
             repl_locals: Vec::with_capacity(64),
+            repl_cells: Vec::with_capacity(64),
         }
     }
 
@@ -79,11 +91,29 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
 
+        let function =
+            Rc::new(
+                FunctionProto {
+                    arity: 0,
+                    chunk: chunk.clone(),
+                    upvalue_specs: Vec::new(),
+                }
+            );
+
+        let closure =
+            Rc::new(
+                Closure {
+                    function,
+                    upvalues: Vec::new(),
+                }
+            );
+
         self.frames.push(
             CallFrame {
-                chunk,
+                closure,
                 ip: 0,
                 locals: Vec::new(),
+                cells: Vec::new(),
             }
         );
 
@@ -97,27 +127,85 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
 
+        let function =
+            Rc::new(
+                FunctionProto {
+                    arity: 0,
+                    chunk: chunk.clone(),
+                    upvalue_specs: Vec::new(),
+                }
+            );
+
+        let closure =
+            Rc::new(
+                Closure {
+                    function,
+                    upvalues: Vec::new(),
+                }
+            );
+
         let locals =
             std::mem::take(
                 &mut self.repl_locals
             );
 
+        let cells =
+            std::mem::take(
+                &mut self.repl_cells
+            );
+
+        let local_count =
+            chunk.local_count;
+
+        let mut locals =
+            locals;
+
+        let mut cells =
+            cells;
+
+        if locals.len() <
+            local_count
+        {
+            locals.resize(
+                local_count,
+                Value::Unit,
+            );
+        }
+
+        if cells.len() <
+            local_count
+        {
+            cells.resize(
+                local_count,
+                None,
+            );
+        }
+
         self.frames.push(
             CallFrame {
-                chunk,
+                closure,
                 ip: 0,
                 locals,
+                cells,
             }
         );
 
         let result =
             self.execute();
 
-        if let Some(frame) =
-            self.frames.pop()
-        {
-            self.repl_locals =
-                frame.locals;
+        match self.frames.pop() {
+            Some(frame) => {
+                self.repl_locals =
+                    frame.locals;
+
+                self.repl_cells =
+                    frame.cells;
+            }
+
+            None => {
+                self.repl_locals.clear();
+                self.repl_cells.clear();
+            }
         }
 
         result
@@ -127,50 +215,21 @@ impl Vm {
         &mut self,
     ) -> Result<Value> {
         loop {
-            let (
-                opcode,
-                operand,
-            ) = {
-                let frame =
-                    self.frames
-                        .last()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM has no call frame",
-                                None,
-                            )
-                        })?;
+            let instruction =
+            self.fetch_instruction()?;
 
-                let instruction =
-                    frame
-                        .chunk
-                        .code
-                        .get(frame.ip)
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "instruction pointer out of bounds",
-                                None,
-                            )
-                        })?
-                        .clone();
+            let opcode =
+                instruction.opcode;
 
-                (
-                    instruction.opcode,
-                    instruction.operand,
-                )
-            };
-
-            self.current_frame_mut().ip += 1;
+            let operand =
+                instruction.operand;
 
             match opcode {
                 OpCode::Constant => {
-                    let value = {
-                        let frame =
-                            self.current_frame();
-
-                        frame
+                    let value =
+                        self.current_frame()
+                            .closure
+                            .function
                             .chunk
                             .constants
                             .get(
@@ -183,8 +242,7 @@ impl Vm {
                                     "constant index out of bounds",
                                     None,
                                 )
-                            })?
-                    };
+                            })?;
 
                     self.push(value);
                 }
@@ -302,30 +360,40 @@ impl Vm {
                 }
 
                 OpCode::LoadLocal => {
-                    let index =
+                    let slot =
                         operand as usize;
 
+                    let frame =
+                        self.current_frame();
+
                     let value =
-                        self.current_frame()
-                            .locals
-                            .get(index)
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    format!(
-                                        "local slot out of bounds: {}",
-                                        index
-                                    ),
-                                    None,
-                                )
-                            })?;
+                        if let Some(
+                            Some(cell)
+                        ) = frame.cells.get(slot)
+                        {
+                            cell.borrow().clone()
+                        } else {
+                            frame
+                                .locals
+                                .get(slot)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        format!(
+                                            "local slot out of bounds: {}",
+                                            slot
+                                        ),
+                                        None,
+                                    )
+                                })?
+                        };
 
                     self.push(value);
                 }
 
                 OpCode::StoreLocal => {
-                    let index =
+                    let slot =
                         operand as usize;
 
                     let value =
@@ -334,14 +402,76 @@ impl Vm {
                     let frame =
                         self.current_frame_mut();
 
-                    if index >= frame.locals.len() {
+                    if slot >= frame.locals.len() {
                         frame.locals.resize(
-                            index + 1,
+                            slot + 1,
                             Value::Unit,
                         );
                     }
 
-                    frame.locals[index] =
+                    if frame.cells.len() <= slot {
+                        frame.cells.resize(
+                            slot + 1,
+                            None,
+                        );
+                    }
+
+                    if let Some(cell) =
+                        frame.cells[slot].clone()
+                    {
+                        *cell.borrow_mut() =
+                            value.clone();
+                    }
+
+                    frame.locals[slot] =
+                        value;
+                }
+
+                OpCode::LoadUpvalue => {
+                    let index =
+                        operand as usize;
+
+                    let cell =
+                        self.current_frame()
+                            .closure
+                            .upvalues
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "upvalue slot out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    self.push(
+                        cell.borrow().clone()
+                    );
+                }
+
+                OpCode::StoreUpvalue => {
+                    let index =
+                        operand as usize;
+
+                    let value =
+                        self.pop()?;
+
+                    let cell =
+                        self.current_frame()
+                            .closure
+                            .upvalues
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "upvalue slot out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    *cell.borrow_mut() =
                         value;
                 }
 
@@ -363,26 +493,27 @@ impl Vm {
                                 )
                             })?;
 
-                    let function =
+                    let value =
                         self.stack[
                             function_index
                         ].clone();
 
-                    let Value::VmFunction(
-                        function
-                    ) = function
+                    let Value::Closure(
+                        closure
+                    ) = value
                     else {
                         return Err(
                             Error::new(
                                 ErrorKind::Type,
-                                "value is not a VM function",
+                                "value is not callable",
                                 None,
                             )
                         );
                     };
 
-                    if function.arity
-                        as usize
+                    if closure
+                        .function
+                        .arity as usize
                         != argc
                     {
                         return Err(
@@ -390,7 +521,7 @@ impl Vm {
                                 ErrorKind::Arity,
                                 format!(
                                     "function expects {} arguments, got {}",
-                                    function.arity,
+                                    closure.function.arity,
                                     argc
                                 ),
                                 None,
@@ -398,25 +529,87 @@ impl Vm {
                         );
                     }
 
-                    let args_start =
-                        function_index + 1;
-
                     let args =
                         self.stack[
-                            args_start..
-                        ].to_vec();
+                            function_index + 1..
+                        ]
+                        .to_vec();
 
                     self.stack.truncate(
                         function_index
                     );
 
+                    let local_count =
+                        closure
+                            .function
+                            .chunk
+                            .local_count;
+
                     self.frames.push(
                         CallFrame {
-                            chunk:
-                                function.chunk.clone(),
+                            closure,
                             ip: 0,
-                            locals: args,
+                            locals: {
+                                let mut locals =
+                                    args;
+
+                                locals.resize(
+                                    local_count,
+                                    Value::Unit,
+                                );
+
+                                locals
+                            },
+                            cells:
+                                vec![
+                                    None;
+                                    local_count
+                                ],
                         }
+                    );
+                }
+
+                OpCode::Closure => {
+                    let value =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .constants
+                            .get(
+                                operand as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "closure prototype constant out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let Value::FunctionProto(
+                        function
+                    ) = value
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "closure opcode requires a function prototype",
+                                None,
+                            )
+                        );
+                    };
+
+                    let closure =
+                        self.create_closure(
+                            function
+                        )?;
+
+                    self.push(
+                        Value::Closure(
+                            closure
+                        )
                     );
                 }
 
@@ -458,6 +651,34 @@ impl Vm {
                 }
             }
         }
+    }
+
+    #[inline]
+    fn fetch_instruction(
+        &mut self,
+    ) -> Result<Instruction> {
+        let frame =
+            self.current_frame_mut();
+
+        let instruction =
+            frame
+                .closure
+                .function
+                .chunk
+                .code
+                .get(frame.ip)
+                .cloned()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "instruction pointer out of bounds",
+                        None,
+                    )
+                })?;
+
+        frame.ip += 1;
+
+        Ok(instruction)
     }
 
     #[inline]
@@ -530,6 +751,112 @@ impl Vm {
         self.push(result);
 
         Ok(())
+    }
+
+    fn capture_local(
+        &mut self,
+        slot: usize,
+    ) -> Result<CellRef> {
+        let frame =
+            self.current_frame_mut();
+
+        if slot >= frame.locals.len() {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    format!(
+                        "capture local slot out of bounds: {}",
+                        slot
+                    ),
+                    None,
+                )
+            );
+        }
+
+        if frame.cells.len() <= slot {
+            frame.cells.resize(
+                slot + 1,
+                None,
+            );
+        }
+
+        if let Some(cell) =
+            frame.cells[slot].clone()
+        {
+            return Ok(cell);
+        }
+
+        let cell =
+            Rc::new(
+                RefCell::new(
+                    frame.locals[slot]
+                        .clone()
+                )
+            );
+
+        frame.cells[slot] =
+            Some(
+                cell.clone()
+            );
+
+        Ok(cell)
+    }
+
+    fn create_closure(
+        &mut self,
+        function: FunctionRef,
+    ) -> Result<ClosureRef> {
+        let mut upvalues =
+            Vec::with_capacity(
+                function.upvalue_specs.len()
+            );
+
+        for spec in
+            &function.upvalue_specs
+        {
+            let cell =
+                match *spec {
+                    UpvalueSpec::Local(
+                        slot
+                    ) => {
+                        self.capture_local(
+                            slot as usize
+                        )?
+                    }
+
+                    UpvalueSpec::Parent(
+                        index
+                    ) => {
+                        self.current_frame()
+                            .closure
+                            .upvalues
+                            .get(
+                                index as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "parent upvalue out of bounds",
+                                    None,
+                                )
+                            })?
+                    }
+                };
+
+            upvalues.push(
+                cell
+            );
+        }
+
+        Ok(
+            Rc::new(
+                Closure {
+                    function,
+                    upvalues,
+                }
+            )
+        )
     }
 
     #[inline]

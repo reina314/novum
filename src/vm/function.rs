@@ -1,19 +1,39 @@
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    rc::Rc,
+};
 
-use super::chunk::Chunk;
 use crate::runtime::Value;
 
-pub type VmFunctionRef = Rc<VmFunction>;
+use super::chunk::Chunk;
 
-#[derive(Debug, Clone)]
-pub struct CallFrame {
-    pub chunk: Rc<Chunk>,
-    pub ip: usize,
-    pub locals: Vec<Value>,
+pub type CellRef = Rc<RefCell<Value>>;
+pub type FunctionRef = Rc<FunctionProto>;
+pub type ClosureRef = Rc<Closure>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum UpvalueSpec {
+    Local(u16),
+    Parent(u16),
 }
 
 #[derive(Debug, Clone)]
-pub struct VmFunction {
+pub struct FunctionProto {
     pub arity: u16,
     pub chunk: Rc<Chunk>,
+    pub upvalue_specs: Vec<UpvalueSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub function: FunctionRef,
+    pub upvalues: Vec<CellRef>,
+}
+
+#[derive(Debug)]
+pub struct CallFrame {
+    pub closure: ClosureRef,
+    pub ip: usize,
+    pub locals: Vec<Value>,
+    pub cells: Vec<Option<CellRef>>,
 }

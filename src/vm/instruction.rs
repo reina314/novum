@@ -10,6 +10,11 @@ pub enum OpCode {
     LoadLocal,
     StoreLocal,
 
+    LoadUpvalue,
+    StoreUpvalue,
+
+    Closure,
+
     Add,
     Sub,
     Mul,
@@ -32,7 +37,6 @@ pub enum OpCode {
     JumpIfFalse,
 
     Call,
-
     Return,
 
     Halt,

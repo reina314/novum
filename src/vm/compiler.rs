@@ -17,7 +17,8 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
-    VmFunction,
+    UpvalueSpec,
+    FunctionProto,
 };
 
 use std::{
@@ -30,19 +31,86 @@ struct LoopContext {
     break_jumps: Vec<usize>,
 }
 
+#[derive(Clone)]
+struct CompilerParent {
+    locals: HashMap<String, u16>,
+    upvalues: HashMap<String, u16>,
+}
+
 pub struct Compiler {
     chunk: Chunk,
     locals: HashMap<String, u16>,
+    upvalues: HashMap<String, u16>,
+    upvalue_specs: Vec<UpvalueSpec>,
     loops: Vec<LoopContext>,
+    parent: Option<CompilerParent>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
-            chunk: Chunk::default(),
-            locals: HashMap::new(),
-            loops: Vec::new(),
+            chunk:
+                Chunk::default(),
+
+            locals:
+                HashMap::new(),
+
+            upvalues:
+                HashMap::new(),
+
+            upvalue_specs:
+                Vec::new(),
+
+            loops:
+                Vec::new(),
+
+            parent:
+                None,
         }
+    }
+
+    fn new_function(
+        parent: &Compiler,
+        params: &[Pattern],
+    ) -> Result<Self> {
+        let mut compiler =
+            Self::new();
+
+        compiler.parent =
+            Some(
+                CompilerParent {
+                    locals:
+                        parent.locals.clone(),
+
+                    upvalues:
+                        parent.upvalues.clone(),
+                }
+            );
+
+        for (
+            index,
+            param,
+        ) in params.iter().enumerate()
+        {
+            let Pattern::Ident(name) =
+                param
+            else {
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "VM currently supports only identifier parameters",
+                        None,
+                    )
+                );
+            };
+
+            compiler.locals.insert(
+                name.clone(),
+                index as u16,
+            );
+        }
+
+        Ok(compiler)
     }
 
     fn add_local(
@@ -60,15 +128,99 @@ impl Compiler {
         slot
     }
 
-    fn find_local(
+    fn resolve_local(
         &self,
         name: &str,
     ) -> Option<u16> {
-        self.locals.get(name).copied()
+        self.locals
+            .get(name)
+            .copied()
+    }
+    
+    fn resolve_upvalue(
+        &mut self,
+        name: &str,
+    ) -> Option<u16> {
+        if let Some(slot) =
+            self.upvalues.get(name)
+        {
+            return Some(*slot);
+        }
+
+        let parent =
+            self.parent.as_ref()?;
+
+        if let Some(slot) =
+            parent.locals.get(name)
+        {
+            let index =
+                self.upvalue_specs.len()
+                    as u16;
+
+            self.upvalue_specs.push(
+                UpvalueSpec::Local(
+                    *slot
+                )
+            );
+
+            self.upvalues.insert(
+                name.to_string(),
+                index,
+            );
+
+            return Some(index);
+        }
+
+        if let Some(slot) =
+            parent.upvalues.get(name)
+        {
+            let index =
+                self.upvalue_specs.len()
+                    as u16;
+
+            self.upvalue_specs.push(
+                UpvalueSpec::Parent(
+                    *slot
+                )
+            );
+
+            self.upvalues.insert(
+                name.to_string(),
+                index,
+            );
+
+            return Some(index);
+        }
+
+        None
     }
 
     pub fn finish(self) -> Chunk {
-        self.chunk
+        let mut chunk =
+            self.chunk;
+
+        chunk.local_count =
+            self.locals.len();
+
+        chunk
+    }
+
+    fn finish_function(
+        self,
+        arity: u16,
+    ) -> FunctionProto {
+        let mut chunk =
+            self.chunk;
+
+        chunk.local_count =
+            self.locals.len();
+
+        FunctionProto {
+            arity,
+            chunk: Rc::new(chunk),
+            upvalue_specs:
+                self.upvalue_specs,
+        }
     }
 
     pub fn compile_program(
@@ -131,38 +283,6 @@ impl Compiler {
         );
 
         Ok(self.chunk)
-    }
-
-    pub fn new_function(
-        params: &[Pattern],
-    ) -> Result<Self> {
-        let mut compiler =
-            Self::new();
-
-        for (
-            index,
-            param,
-        ) in params.iter().enumerate()
-        {
-            let Pattern::Ident(name) =
-                param
-            else {
-                return Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "VM currently supports only identifier parameters",
-                        None,
-                    )
-                );
-            };
-
-            compiler.locals.insert(
-                name.clone(),
-                index as u16,
-            );
-        }
-
-        Ok(compiler)
     }
 
     fn compile_expr(
@@ -302,44 +422,50 @@ impl Compiler {
                 target,
                 value,
             } => {
-                match &target.kind {
-                    ExprKind::Ident(name) => {
-                        self.compile_expr(
-                            value
-                        )?;
+                let ExprKind::Ident(name) =
+                    &target.kind
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "VM currently supports only identifier assignment",
+                            None,
+                        )
+                    );
+                };
 
-                        self.chunk.emit(
-                            OpCode::Dup
+                self.compile_expr(
+                    value
+                )?;
+
+                self.chunk.emit(
+                    OpCode::Dup
+                );
+
+                if let Some(slot) =
+                    self.resolve_local(name)
+                {
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        slot as u32,
+                    );
+                } else if let Some(slot) =
+                    self.resolve_upvalue(name)
+                {
+                    self.chunk.emit_operand(
+                        OpCode::StoreUpvalue,
+                        slot as u32,
+                    );
+                } else {
+                    let slot =
+                        self.add_local(
+                            name.clone()
                         );
 
-                        let slot =
-                            match self.find_local(
-                                name
-                            ) {
-                                Some(slot) =>
-                                    slot,
-
-                                None =>
-                                    self.add_local(
-                                        name.clone()
-                                    ),
-                            };
-
-                        self.chunk.emit_operand(
-                            OpCode::StoreLocal,
-                            slot as u32,
-                        );
-                    }
-
-                    _ => {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM currently supports only identifier assignment",
-                                None,
-                            )
-                        );
-                    }
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        slot as u32,
+                    );
                 }
             }
 
@@ -348,64 +474,94 @@ impl Compiler {
                 op,
                 value,
             } => {
-                match &target.kind {
-                    ExprKind::Ident(name) => {
-                        let slot =
-                            self.find_local(
-                                name
-                            )
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Name,
-                                    format!(
-                                        "{} is undefined",
-                                        name
-                                    ),
-                                    None,
-                                )
-                            })?;
+                let ExprKind::Ident(name) =
+                    &target.kind
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "VM currently supports only identifier assignment",
+                            None,
+                        )
+                    );
+                };
 
-                        self.chunk.emit_operand(
-                            OpCode::LoadLocal,
-                            slot as u32,
-                        );
-
-                        self.compile_expr(
-                            value
-                        )?;
-
-                        self.compile_binop(
-                            *op
-                        )?;
-
-                        self.chunk.emit(
-                            OpCode::Dup
-                        );
-
-                        self.chunk.emit_operand(
-                            OpCode::StoreLocal,
-                            slot as u32,
-                        );
-                    }
-
-                    _ => {
+                let variable =
+                    if let Some(slot) =
+                        self.resolve_local(name)
+                    {
+                        (false, slot)
+                    } else if let Some(slot) =
+                        self.resolve_upvalue(name)
+                    {
+                        (true, slot)
+                    } else {
                         return Err(
                             Error::new(
-                                ErrorKind::Runtime,
-                                "VM currently supports only identifier assignment",
+                                ErrorKind::Name,
+                                format!(
+                                    "{} is undefined",
+                                    name
+                                ),
                                 None,
                             )
                         );
-                    }
+                    };
+
+                if variable.0 {
+                    self.chunk.emit_operand(
+                        OpCode::LoadUpvalue,
+                        variable.1 as u32,
+                    );
+                } else {
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        variable.1 as u32,
+                    );
+                }
+
+                self.compile_expr(
+                    value
+                )?;
+
+                self.compile_binop(
+                    *op
+                )?;
+
+                self.chunk.emit(
+                    OpCode::Dup
+                );
+
+                if variable.0 {
+                    self.chunk.emit_operand(
+                        OpCode::StoreUpvalue,
+                        variable.1 as u32,
+                    );
+                } else {
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        variable.1 as u32,
+                    );
                 }
             }
 
             ExprKind::Ident(name) => {
-                let slot =
-                    self.find_local(
-                        name
-                    )
-                    .ok_or_else(|| {
+                if let Some(slot) =
+                    self.locals.get(name)
+                {
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        *slot as u32,
+                    );
+                } else if let Some(slot) =
+                    self.resolve_upvalue(name)
+                {
+                    self.chunk.emit_operand(
+                        OpCode::LoadUpvalue,
+                        slot as u32,
+                    );
+                } else {
+                    return Err(
                         Error::new(
                             ErrorKind::Name,
                             format!(
@@ -414,12 +570,8 @@ impl Compiler {
                             ),
                             None,
                         )
-                    })?;
-
-                self.chunk.emit_operand(
-                    OpCode::LoadLocal,
-                    slot as u32,
-                );
+                    );
+                }
             }
 
             ExprKind::If(
@@ -595,7 +747,8 @@ impl Compiler {
             ) => {
                 let mut compiler =
                     Compiler::new_function(
-                        params
+                        self,
+                        params,
                     )?;
 
                 compiler.compile_expr(
@@ -606,27 +759,23 @@ impl Compiler {
                     OpCode::Return
                 );
 
-                let chunk =
-                    Rc::new(
-                        compiler.finish()
+                let proto =
+                    compiler.finish_function(
+                        params.len() as u16
                     );
 
                 let function =
-                    VmFunction {
-                        arity:
-                            params.len() as u16,
-                        chunk,
-                    };
+                    Rc::new(proto);
 
                 let index =
                     self.chunk.add_constant(
-                        Value::VmFunction(
-                            Rc::new(function)
+                        Value::FunctionProto(
+                            function
                         )
                     );
 
                 self.chunk.emit_operand(
-                    OpCode::Constant,
+                    OpCode::Closure,
                     index,
                 );
             }

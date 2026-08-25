@@ -19,7 +19,8 @@ use super::{
 };
 
 use crate::vm::{
-    VmFunctionRef,
+    ClosureRef,
+    FunctionRef,
 };
 
 use std::{
@@ -67,7 +68,8 @@ pub enum Value {
     Range(i64, i64, bool),
     
     Func(FuncRef),
-    VmFunction(VmFunctionRef),
+    FunctionProto(FunctionRef),
+    Closure(ClosureRef),
     Iterator(IteratorRef),
     Builtin(BuiltinFn),
 
@@ -112,8 +114,10 @@ impl Value {
             
             Self::Range(..) => Type::Range,
 
-            Self::Func(_) => Type::Function,
-            Self::VmFunction(_) => Type::Function,
+            Self::Func(_)
+            | Self::Closure(_)
+            | Self::FunctionProto(_) => Type::Function,
+
             Self::Builtin(_) => Type::Builtin,
             Self::Iterator(_) => Type::Iterator,
             Self::BoundMethod(_) => Type::BoundMethod,
@@ -400,7 +404,9 @@ impl fmt::Debug for Value {
             
             Self::Func(v) => write!(f, "{v}"),
 
-            Self::VmFunction(v) => write!(f, "{:?}", v),
+            Self::FunctionProto(function) => write!(f, "<function arity={}>", function.arity),
+
+            Self::Closure(v) => write!(f, "<closure arity={}>", v.function.arity),
 
             Self::Iterator(_) => write!(f, "<iterator>"),
 
@@ -580,8 +586,9 @@ impl fmt::Display for Value {
             Self::Func(_) =>
                 write!(f, "<function>"),
 
-            Self::VmFunction(_) =>
-                write!(f, "<function>"),
+            Self::FunctionProto(function) => write!(f, "<function arity={}", function.arity),
+
+            Self::Closure(v) => write!(f, "<closure arity={}>", v.function.arity),
 
             Self::Builtin(_) =>
                 write!(f, "<builtin>"),
