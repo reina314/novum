@@ -5,6 +5,6 @@ let xs =
         .collect()
 
 // ________________________________________________________
-// Executed in  616.09 millis    fish           external
-//    usr time  601.78 millis    0.23 millis  601.55 millis
-//    sys time   12.23 millis    1.45 millis   10.78 millis
+// Executed in  379.63 millis    fish           external
+//    usr time  367.90 millis    0.23 millis  367.67 millis
+//    sys time   10.30 millis    1.11 millis    9.19 millis

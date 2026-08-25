@@ -120,6 +120,6 @@ print(
 
 // Running Time
 // ________________________________________________________
-// Executed in    1.16 secs    fish           external
-//    usr time    1.14 secs    0.28 millis    1.14 secs
-//    sys time    0.01 secs    1.62 millis    0.01 secs
+// Executed in    1.04 secs    fish           external
+//    usr time    1.03 secs    0.33 millis    1.03 secs
+//    sys time    0.01 secs    1.42 millis    0.01 secs

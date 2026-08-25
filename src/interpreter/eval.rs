@@ -9732,53 +9732,6 @@ impl Interpreter {
         }
     }
 
-    /// Helper for `call_iterator_method`
-    fn call_iterator_callback(
-        &mut self,
-        function: FuncRef,
-        args: Vec<Value>,
-        whole: &Expr,
-    ) -> Result<Value> {
-        match self.call_function(
-            function,
-            args,
-            whole,
-        )? {
-            ControlFlow::Value(value) =>
-                Ok(value),
-
-            ControlFlow::Return(_) => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot return",
-                        whole,
-                    )
-                )
-            }
-
-            ControlFlow::Break => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot break",
-                        whole,
-                    )
-                )
-            }
-
-            ControlFlow::Continue => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot continue",
-                        whole,
-                    )
-                )
-            }
-        }
-    }
-
     fn call_iterator_callback_1(
         &mut self,
         function: FuncRef,
@@ -11693,46 +11646,6 @@ fn match_enum_pattern(
     }
 
     Ok(true)
-}
-
-/// Helper for `eval_for()`
-fn collect_pattern_names(
-    pattern: &Pattern,
-    names: &mut Vec<String>,
-) {
-    match pattern {
-        Pattern::Wildcard
-        | Pattern::Int(_)
-        | Pattern::Float(_)
-        | Pattern::Bool(_)
-        | Pattern::Str(_) => {}
-
-        Pattern::Ident(name) => {
-            names.push(name.clone());
-        }
-
-        Pattern::Tuple(patterns) |
-        Pattern::List(patterns) => {
-            for pattern in patterns {
-                collect_pattern_names(
-                    pattern,
-                    names,
-                );
-            }
-        }
-
-        Pattern::Enum {
-            fields,
-            ..
-        } => {
-            for pattern in fields {
-                collect_pattern_names(
-                    pattern,
-                    names,
-                );
-            }
-        }
-    }
 }
 
 /// Helper to extract String name from Ident pattern
