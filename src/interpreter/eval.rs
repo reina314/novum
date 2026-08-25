@@ -199,29 +199,50 @@ impl Interpreter {
 
             IteratorObj::Str {
                 data,
+                byte_index,
+            } => {
+                let Some(rest) =
+                    data.as_str().get(*byte_index..)
+                else {
+                    return Ok(None);
+                };
+
+                let Some(ch) =
+                    rest.chars().next()
+                else {
+                    return Ok(None);
+                };
+
+                *byte_index += ch.len_utf8();
+
+                Ok(Some(
+                    Value::Str(
+                        Rc::new(
+                            ch.to_string()
+                        )
+                    )
+                ))
+            }
+
+            IteratorObj::Vector {
+                data,
                 index,
             } => {
-                let value =
-                    data.get(*index)
-                        .copied();
+                let value = {
+                    data.borrow()
+                        .get(*index)
+                };
 
                 match value {
-                    Some(ch) => {
+                    Some(value) => {
                         *index += 1;
 
-                        Ok(
-                            Some(
-                                Value::Str(
-                                    Rc::new(
-                                        ch.to_string()
-                                    )
-                                )
-                            )
-                        )
+                        Ok(Some(
+                            Value::Float(value)
+                        ))
                     }
 
-                    None =>
-                        Ok(None),
+                    None => Ok(None),
                 }
             }
 
@@ -3654,46 +3675,17 @@ impl Interpreter {
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let iterator =
-            self.eval_iterable(
-                iterable,
-                whole,
-            )?;
+        let iterator = self.eval_iterable(
+            iterable,
+            whole,
+        )?;
 
-        let old_env =
-            self.env.clone();
-
-        self.env =
-            self.env.child();
+        let old_env = self.env.clone();
 
         self.loop_depth += 1;
 
         let result = (|| {
-            let mut names =
-                Vec::new();
-
-            collect_pattern_names(
-                pattern,
-                &mut names,
-            );
-
-            for name in names {
-                self.env
-                    .declare(
-                        name,
-                        Value::Unit,
-                    )
-                    .map_err(|message| {
-                        self.error(
-                            ErrorKind::Name,
-                            message,
-                            whole,
-                        )
-                    })?;
-            }
-
-            let mut last =
-                Value::Unit;
+            let mut last = Value::Unit;
 
             while let Some(value) =
                 self.next_from_iterator(
@@ -3701,46 +3693,73 @@ impl Interpreter {
                     whole,
                 )?
             {
-                let bindings =
-                    self.match_pattern_bindings(
-                        pattern,
-                        &value,
-                        whole,
-                    )?;
+                self.env = old_env.child();
 
-                for (name, value)
-                    in bindings
-                {
-                    self.env.assign_local(
-                        &name,
-                        value,
-                    );
+                match pattern {
+                    Pattern::Ident(name) => {
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+                    }
+
+                    Pattern::Wildcard => {}
+
+                    _ => {
+                        let bindings =
+                            self.match_pattern_bindings(
+                                pattern,
+                                &value,
+                                whole,
+                            )?;
+
+                        for (name, value) in bindings {
+                            self.env.define(
+                                name,
+                                value,
+                            );
+                        }
+                    }
                 }
 
-                match self.eval(body)? {
-                    ControlFlow::Value(value) =>
-                        last = value,
+                let flow =
+                    match &body.kind {
+                        ExprKind::Block(exprs) =>
+                            self.eval_block(
+                                exprs,
+                                false,
+                            )?,
 
-                    ControlFlow::Break =>
-                        break,
+                        _ =>
+                            self.eval(body)?,
+                    };
 
-                    ControlFlow::Continue =>
-                        continue,
+                match flow {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
 
-                    ControlFlow::Return(value) =>
+                    ControlFlow::Break => {
+                        break;
+                    }
+
+                    ControlFlow::Continue => {
+                        continue;
+                    }
+
+                    ControlFlow::Return(value) => {
                         return Ok(
                             ControlFlow::Return(value)
-                        ),
+                        );
+                    }
                 }
             }
 
-            Ok(
-                ControlFlow::Value(last)
-            )
+            Ok(ControlFlow::Value(last))
         })();
 
-        self.loop_depth -= 1;
         self.env = old_env;
+        self.loop_depth -= 1;
 
         result
     }
@@ -5606,28 +5625,129 @@ impl Interpreter {
         }
     }
 
+    /// Wrapper for `call_function_positional()`
     fn call_function(
         &mut self,
-        func: crate::runtime::FuncRef,
+        func: FuncRef,
         args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let evaluated =
-            args.into_iter()
-                .map(|value| {
-                    EvaluatedArg {
-                        name: None,
-                        value,
-                    }
-                })
-                .collect();
-
-        self.call_function_with_evaluated_args(
+        self.call_function_positional(
             func,
-            evaluated,
-            None,
+            args,
             whole,
         )
+    }
+
+    fn call_function_positional(
+        &mut self,
+        function: FuncRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let old_env = self.env.clone();
+
+        self.env = function.closure().child();
+
+        let result = (|| {
+            let parameters = function.parameters();
+
+            if parameters.len() != args.len() {
+                return Err(self.error(
+                    ErrorKind::Arity,
+                    format!(
+                        "function expects {} arguments, got {}",
+                        parameters.len(),
+                        args.len()
+                    ),
+                    whole,
+                ));
+            }
+
+            for (pattern, value) in parameters.iter().zip(args.into_iter()) {
+                match pattern {
+                    Pattern::Ident(name) => {
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+                    }
+
+                    Pattern::Wildcard => {}
+
+                    _ => {
+                        let mut bindings = HashMap::new();
+
+                        let matched = match_pattern(
+                            pattern,
+                            &value,
+                            &mut bindings,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                        if !matched {
+                            return Err(self.error(
+                                ErrorKind::Runtime,
+                                "function argument does not match parameter pattern",
+                                whole,
+                            ));
+                        }
+
+                        for (name, value) in bindings {
+                            self.env.define(
+                                name,
+                                value,
+                            );
+                        }
+                    }
+                }
+            }
+
+            match function.body() {
+                Expr {
+                    kind: ExprKind::Block(exprs),
+                    ..
+                } => self.eval_block(
+                    exprs,
+                    false,
+                ),
+
+                body => self.eval(body),
+            }
+            .and_then(|flow| {
+                match flow {
+                    ControlFlow::Value(value) =>
+                        Ok(ControlFlow::Value(value)),
+
+                    ControlFlow::Return(value) =>
+                        Ok(ControlFlow::Value(value)),
+
+                    ControlFlow::Break =>
+                        Err(self.error(
+                            ErrorKind::Control,
+                            "break cannot escape function body",
+                            whole,
+                        )),
+
+                    ControlFlow::Continue =>
+                        Err(self.error(
+                            ErrorKind::Control,
+                            "continue cannot escape function body",
+                            whole,
+                        )),
+                }
+            })
+        })();
+
+        self.env = old_env;
+
+        result
     }
 
     fn call_function_bound(
@@ -6117,15 +6237,10 @@ impl Interpreter {
                     );
                 }
 
-                let chars =
-                    string
-                        .chars()
-                        .collect::<Vec<char>>();
-
                 let iterator =
                     IteratorObj::Str {
-                        data: Rc::new(chars),
-                        index: 0,
+                        data: string.clone(),
+                        byte_index: 0,
                     };
 
                 Ok(

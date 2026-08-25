@@ -2,6 +2,8 @@ use super::{
     List,
     Value,
     FuncRef,
+    StrRef,
+    VectorRef,
 };
 use std::{
     rc::Rc,
@@ -18,8 +20,13 @@ pub enum IteratorObj {
     },
 
     Str {
-        data: Rc<Vec<char>>,
-        index: usize
+        data: StrRef,
+        byte_index: usize
+    },
+
+    Vector {
+        data: VectorRef,
+        index: usize,
     },
 
     Range {
@@ -79,18 +86,12 @@ impl IteratorObj {
                 ),
 
             Value::Str(data) => {
-                let chars =
-                    Rc::new(
-                        data.chars()
-                            .collect::<Vec<_>>()
-                    );
-
                 Ok(
                     Rc::new(
                         RefCell::new(
                             IteratorObj::Str {
-                                data: chars,
-                                index: 0,
+                                data,
+                                byte_index: 0,
                             }
                         )
                     )
@@ -185,25 +186,11 @@ impl IteratorObj {
             }
 
             Value::Vector(vector) => {
-                let values =
-                    vector
-                        .borrow()
-                        .as_slice()
-                        .iter()
-                        .copied()
-                        .map(Value::Float)
-                        .collect();
-
                 Ok(
                     Rc::new(
                         RefCell::new(
-                            IteratorObj::List {
-                                data:
-                                    Rc::new(
-                                        RefCell::new(
-                                            values
-                                        )
-                                    ),
+                            IteratorObj::Vector {
+                                data: vector,
                                 index: 0,
                             }
                         )

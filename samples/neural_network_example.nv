@@ -112,3 +112,10 @@ print(
 // [1.0, 1.0] -> 0   probability = 0.00320035   answer = 0.0
 //
 // Accuracy: 1.0
+
+
+// Result of 'time' Command
+// ________________________________________________________
+// Executed in    1.03 secs    fish           external
+//    usr time    1.02 secs    0.32 millis    1.02 secs
+//    sys time    0.01 secs    1.71 millis    0.01 secs
