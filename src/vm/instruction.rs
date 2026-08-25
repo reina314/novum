@@ -16,6 +16,13 @@ pub enum OpCode {
 
     Closure,
 
+    NewList,
+    ListAppend,
+    ListExtendRange,
+    
+    IndexGet,
+    IndexSet,
+
     Add,
     Sub,
     Mul,

@@ -1,7 +1,14 @@
+#[cfg(feature = "legacy-interpreter")]
 pub mod control;
+
+// #[cfg(feature = "legacy-interpreter")]
 pub mod env;
-pub mod set;
+
+// #[cfg(feature = "legacy-interpreter")]
 pub mod function;
+
+pub mod operator;
+pub mod set;
 pub mod iterator;
 pub mod vector;
 pub mod matrix;
@@ -18,16 +25,13 @@ pub mod value;
 pub mod r#type;
 pub mod path;
 
-pub use control::ControlFlow;
-pub use env::Env;
+
+pub use operator::apply_binop;
 pub use set::{
     Set,
     SetRef,
 };
-pub use function::{
-    FuncRef,
-    Function
-};
+
 pub use iterator::{
     IteratorObj,
     IteratorRef,
@@ -85,6 +89,7 @@ pub use value::{
     StrRef,
     Dict,
     List,
+    ListRef,
     Value, 
     FromValue,
 };
@@ -95,3 +100,16 @@ pub use path::{
     PathValue,
     PathRef,
 };
+
+#[cfg(feature = "legacy-interpreter")]
+pub use control::ControlFlow;
+
+// #[cfg(feature = "legacy-interpreter")]
+pub use env::Env;
+
+// #[cfg(feature = "legacy-interpreter")]
+pub use function::{
+    FuncRef,
+    Function
+};
+

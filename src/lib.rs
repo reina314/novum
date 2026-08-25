@@ -3,13 +3,17 @@
 //! The public pipeline is intentionally explicit:
 //! source -> lexer -> parser -> AST -> interpreter.
 
-pub mod error;
-pub mod vm;
+#[cfg(feature = "legacy-interpreter")]
 pub mod interpreter;
-pub mod runtime;
+
+#[cfg(feature = "legacy-interpreter")]
 pub mod stdlib;
+
+
+pub mod error;
+pub mod runtime;
 pub mod syntax;
+pub mod vm;
 
 pub use error::{Error, ErrorKind, Result};
-pub use interpreter::Interpreter;
 pub use syntax::{Lexer, Parser};

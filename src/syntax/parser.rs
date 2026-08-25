@@ -1,4 +1,4 @@
-use crate::{error::{Error, Result}, stdlib::general};
+use crate::error::{Error, Result};
 use super::{ast::*, Span, Token, TokenKind};
 
 pub struct Parser {
@@ -628,7 +628,7 @@ impl Parser {
                         _,
                     ) => {
                         if params.first()
-                            .map(general::is_self_pattern)
+                            .map(is_self_pattern)
                             != Some(true)
                         {
                             return Err(
@@ -2075,26 +2075,36 @@ impl Parser {
 
 }
 
+fn is_self_pattern(
+    pattern: &Pattern,
+) -> bool {
+    matches!(
+        pattern,
+        Pattern::Ident(name)
+            if name == "self"
+    )
+}
+
 /// Helper for `parse_assignment()`
-    fn assignment_binop(
-        token: &TokenKind,
-    ) -> Option<BinOp> {
-        match token {
-            TokenKind::PlusEq =>
-                Some(BinOp::Add),
+fn assignment_binop(
+    token: &TokenKind,
+) -> Option<BinOp> {
+    match token {
+        TokenKind::PlusEq =>
+            Some(BinOp::Add),
 
-            TokenKind::MinusEq =>
-                Some(BinOp::Sub),
+        TokenKind::MinusEq =>
+            Some(BinOp::Sub),
 
-            TokenKind::StarEq =>
-                Some(BinOp::Mul),
+        TokenKind::StarEq =>
+            Some(BinOp::Mul),
 
-            TokenKind::SlashEq =>
-                Some(BinOp::Div),
+        TokenKind::SlashEq =>
+            Some(BinOp::Div),
 
-            TokenKind::PercentEq =>
-                Some(BinOp::Mod),
+        TokenKind::PercentEq =>
+            Some(BinOp::Mod),
 
-            _ => None,
-        }
+        _ => None,
     }
+}

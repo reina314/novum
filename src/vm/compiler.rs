@@ -10,6 +10,8 @@ use crate::{
         ExprKind,
         Program,
         Pattern,
+        ListItem,
+        IndexExpr,
     },
     runtime::Value,
 };
@@ -27,10 +29,19 @@ use std::{
     collections::HashMap,
 };
 
-enum AssignmentTarget {
+enum LValue {
     Local(u16),
     Upvalue(u16),
-    ImplicitLocal(u16),
+
+    Index {
+        object_slot: u16,
+        index_slot: u16,
+    },
+
+    Field {
+        object_slot: u16,
+        name: String,
+    },
 }
 
 struct LoopContext {
@@ -243,40 +254,124 @@ impl Compiler {
         None
     }
 
-    fn resolve_assignment(
+    fn emit_load_lvalue(
         &mut self,
-        name: &str,
-    ) -> Result<AssignmentTarget> {
-        if let Some(slot) =
-            self.resolve_local(name)
-        {
-            return Ok(
-                AssignmentTarget::Local(
-                    slot
-                )
-            );
+        lvalue: &LValue,
+    ) -> Result<()> {
+        match lvalue {
+            LValue::Local(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *slot as u32,
+                );
+            }
+
+            LValue::Upvalue(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::LoadUpvalue,
+                    *slot as u32,
+                );
+            }
+
+            LValue::Index {
+                object_slot,
+                index_slot,
+            } => {
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *object_slot as u32,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *index_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::IndexGet
+                );
+            }
+
+            LValue::Field {
+                object_slot,
+                name,
+            } => {
+                let _ = name;
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *object_slot as u32,
+                );
+
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "VM field access is not implemented yet",
+                        None,
+                    )
+                );
+            }
         }
 
-        if let Some(slot) =
-            self.resolve_upvalue(name)
-        {
-            return Ok(
-                AssignmentTarget::Upvalue(
-                    slot
-                )
-            );
+        Ok(())
+    }
+
+    fn emit_store_lvalue(
+        &mut self,
+        lvalue: &LValue,
+    ) -> Result<()> {
+        match lvalue {
+            LValue::Local(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    *slot as u32,
+                );
+            }
+
+            LValue::Upvalue(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::StoreUpvalue,
+                    *slot as u32,
+                );
+            }
+
+            LValue::Index {
+                object_slot,
+                index_slot,
+            } => {
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *object_slot as u32,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *index_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::IndexSet
+                );
+            }
+
+            LValue::Field {
+                object_slot,
+                name,
+            } => {
+                let _ = object_slot;
+                let _ = name;
+
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "VM field assignment is not implemented yet",
+                        None,
+                    )
+                );
+            }
         }
 
-        let slot =
-            self.declare_local(
-                name.to_string()
-            )?;
-
-        Ok(
-            AssignmentTarget::ImplicitLocal(
-                slot
-            )
-        )
+        Ok(())
     }
 
     fn enter_scope(
@@ -599,6 +694,116 @@ impl Compiler {
                 )?;
             }
 
+            ExprKind::List(items) => {
+                let explicit_capacity =
+                    items
+                        .iter()
+                        .filter(
+                            |item| {
+                                matches!(
+                                    item,
+                                    ListItem::Expr(_)
+                                )
+                            }
+                        )
+                        .count();
+
+                self.chunk.emit_operand(
+                    OpCode::NewList,
+                    explicit_capacity as u32,
+                );
+
+                for item in items {
+                    match item {
+                        ListItem::Expr(expr) => {
+                            self.compile_expr(
+                                expr
+                            )?;
+
+                            self.chunk.emit(
+                                OpCode::ListAppend
+                            );
+                        }
+
+                        ListItem::Range(
+                            IndexExpr::Range {
+                                start,
+                                end,
+                                inclusive,
+                            }
+                        ) => {
+                            let Some(start) =
+                                start
+                            else {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "list range requires a start value",
+                                        None,
+                                    )
+                                );
+                            };
+
+                            let Some(end) =
+                                end
+                            else {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "list range requires an end value",
+                                        None,
+                                    )
+                                );
+                            };
+
+                            self.compile_expr(
+                                start
+                            )?;
+
+                            self.compile_expr(
+                                end
+                            )?;
+
+                            self.chunk.emit_operand(
+                                OpCode::ListExtendRange,
+                                if *inclusive {
+                                    1
+                                } else {
+                                    0
+                                },
+                            );
+                        }
+
+                        ListItem::Range(_) => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "unsupported list range expression",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+
+            ExprKind::Index(
+                object,
+                IndexExpr::Single(index),
+            ) => {
+                self.compile_expr(
+                    object
+                )?;
+
+                self.compile_expr(
+                    index
+                )?;
+
+                self.chunk.emit(
+                    OpCode::IndexGet
+                );
+            }
+
             ExprKind::Let {
                 pattern,
                 value,
@@ -606,11 +811,9 @@ impl Compiler {
             } => {
                 match pattern {
                     Pattern::Ident(name) => {
-                        self.compile_expr(value)?;
-
-                        self.chunk.emit(
-                            OpCode::Dup
-                        );
+                        self.compile_expr(
+                            value
+                        )?;
 
                         let slot =
                             self.declare_local(
@@ -639,40 +842,18 @@ impl Compiler {
                 target,
                 value,
             } => {
-                let ExprKind::Ident(name) =
-                    &target.kind
-                else {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "VM currently supports only identifier assignment",
-                            None,
-                        )
-                    );
-                };
+                let lvalue =
+                    self.compile_lvalue(
+                        target
+                    )?;
 
-                self.compile_expr(value)?;
+                self.compile_expr(
+                    value
+                )?;
 
-                self.chunk.emit(
-                    OpCode::Dup
-                );
-
-                match self.resolve_assignment(name)? {
-                    AssignmentTarget::Local(slot) |
-                    AssignmentTarget::ImplicitLocal(slot) => {
-                        self.chunk.emit_operand(
-                            OpCode::StoreLocal,
-                            slot as u32,
-                        );
-                    }
-
-                    AssignmentTarget::Upvalue(slot) => {
-                        self.chunk.emit_operand(
-                            OpCode::StoreUpvalue,
-                            slot as u32,
-                        );
-                    }
-                }
+                self.emit_store_lvalue(
+                    &lvalue
+                )?;
             }
 
             ExprKind::AssignOp {
@@ -680,51 +861,14 @@ impl Compiler {
                 op,
                 value,
             } => {
-                let ExprKind::Ident(name) =
-                    &target.kind
-                else {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "VM currently supports only identifier assignment",
-                            None,
-                        )
-                    );
-                };
+                let lvalue =
+                    self.compile_lvalue(
+                        target
+                    )?;
 
-                let variable =
-                    if let Some(slot) =
-                        self.resolve_local(name)
-                    {
-                        (false, slot)
-                    } else if let Some(slot) =
-                        self.resolve_upvalue(name)
-                    {
-                        (true, slot)
-                    } else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Name,
-                                format!(
-                                    "{} is undefined",
-                                    name
-                                ),
-                                None,
-                            )
-                        );
-                    };
-
-                if variable.0 {
-                    self.chunk.emit_operand(
-                        OpCode::LoadUpvalue,
-                        variable.1 as u32,
-                    );
-                } else {
-                    self.chunk.emit_operand(
-                        OpCode::LoadLocal,
-                        variable.1 as u32,
-                    );
-                }
+                self.emit_load_lvalue(
+                    &lvalue
+                )?;
 
                 self.compile_expr(
                     value
@@ -734,21 +878,9 @@ impl Compiler {
                     *op
                 )?;
 
-                self.chunk.emit(
-                    OpCode::Dup
-                );
-
-                if variable.0 {
-                    self.chunk.emit_operand(
-                        OpCode::StoreUpvalue,
-                        variable.1 as u32,
-                    );
-                } else {
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        variable.1 as u32,
-                    );
-                }
+                self.emit_store_lvalue(
+                    &lvalue
+                )?;
             }
 
             ExprKind::Ident(name) => {
@@ -1201,5 +1333,133 @@ impl Compiler {
         self.chunk.emit(opcode);
 
         Ok(())
+    }
+
+    fn compile_lvalue(
+        &mut self,
+        target: &Expr,
+    ) -> Result<LValue> {
+        match &target.kind {
+            ExprKind::Ident(name) => {
+                if let Some(slot) =
+                    self.resolve_local(name)
+                {
+                    return Ok(
+                        LValue::Local(slot)
+                    );
+                }
+
+                if let Some(slot) =
+                    self.resolve_upvalue(name)
+                {
+                    return Ok(
+                        LValue::Upvalue(slot)
+                    );
+                }
+
+                let slot =
+                    self.declare_local(
+                        name.clone()
+                    )?;
+
+                Ok(
+                    LValue::Local(slot)
+                )
+            }
+
+            ExprKind::Index(
+                object,
+                index,
+            ) => {
+                let IndexExpr::Single(index) =
+                    index
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "VM currently supports only single-index assignment",
+                            None,
+                        )
+                    );
+                };
+
+                let object_slot =
+                    self.allocate_temp_local();
+
+                self.compile_expr(
+                    object
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    object_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                let index_slot =
+                    self.allocate_temp_local();
+
+                self.compile_expr(
+                    index
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    index_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                Ok(
+                    LValue::Index {
+                        object_slot,
+                        index_slot,
+                    }
+                )
+            }
+
+            ExprKind::Field {
+                object,
+                name,
+            } => {
+                let object_slot =
+                    self.allocate_temp_local();
+
+                self.compile_expr(
+                    object
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    object_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                Ok(
+                    LValue::Field {
+                        object_slot,
+                        name: name.clone(),
+                    }
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "invalid assignment target",
+                        None,
+                    )
+                )
+            }
+        }
     }
 }

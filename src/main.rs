@@ -1,8 +1,11 @@
+#[cfg(feature = "legacy-interpreter")]
+use novum::Interpreter;
+
 use novum::{
-    runtime::{ControlFlow, Value},
+    runtime::{Value},
     syntax::TokenKind,
     vm::{Vm, Compiler},
-    Interpreter, Lexer, Parser,
+    Lexer, Parser,
 };
 
 use reedline::{
@@ -205,36 +208,44 @@ fn main() {
                 }
 
                 false => {
-                    let mut interpreter =
-                        Interpreter::new();
+                    {
+                        eprintln!(
+                            "interpreter support is disabled; use --vm"
+                        );
 
-                    match options.file {
-                        Some(path) => {
-                            if let Err(error) =
-                                run_file(
-                                    &mut interpreter,
-                                    &path,
-                                    options.display_lexer,
-                                    options.display_parser,
-                                )
-                            {
-                                eprintln!("{error}");
-                                std::process::exit(1);
-                            }
-                        }
-
-                        None => {
-                            println!(
-                                "novum v{VERSION}\n"
-                            );
-
-                            repl(
-                                &mut interpreter,
-                                options.display_lexer,
-                                options.display_parser,
-                            );
-                        }
+                        std::process::exit(1);
                     }
+
+                    // let mut interpreter =
+                    //     Interpreter::new();
+
+                    // match options.file {
+                    //     Some(path) => {
+                    //         if let Err(error) =
+                    //             run_file(
+                    //                 &mut interpreter,
+                    //                 &path,
+                    //                 options.display_lexer,
+                    //                 options.display_parser,
+                    //             )
+                    //         {
+                    //             eprintln!("{error}");
+                    //             std::process::exit(1);
+                    //         }
+                    //     }
+
+                    //     None => {
+                    //         println!(
+                    //             "novum v{VERSION}\n"
+                    //         );
+
+                    //         repl(
+                    //             &mut interpreter,
+                    //             options.display_lexer,
+                    //             options.display_parser,
+                    //         );
+                    //     }
+                    // }
                 }
             }
         }
@@ -246,6 +257,7 @@ fn main() {
 // Execution
 // ============================================================
 
+#[cfg(feature = "legacy-interpreter")]
 fn run_file(
     interpreter: &mut Interpreter,
     path: &str,
@@ -334,6 +346,7 @@ fn run_file(
     Ok(())
 }
 
+#[cfg(feature = "legacy-interpreter")]
 fn run(
     interpreter: &mut Interpreter,
     source: &str,
@@ -1193,6 +1206,7 @@ fn history_path() -> PathBuf {
 // REPL
 // ============================================================
 
+#[cfg(feature = "legacy-interpreter")]
 fn repl(
     interpreter: &mut Interpreter,
     display_lexer: bool,

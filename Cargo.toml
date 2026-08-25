@@ -18,6 +18,10 @@ codegen-units = 1    # Reduce number of codegen units to increase optimization p
 panic = "abort"      # Remove unwinding logic to reduce binary size and speed up panics
 strip = true         # Strip debug symbols and symbols from binary
 
+[features]
+default = ["legacy-interpreter"]
+legacy-interpreter = []
+
 [lib]
 name = "novum"
 path = "src/lib.rs"

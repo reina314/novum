@@ -1,5 +1,6 @@
 use super::{
     List,
+    ListRef,
     Value,
     FuncRef,
     StrRef,
@@ -15,7 +16,7 @@ pub type IteratorRef = Rc<RefCell<IteratorObj>>;
 #[derive(Clone)]
 pub enum IteratorObj {
     List {
-        data: List,
+        data: ListRef,
         index: usize
     },
 
@@ -135,9 +136,7 @@ impl IteratorObj {
                             Value::Tuple(
                                 Rc::new(vec![
                                     Value::Str(
-                                        Rc::new(
-                                            key.clone()
-                                        )
+                                        Rc::new(key.clone())
                                     ),
                                     value.clone(),
                                 ])
@@ -145,16 +144,18 @@ impl IteratorObj {
                         })
                         .collect::<Vec<_>>();
 
+                let list =
+                    Rc::new(
+                        List::new(
+                            items
+                        )
+                    );
+
                 Ok(
                     Rc::new(
                         RefCell::new(
                             IteratorObj::List {
-                                data:
-                                    Rc::new(
-                                        RefCell::new(
-                                            items
-                                        )
-                                    ),
+                                data: list,
                                 index: 0,
                             }
                         )
@@ -168,16 +169,18 @@ impl IteratorObj {
                         .values()
                         .to_vec();
 
+                let list =
+                    Rc::new(
+                        List::new(
+                            values
+                        )
+                    );
+
                 Ok(
                     Rc::new(
                         RefCell::new(
                             IteratorObj::List {
-                                data:
-                                    Rc::new(
-                                        RefCell::new(
-                                            values
-                                        )
-                                    ),
+                                data: list,
                                 index: 0,
                             }
                         )

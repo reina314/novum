@@ -32,9 +32,178 @@ use std::{
 
 pub type StrRef = Rc<String>;
 pub type Tuple = Rc<Vec<Value>>;
-pub type List = Rc<RefCell<Vec<Value>>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, String>;
+
+pub type ListRef = Rc<List>;
+
+#[derive(Debug)]
+pub struct List {
+    elements: RefCell<Vec<Value>>,
+}
+
+impl List {
+    #[inline]
+    pub fn new(
+        elements: Vec<Value>,
+    ) -> Self {
+        Self {
+            elements:
+                RefCell::new(elements),
+        }
+    }
+
+    #[inline]
+    pub fn with_capacity(
+        capacity: usize,
+    ) -> Self {
+        Self {
+            elements:
+                RefCell::new(
+                    Vec::with_capacity(
+                        capacity
+                    )
+                ),
+        }
+    }
+
+    #[inline]
+    pub fn len(
+        &self,
+    ) -> usize {
+        self.elements
+            .borrow()
+            .len()
+    }
+
+    #[inline]
+    pub fn get(
+        &self,
+        index: usize,
+    ) -> Option<Value> {
+        self.elements
+            .borrow()
+            .get(index)
+            .cloned()
+    }
+
+    #[inline]
+    pub fn set(
+        &self,
+        index: usize,
+        value: Value,
+    ) -> Result<(), String> {
+        let mut elements =
+            self.elements.borrow_mut();
+
+        let slot =
+            elements.get_mut(index)
+                .ok_or_else(|| {
+                    format!(
+                        "list index out of bounds: {}",
+                        index
+                    )
+                })?;
+
+        *slot = value;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn push(
+        &self,
+        value: Value,
+    ) {
+        self.elements
+            .borrow_mut()
+            .push(value);
+    }
+
+    #[inline]
+    pub fn append(
+        &self,
+        mut values: Vec<Value>,
+    ) {
+        self.elements
+            .borrow_mut()
+            .append(
+                &mut values
+            );
+    }
+
+    #[inline]
+    pub fn extend(
+        &self,
+        values: impl IntoIterator<Item = Value>,
+    ) {
+        self.elements
+            .borrow_mut()
+            .extend(values);
+    }
+
+    #[inline]
+    pub fn iter_cloned(
+        &self,
+    ) -> Vec<Value> {
+        self.elements
+            .borrow()
+            .clone()
+    }
+
+    #[inline]
+    pub fn as_vec(
+        &self,
+    ) -> std::cell::Ref<'_, Vec<Value>> {
+        self.elements.borrow()
+    }
+
+    #[inline]
+    pub fn as_vec_mut(
+        &self,
+    ) -> std::cell::RefMut<'_, Vec<Value>> {
+        self.elements.borrow_mut()
+    }
+
+    pub fn repeat(
+        &self,
+        count: usize,
+    ) -> Result<Self, String> {
+        if count == 0 {
+            return Ok(
+                Self::new(Vec::new())
+            );
+        }
+
+        let elements =
+            self.elements.borrow();
+
+        let capacity =
+            elements
+                .len()
+                .checked_mul(count)
+                .ok_or_else(|| {
+                    "list repetition size overflow"
+                        .to_string()
+                })?;
+
+        let mut result =
+            Vec::with_capacity(
+                capacity
+            );
+
+        for _ in 0..count {
+            result.extend(
+                elements.iter().cloned()
+            );
+        }
+
+        Ok(
+            Self::new(result)
+        )
+    }
+
+}
 
 #[derive(Clone)]
 pub enum Value {
@@ -44,7 +213,7 @@ pub enum Value {
     Str(StrRef),
 
     Tuple(Tuple),
-    List(List),
+    List(ListRef),
     Set(SetRef),
     Dict(Dict),
 
@@ -151,7 +320,10 @@ impl Value {
         }
     }
 
-    pub fn eq_values(a: &Self, b: &Self) -> Result<bool, String> {
+    pub fn eq_values(
+        a: &Self,
+        b: &Self
+    ) -> Result<bool, String> {
         Ok(match (a, b) {
             (
                 Self::Int(x),
@@ -189,8 +361,10 @@ impl Value {
                 Self::List(x),
                 Self::List(y)
             ) => {
-                let x = x.borrow();
-                let y = y.borrow();
+                let x 
+                    = x.as_vec();
+                let y 
+                    = y.as_vec();
 
                 Self::eq_slices(
                     &x,
@@ -368,7 +542,7 @@ impl fmt::Debug for Value {
                 write!(f, ")")
             }
 
-            Self::List(v) => write!(f, "{:?}", v.borrow()),
+            Self::List(v) => write!(f, "{:?}", v),
 
             Self::Set(set) => 
             write!(f, "{:?}", set.borrow().values()),
@@ -460,12 +634,17 @@ impl fmt::Display for Value {
             }
 
             Self::List(list) => {
-                let list = list.borrow();
+                let elements =
+                    list.as_vec();
 
                 write!(f, "[")?;
 
-                for (i, value) in list.iter().enumerate() {
-                    if i > 0 {
+                for (
+                    index,
+                    value,
+                ) in elements.iter().enumerate()
+                {
+                    if index > 0 {
                         write!(f, ", ")?;
                     }
 
@@ -668,24 +847,6 @@ impl FromValue for bool {
 
     fn expected_type() -> Type {
         Type::Bool
-    }
-}
-
-impl FromValue for List {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::List(list) =>
-                Ok(list),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::List
     }
 }
 

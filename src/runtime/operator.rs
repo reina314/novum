@@ -583,85 +583,45 @@ fn mul(
             ))
         }
 
-        (// [0] * 5 = [0, 0, 0, 0, 0]
+        (
             Value::List(list),
             Value::Int(count),
         ) => {
             if count < 0 {
                 return Err(
-                    "cannot repeat a list a negative number of times".into()
-                );
-            }
-
-            let list =
-                list.borrow();
-
-            let count =
-                count as usize;
-
-            let mut result =
-                Vec::with_capacity(
-                    list.len()
-                        .checked_mul(count)
-                        .ok_or_else(|| {
-                            "list repetition size overflow"
-                        })?
-                );
-
-            for _ in 0..count {
-                result.extend(
-                    list.iter().cloned()
+                    "cannot repeat a list a negative number of times"
+                        .into()
                 );
             }
 
             Ok(
                 Value::List(
                     Rc::new(
-                        RefCell::new(
-                            result
-                        )
+                        list.repeat(
+                            count as usize
+                        )?
                     )
                 )
             )
         }
 
-        (// 5 * [0] = [0, 0, 0, 0, 0] 
+        (
             Value::Int(count),
             Value::List(list),
         ) => {
             if count < 0 {
                 return Err(
-                    "cannot repeat a list a negative number of times".into()
-                );
-            }
-
-            let list =
-                list.borrow();
-
-            let count =
-                count as usize;
-
-            let mut result =
-                Vec::with_capacity(
-                    list.len()
-                        .checked_mul(count)
-                        .ok_or_else(|| {
-                            "list repetition size overflow"
-                        })?
-                );
-
-            for _ in 0..count {
-                result.extend(
-                    list.iter().cloned()
+                    "cannot repeat a list a negative number of times"
+                        .into()
                 );
             }
 
             Ok(
                 Value::List(
                     Rc::new(
-                        RefCell::new(
-                            result
-                        )
+                        list.repeat(
+                            count as usize
+                        )?
                     )
                 )
             )

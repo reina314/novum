@@ -2,7 +2,7 @@ use super::{
     DataFrameRef,
     GroupedDataFrameRef,
     Value,
-    List,
+    ListRef,
     Dict,
     SetRef,
     VectorRef,
@@ -21,7 +21,7 @@ use std::{
 #[derive(Clone)]
 pub enum MethodReceiver {
     Str(Rc<String>),
-    List(List),
+    List(ListRef),
     Set(SetRef),
     Dict(Dict),
     Vector(VectorRef),

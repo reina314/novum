@@ -3,7 +3,9 @@ use crate::{
         Error,
         ErrorKind,
         Result,
-    }, interpreter, runtime::{Value}, syntax::BinOp,
+    }, runtime::{
+        List, Value, operator, 
+    }, syntax::BinOp, 
 };
 
 use super::{
@@ -397,7 +399,16 @@ impl Vm {
                         operand as usize;
 
                     let value =
-                        self.pop()?;
+                        self.stack
+                            .last()
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM stack underflow",
+                                    None,
+                                )
+                            })?;
 
                     let frame =
                         self.current_frame_mut();
@@ -485,7 +496,16 @@ impl Vm {
                         operand as usize;
 
                     let value =
-                        self.pop()?;
+                        self.stack
+                            .last()
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM stack underflow",
+                                    None,
+                                )
+                            })?;
 
                     let cell =
                         self.current_frame()
@@ -643,6 +663,269 @@ impl Vm {
                     );
                 }
 
+                OpCode::NewList => {
+                    let list =
+                        Rc::new(
+                            List::with_capacity(
+                                operand as usize
+                            )
+                        );
+
+                    self.push(
+                        Value::List(
+                            list
+                        )
+                    );
+                }
+
+                OpCode::ListAppend => {
+                    let value =
+                        self.pop()?;
+
+                    let list =
+                        self.stack
+                            .last()
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "list append stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    let Value::List(
+                        list
+                    ) = list
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "LIST_APPEND expects a List",
+                                None,
+                            )
+                        );
+                    };
+
+                    list.push(value);
+                }
+
+                OpCode::ListExtendRange => {
+                    let end = self.pop()?;
+                    let start = self.pop()?;
+
+                    let list =
+                        match self.stack.last().cloned() {
+                            Some(Value::List(list)) =>
+                                list,
+
+                            Some(other) =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "LIST_EXTEND_RANGE expects List, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                ),
+
+                            None =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "list range stack underflow",
+                                        None,
+                                    )
+                                ),
+                        };
+
+                    let start =
+                        match start {
+                            Value::Int(value) => value,
+                            other => {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range start must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                );
+                            }
+                        };
+
+                    let end =
+                        match end {
+                            Value::Int(value) => value,
+                            other => {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range end must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                );
+                            }
+                        };
+
+                    let inclusive =
+                        operand != 0;
+
+                    let end =
+                        if inclusive {
+                            end.checked_add(1)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Overflow,
+                                        "range upper bound overflow",
+                                        None,
+                                    )
+                                })?
+                        } else {
+                            end
+                        };
+
+                    if start < end {
+                        let count =
+                            end.checked_sub(start)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Overflow,
+                                        "range length overflow",
+                                        None,
+                                    )
+                                })?;
+
+                        let mut list =
+                            list.as_vec_mut();
+
+                        list.reserve(
+                            count as usize
+                        );
+
+                        for value in start..end {
+                            list.push(
+                                Value::Int(value)
+                            );
+                        }
+                    }
+                }
+
+                OpCode::IndexGet => {
+                    let index =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    match (object, index) {
+                        (
+                            Value::List(list),
+                            Value::Int(index),
+                        ) => {
+                            if index < 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "list index must be non-negative",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let index =
+                                index as usize;
+
+                            let value =
+                                list.get(index)
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Index,
+                                            format!(
+                                                "list index out of bounds: {}",
+                                                index
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(value);
+                        }
+
+                        (
+                            _,
+                            _
+                        ) => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "unsupported indexing operation",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                OpCode::IndexSet => {
+                    let index =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    let value =
+                        self.pop()?;
+
+                    match (object, index) {
+                        (
+                            Value::List(list),
+                            Value::Int(index),
+                        ) => {
+                            if index < 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "list index must be non-negative",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            list.set(
+                                index as usize,
+                                value.clone(),
+                            )
+                            .map_err(|message| {
+                                Error::new(
+                                    ErrorKind::Index,
+                                    message,
+                                    None,
+                                )
+                            })?;
+
+                            self.push(value);
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "unsupported indexed assignment",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
                 OpCode::Return => {
                     let result =
                         self.pop()?;
@@ -765,7 +1048,7 @@ impl Vm {
         let left = self.pop()?;
 
         let result =
-            interpreter::apply_binop(
+            operator::apply_binop(
                 op,
                 left,
                 right,

@@ -68,13 +68,3 @@ pub fn option_none() -> Value {
         )
     )
 }
-
-pub fn is_self_pattern(
-    pattern: &Pattern,
-) -> bool {
-    matches!(
-        pattern,
-        Pattern::Ident(name)
-            if name == "self"
-    )
-}
