@@ -412,68 +412,6 @@ impl Compiler {
         )
     }
 
-    fn emit_enum_match(
-        &mut self,
-        value_slot: u16,
-        path: &[String],
-        field_count: usize,
-    ) -> Result<usize> {
-        if path.len() != 2 {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "enum pattern requires Enum.Variant",
-                    None,
-                )
-            );
-        }
-
-        let enum_name =
-            self.chunk.add_constant(
-                Value::Str(
-                    Rc::new(
-                        path[0].clone()
-                    )
-                )
-            );
-
-        let variant =
-            self.chunk.add_constant(
-                Value::Str(
-                    Rc::new(
-                        path[1].clone()
-                    )
-                )
-            );
-
-        self.chunk.emit_operand(
-            OpCode::LoadLocal,
-            value_slot as u32,
-        );
-
-        self.chunk.emit_operand(
-            OpCode::Constant,
-            enum_name,
-        );
-
-        self.chunk.emit_operand(
-            OpCode::Constant,
-            variant,
-        );
-
-        self.chunk.emit_operand(
-            OpCode::MatchEnum,
-            field_count as u32,
-        );
-
-        Ok(
-            self.chunk.emit_operand(
-                OpCode::JumpIfFalse,
-                0,
-            )
-        )
-    }
-
     fn enter_scope(
         &mut self,
     ) {
@@ -964,19 +902,35 @@ impl Compiler {
                         })?;
                 }
 
-                let enum_ref =
-                    Rc::new(enum_def);
+                let enum_slot =
+                    self.declare_local(
+                        def.name.clone()
+                    )?;
 
                 let constant =
                     self.chunk.add_constant(
                         Value::Enum(
-                            enum_ref
+                            Rc::new(enum_def)
                         )
                     );
 
                 self.chunk.emit_operand(
                     OpCode::Constant,
                     constant,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    enum_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                // Enum declarations do not produce a value.
+                self.chunk.emit(
+                    OpCode::Unit
                 );
             }
 

@@ -906,28 +906,7 @@ fn vm_pattern_binding_can_be_reassigned() {
 // ============================================================
 
 #[test]
-fn vm_enum_constructor() {
-    assert_int(
-        r#"
-        enum Option {
-            Some
-            None
-        }
-
-        let x =
-            Option.Some(42)
-
-        match x {
-            Option.Some(v) => v
-            Option.None => 0
-        }
-        "#,
-        42,
-    );
-}
-
-#[test]
-fn vm_enum_unit_variant() {
+fn vm_enum_zero_arity_variant() {
     assert_int(
         r#"
         enum Option {
@@ -948,11 +927,33 @@ fn vm_enum_unit_variant() {
 }
 
 #[test]
-fn vm_enum_second_match_arm() {
+fn vm_enum_variant_with_value() {
     assert_int(
         r#"
         enum Result {
-            Ok
+            Ok(value)
+            Err
+
+        }
+
+        let x =
+            Result.Ok(42)
+
+        match x {
+            Result.Ok(value) => value
+            Result.Err => 0
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn vm_enum_second_arm() {
+    assert_int(
+        r#"
+        enum Result {
+            Ok(value)
             Err
         }
 
@@ -960,7 +961,7 @@ fn vm_enum_second_match_arm() {
             Result.Err
 
         match x {
-            Result.Ok(v) => v
+            Result.Ok(value) => value
             Result.Err => 99
         }
         "#,
@@ -969,11 +970,11 @@ fn vm_enum_second_match_arm() {
 }
 
 #[test]
-fn vm_enum_nested_pattern() {
+fn vm_enum_nested_tuple_pattern() {
     assert_int(
         r#"
         enum Result {
-            Ok
+            Ok(value)
             Err
         }
 
@@ -995,11 +996,11 @@ fn vm_enum_nested_pattern() {
 }
 
 #[test]
-fn vm_enum_list_field() {
+fn vm_enum_nested_list_pattern() {
     assert_int(
         r#"
         enum Result {
-            Ok
+            Ok(value)
             Err
         }
 
@@ -1019,6 +1020,4 @@ fn vm_enum_list_field() {
         30,
     );
 }
-
-
 

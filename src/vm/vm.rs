@@ -8,6 +8,7 @@ use crate::{
         List,
         ListRef,
         Value,
+        EnumRef,
         EnumValue,
         EnumConstructor,
         IteratorObj,
@@ -1332,17 +1333,26 @@ impl Vm {
                         );
                     };
 
+                    let expected_arity =
+                        operand as usize;
+
                     let matched =
                         match &value {
                             Value::EnumValue(
-                                value
+                                enum_value
                             ) => {
-                                value.enum_name()
+                                enum_value
+                                    .enum_name()
                                     == enum_name.as_str()
-                                    && value.variant()
-                                        == variant.as_str()
-                                    && value.fields().len()
-                                        == operand as usize
+                                &&
+                                enum_value
+                                    .variant()
+                                    == variant.as_str()
+                                &&
+                                enum_value
+                                    .fields()
+                                    .len()
+                                    == expected_arity
                             }
 
                             _ => false,
@@ -2397,6 +2407,14 @@ impl Vm {
                 )
             }
 
+            Value::Enum(enum_def) => {
+                self.invoke_enum_constructor(
+                    enum_def,
+                    name,
+                    args,
+                )
+            }
+
             Value::Iterator(iterator) => {
                 self.invoke_iterator_method(
                     iterator,
@@ -3310,6 +3328,56 @@ impl Vm {
                 )
             }
         }
+    }
+
+    fn invoke_enum_constructor(
+        &mut self,
+        enum_def: EnumRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let variant =
+            enum_def
+                .variant(name)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "enum '{}' has no variant '{}'",
+                            enum_def.name(),
+                            name,
+                        ),
+                        None,
+                    )
+                })?;
+
+        if args.len() != variant.arity() {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{}.{} expects {} arguments, got {}",
+                        enum_def.name(),
+                        name,
+                        variant.arity(),
+                        args.len(),
+                    ),
+                    None,
+                )
+            );
+        }
+
+        Ok(
+            Value::EnumValue(
+                Rc::new(
+                    EnumValue::new(
+                        enum_def.name(),
+                        name,
+                        args,
+                    )
+                )
+            )
+        )
     }
 
     #[inline]
