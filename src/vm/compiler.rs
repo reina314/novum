@@ -415,6 +415,54 @@ impl Compiler {
         )
     }
 
+    fn emit_struct_match(
+        &mut self,
+        value_slot: u16,
+        path: &[String],
+        field_count: usize,
+    ) -> Result<usize> {
+        if path.len() != 1 {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "struct pattern requires a struct name",
+                    None,
+                )
+            );
+        }
+
+        let name =
+            self.chunk.add_constant(
+                Value::Str(
+                    Rc::new(
+                        path[0].clone()
+                    )
+                )
+            );
+
+        self.chunk.emit_operand(
+            OpCode::LoadLocal,
+            value_slot as u32,
+        );
+
+        self.chunk.emit_operand(
+            OpCode::Constant,
+            name,
+        );
+
+        self.chunk.emit_operand(
+            OpCode::MatchStruct,
+            field_count as u32,
+        );
+
+        Ok(
+            self.chunk.emit_operand(
+                OpCode::JumpIfFalse,
+                0,
+            )
+        )
+    }
+
     fn enter_scope(
         &mut self,
     ) {
@@ -2608,6 +2656,70 @@ impl Compiler {
                 failures.push(
                     failure
                 );
+            }
+        
+            Pattern::Struct {
+                path,
+                fields,
+            } => {
+                let failure =
+                    self.emit_struct_match(
+                        value_slot,
+                        path,
+                        fields.len(),
+                    )?;
+
+                failures.push(
+                    failure
+                );
+
+                for (
+                    name,
+                    pattern,
+                ) in fields
+                {
+                    let field_slot =
+                        self.allocate_temp_local();
+
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        value_slot as u32,
+                    );
+
+                    let name_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        name_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::StructFieldGet
+                    );
+
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        field_slot as u32,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+
+                    failures.extend(
+                        self.compile_pattern(
+                            field_slot,
+                            pattern,
+                        )?
+                    );
+                }
             }
         }
 

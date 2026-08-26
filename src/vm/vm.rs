@@ -1266,6 +1266,55 @@ impl Vm {
                     self.push(field);
                 }
 
+                OpCode::StructFieldGet => {
+                    let field =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    let Value::Str(field) =
+                        field
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "struct field name must be Str",
+                                None,
+                            )
+                        );
+                    };
+
+                    let Value::Struct(value) =
+                        object
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "StructFieldGet expects Struct",
+                                None,
+                            )
+                        );
+                    };
+
+                    let result =
+                        value
+                            .get_field(field.as_str())
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Name,
+                                    format!(
+                                        "{} has no field '{}'",
+                                        value.type_name(),
+                                        field,
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    self.push(result);
+                }
+
                 OpCode::IteratorFrom => {
                     let value =
                         self.pop()?;
@@ -1430,6 +1479,41 @@ impl Vm {
                         );
 
                     self.push(value);
+                    self.push(
+                        Value::Bool(matched)
+                    );
+                }
+
+                OpCode::MatchStruct => {
+                    let name =
+                        self.pop()?;
+
+                    let value =
+                        self.pop()?;
+
+                    let Value::Str(name) =
+                        name
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "MatchStruct expects struct name",
+                                None,
+                            )
+                        );
+                    };
+
+                    let matched =
+                        match &value {
+                            Value::Struct(value) =>
+                                value.type_name()
+                                    == name.as_str(),
+
+                            _ => false,
+                        };
+
+                    self.push(value);
+
                     self.push(
                         Value::Bool(matched)
                     );

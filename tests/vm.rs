@@ -1108,3 +1108,79 @@ fn vm_struct_nested_value() {
     );
 }
 
+#[test]
+fn vm_struct_pattern() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        let p =
+            Point(10, 20)
+
+        match p {
+            Point { x, y } =>
+                x + y
+        }
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_struct_pattern_renaming() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        let p =
+            Point(10, 20)
+
+        match p {
+            Point {
+                x: a,
+                y: b,
+            } =>
+                a + b
+        }
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_nested_struct_pattern() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        struct Line {
+            start
+            end
+        }
+
+        let line =
+            Line(
+                Point(1, 2),
+                Point(3, 4),
+            )
+
+        match line {
+            Line {
+                start: Point { x: a, y: b },
+                end: Point { x: c, y: d },
+            } =>
+                a + b + c + d
+        }
+        "#,
+        10,
+    );
+}

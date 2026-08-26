@@ -2676,6 +2676,14 @@ impl Parser {
             );
         }
 
+        if self.check(
+            TokenKind::LBrace
+        ) {
+            return self.parse_struct_pattern(
+                path
+            );
+        }
+
         if path.len() == 1
             && !self.check(
                 TokenKind::LParen
@@ -2825,6 +2833,55 @@ impl Parser {
 
         Ok(
             Pattern::List(patterns)
+        )
+    }
+
+    fn parse_struct_pattern(
+        &mut self,
+        path: Vec<String>,
+    ) -> Result<Pattern> {
+        self.expect(
+            TokenKind::LBrace
+        )?;
+
+        let mut fields =
+            Vec::new();
+
+        while !self.check(
+            TokenKind::RBrace
+        ) {
+            let name =
+                self.expect_ident()?;
+
+            let pattern =
+                if self.eat_if(
+                    TokenKind::Colon
+                ) {
+                    self.parse_pattern()?
+                } else {
+                    Pattern::Ident(
+                        name.clone()
+                    )
+                };
+
+            fields.push(
+                (name, pattern)
+            );
+
+            self.eat_if(
+                TokenKind::Comma
+            );
+        }
+
+        self.expect(
+            TokenKind::RBrace
+        )?;
+
+        Ok(
+            Pattern::Struct {
+                path,
+                fields,
+            }
         )
     }
 }
