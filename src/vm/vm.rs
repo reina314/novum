@@ -1117,33 +1117,48 @@ impl Vm {
                         Value::Enum(
                             enum_def
                         ) => {
-                            if enum_def
-                                .variant(
-                                    field.as_str()
-                                )
-                                .is_none()
-                            {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Name,
-                                        format!(
-                                            "enum '{}' has no variant '{}'",
-                                            enum_def.name(),
-                                            field
-                                        ),
-                                        None,
+                            let variant =
+                                enum_def
+                                    .variant(
+                                        field.as_str()
+                                    )
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Name,
+                                            format!(
+                                                "enum '{}' has no variant '{}'",
+                                                enum_def.name(),
+                                                field,
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            let arity =
+                                variant.arity();
+
+                            if arity == 0 {
+                                self.push(
+                                    Value::EnumValue(
+                                        Rc::new(
+                                            EnumValue::new(
+                                                enum_def.name(),
+                                                field.as_str(),
+                                                Vec::new(),
+                                            )
+                                        )
+                                    )
+                                );
+                            } else {
+                                self.push(
+                                    Value::EnumConstructor(
+                                        EnumConstructor::new(
+                                            enum_def,
+                                            field.as_str(),
+                                        )
                                     )
                                 );
                             }
-
-                            self.push(
-                                Value::EnumConstructor(
-                                    EnumConstructor::new(
-                                        enum_def,
-                                        field.as_str(),
-                                    )
-                                )
-                            );
                         }
 
                         _ => {

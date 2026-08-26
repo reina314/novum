@@ -2509,7 +2509,7 @@ impl Compiler {
                     );
 
                     self.chunk.emit(
-                        OpCode::IndexGet
+                        OpCode::EnumFieldGet
                     );
 
                     self.chunk.emit_operand(
