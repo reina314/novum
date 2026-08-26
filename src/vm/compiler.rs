@@ -1211,6 +1211,228 @@ impl Compiler {
                 );
             }
 
+            ExprKind::For {
+                pattern,
+                iterable,
+                body,
+            } => {
+                let iterator_slot =
+                    self.allocate_temp_local();
+
+                let result_slot =
+                    self.allocate_temp_local();
+
+                // Initialize the result of a zero-iteration loop.
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                // iterable -> Iterator
+                self.compile_expr(
+                    iterable
+                )?;
+
+                self.chunk.emit(
+                    OpCode::IteratorFrom
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    iterator_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                let loop_start =
+                    self.chunk.code.len();
+
+                let loop_index =
+                    self.loops.len();
+
+                self.loops.push(
+                    LoopContext {
+                        condition_target:
+                            loop_start,
+
+                        cleanup_target:
+                            None,
+
+                        continue_jumps:
+                            Vec::new(),
+
+                        break_jumps:
+                            Vec::new(),
+
+                        local_slots:
+                            Vec::new(),
+                    }
+                );
+
+                self.loop_local_stack.push(
+                    Vec::new()
+                );
+
+                // Create the loop binding inside the loop scope.
+                self.enter_scope();
+
+                let loop_slot =
+                    match pattern {
+                        Pattern::Ident(name) => {
+                            self.declare_local(
+                                name.clone()
+                            )?
+                        }
+
+                        Pattern::Wildcard => {
+                            // Still consume the item, but do not
+                            // expose a binding.
+                            self.allocate_temp_local()
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM currently supports only identifier and wildcard for-loop patterns",
+                                    None,
+                                )
+                            );
+                        }
+                    };
+
+                // Fetch the next item.
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    iterator_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::IteratorNext
+                );
+
+                let exit =
+                    self.chunk.emit_operand(
+                        OpCode::JumpIfFalse,
+                        0,
+                    );
+
+                // The item remains on the stack after JumpIfFalse.
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    loop_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                // Compile the loop body.
+                self.compile_expr(
+                    body
+                )?;
+
+                // Save the value of the completed iteration.
+                self.chunk.emit(
+                    OpCode::Dup
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                self.exit_scope();
+
+                let cleanup_target =
+                    self.chunk.code.len();
+
+                self.loops[loop_index]
+                    .cleanup_target =
+                    Some(cleanup_target);
+
+                let local_slots =
+                    self.loop_local_stack
+                        .pop()
+                        .unwrap();
+
+                self.loops[loop_index]
+                    .local_slots =
+                    local_slots;
+
+                for jump in
+                    self.loops[loop_index]
+                        .continue_jumps
+                        .iter()
+                {
+                    self.chunk.patch_operand(
+                        *jump,
+                        cleanup_target as u32,
+                    );
+                }
+
+                // End the current iteration.
+                for slot in
+                    &self.loops[loop_index]
+                        .local_slots
+                {
+                    self.chunk.emit_operand(
+                        OpCode::ResetLocal,
+                        *slot as u32,
+                    );
+                }
+
+                self.chunk.emit_operand(
+                    OpCode::Jump,
+                    loop_start as u32,
+                );
+
+                let loop_end =
+                    self.chunk.code.len();
+
+                self.chunk.patch_operand(
+                    exit,
+                    loop_end as u32,
+                );
+
+                let context =
+                    self.loops.pop().unwrap();
+
+                for jump in
+                    context.break_jumps
+                {
+                    self.chunk.patch_operand(
+                        jump,
+                        loop_end as u32,
+                    );
+                }
+
+                // IteratorNext leaves Unit on the stack when
+                // the loop terminates normally.
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    result_slot as u32,
+                );
+            }
+
             ExprKind::Break => {
                 let Some(loop_context) =
                     self.loops.last_mut()
@@ -1412,21 +1634,27 @@ impl Compiler {
             ExprKind::Block(exprs) => {
                 self.enter_scope();
 
-                for (
-                    index,
-                    expr,
-                ) in exprs.iter().enumerate()
-                {
-                    self.compile_expr(
-                        expr
-                    )?;
-
-                    if index + 1
-                        != exprs.len()
+                if exprs.is_empty() {
+                    self.chunk.emit(
+                        OpCode::Unit
+                    );
+                } else {
+                    for (
+                        index,
+                        expr,
+                    ) in exprs.iter().enumerate()
                     {
-                        self.chunk.emit(
-                            OpCode::Pop
-                        );
+                        self.compile_expr(
+                            expr
+                        )?;
+
+                        if index + 1
+                            != exprs.len()
+                        {
+                            self.chunk.emit(
+                                OpCode::Pop
+                            );
+                        }
                     }
                 }
 
