@@ -1,0 +1,215 @@
+pub class Dense {
+    input_dim,
+    output_dim,
+
+    weights,
+    bias,
+
+    grad_weights,
+    grad_bias,
+
+    input_cache,
+
+
+    // ========================================================
+    // Initialization
+    // ========================================================
+
+    init = |self, input_dim, output_dim| {
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+        let scale =
+            math.sqrt(
+                6.0
+                / (input_dim + output_dim)
+            )
+
+        let bias_scale =
+            scale * 0.1
+
+
+        // Xavier / Glorot initialization
+        self.weights =
+            range(output_dim)
+                .map(|_| {
+                    range(input_dim)
+                        .map(|_| {
+                            (random() * 2.0 - 1.0)
+                            * scale
+                        })
+                        .collect()
+                })
+                .collect()
+
+
+        // Small random biases
+        self.bias =
+            range(output_dim)
+                .map(|_| {
+                    (random() * 2.0 - 1.0)
+                    * bias_scale
+                })
+                .collect()
+
+
+        // Batch gradients
+        self.grad_weights =
+            range(output_dim)
+                .map(|_| {
+                    range(input_dim)
+                        .map(|_| 0.0)
+                        .collect()
+                })
+                .collect()
+
+        self.grad_bias =
+            range(output_dim)
+                .map(|_| 0.0)
+                .collect()
+
+        self.input_cache = []
+    },
+
+
+    // ========================================================
+    // Forward
+    // ========================================================
+
+    forward = |self, x| {
+        self.input_cache =
+            iter(x).collect()
+
+        range(self.output_dim)
+            .map(|i| {
+                zip(
+                    self.weights[i],
+                    self.input_cache,
+                )
+                .map(|(w, x)| w * x)
+                .sum()
+                + self.bias[i]
+            })
+            .collect()
+    },
+
+
+    // ========================================================
+    // Reset gradients
+    // ========================================================
+
+    zero_grad = |self| {
+        self.grad_weights =
+            range(self.output_dim)
+                .map(|_| {
+                    range(self.input_dim)
+                        .map(|_| 0.0)
+                        .collect()
+                })
+                .collect()
+
+        self.grad_bias =
+            range(self.output_dim)
+                .map(|_| 0.0)
+                .collect()
+    },
+
+
+    // ========================================================
+    // Backward
+    // ========================================================
+
+    backward =
+        |self, grad_output| {
+
+            let grad =
+                iter(grad_output)
+                    .collect()
+
+
+            // dL/dInput
+            let grad_input =
+                range(self.input_dim)
+                    .map(|input_index| {
+                        range(self.output_dim)
+                            .map(|output_index| {
+                                self.weights[output_index][input_index]
+                                * grad[output_index]
+                            })
+                            .sum()
+                    })
+                    .collect()
+
+
+            // Accumulate dL/dW and dL/db
+            self.grad_weights =
+                range(self.output_dim)
+                    .map(|output_index| {
+                        range(self.input_dim)
+                            .map(|input_index| {
+                                self.grad_weights
+                                    [output_index]
+                                    [input_index]
+                                + grad[output_index]
+                                    * self.input_cache[input_index]
+                            })
+                            .collect()
+                    })
+                    .collect()
+
+
+            self.grad_bias =
+                range(self.output_dim)
+                    .map(|output_index| {
+                        self.grad_bias[output_index]
+                        + grad[output_index]
+                    })
+                    .collect()
+
+
+            grad_input
+        },
+
+
+    // ========================================================
+    // Batch update
+    // ========================================================
+
+    step =
+        |self, learning_rate, batch_size| {
+
+            let scale =
+                learning_rate
+                / batch_size
+
+
+            self.weights =
+                range(self.output_dim)
+                    .map(|output_index| {
+                        range(self.input_dim)
+                            .map(|input_index| {
+                                self.weights
+                                    [output_index]
+                                    [input_index]
+                                - scale
+                                    * self.grad_weights
+                                        [output_index]
+                                        [input_index]
+                            })
+                            .collect()
+                    })
+                    .collect()
+
+
+            self.bias =
+                range(self.output_dim)
+                    .map(|output_index| {
+                        self.bias[output_index]
+                        - scale
+                            * self.grad_bias[
+                                output_index
+                            ]
+                    })
+                    .collect()
+        }
+}

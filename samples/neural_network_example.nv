@@ -1,0 +1,125 @@
+import mlp as nn
+
+print("\n== XOR neural network ==")
+
+
+// ============================================================
+// Dataset
+// ============================================================
+
+let X = [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+]
+
+let y = [
+    0.0,
+    1.0,
+    1.0,
+    0.0,
+]
+
+
+// ============================================================
+// Model
+// ============================================================
+
+let model =
+    nn.MLP(
+        input_dim = 2,
+        hidden_dim = 4,
+    )
+
+
+// ============================================================
+// Training
+// ============================================================
+
+print("\nTraining...")
+
+model.fit(
+    X,
+    y,
+    epochs = 2000,
+    learning_rate = 0.5,
+)
+
+
+// ============================================================
+// Evaluation
+// ============================================================
+
+print("\nPredictions:")
+
+for i in range(len(X)) {
+    let x =
+        X[i]
+
+    let answer =
+        y[i]
+
+    let probability =
+        model.forward(x)
+
+    let prediction =
+        model.predict(x)
+
+    print(
+        x
+        + " -> "
+        + prediction
+        + "   probability = "
+        + probability
+        + "   answer = "
+        + answer
+    )
+}
+
+
+print(
+    "\nAccuracy: "
+    + model.accuracy(X, y)
+)
+
+// Example Output
+//
+// == XOR neural network ==
+//
+// Training...
+// Epoch 1  loss = 0.68833617
+// Epoch 101  loss = 0.0977914
+// Epoch 201  loss = 0.03406796
+// Epoch 301  loss = 0.02004385
+// Epoch 401  loss = 0.01411092
+// Epoch 501  loss = 0.01086317
+// Epoch 601  loss = 0.00882118
+// Epoch 701  loss = 0.00742104
+// Epoch 801  loss = 0.00640225
+// Epoch 901  loss = 0.00562815
+// Epoch 1001  loss = 0.00502029
+// Epoch 1101  loss = 0.00453045
+// Epoch 1201  loss = 0.00412738
+// Epoch 1301  loss = 0.00378996
+// Epoch 1401  loss = 0.00350338
+// Epoch 1501  loss = 0.00325699
+// Epoch 1601  loss = 0.00304289
+// Epoch 1701  loss = 0.00285515
+// Epoch 1801  loss = 0.00268918
+// Epoch 1901  loss = 0.00254141
+//
+// Predictions:
+// [0.0, 0.0] -> 0   probability = 0.00042035   answer = 0.0
+// [0.0, 1.0] -> 1   probability = 0.99727431   answer = 1.0
+// [1.0, 0.0] -> 1   probability = 0.99731503   answer = 1.0
+// [1.0, 1.0] -> 0   probability = 0.00379038   answer = 0.0
+//
+// Accuracy: 1.0
+
+
+// Running Time
+// ________________________________________________________
+// Executed in    1.04 secs    fish           external
+//    usr time    1.03 secs    0.33 millis    1.03 secs
+//    sys time    0.01 secs    1.42 millis    0.01 secs

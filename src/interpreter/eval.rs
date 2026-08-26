@@ -199,29 +199,50 @@ impl Interpreter {
 
             IteratorObj::Str {
                 data,
+                byte_index,
+            } => {
+                let Some(rest) =
+                    data.as_str().get(*byte_index..)
+                else {
+                    return Ok(None);
+                };
+
+                let Some(ch) =
+                    rest.chars().next()
+                else {
+                    return Ok(None);
+                };
+
+                *byte_index += ch.len_utf8();
+
+                Ok(Some(
+                    Value::Str(
+                        Rc::new(
+                            ch.to_string()
+                        )
+                    )
+                ))
+            }
+
+            IteratorObj::Vector {
+                data,
                 index,
             } => {
-                let value =
-                    data.get(*index)
-                        .copied();
+                let value = {
+                    data.borrow()
+                        .get(*index)
+                };
 
                 match value {
-                    Some(ch) => {
+                    Some(value) => {
                         *index += 1;
 
-                        Ok(
-                            Some(
-                                Value::Str(
-                                    Rc::new(
-                                        ch.to_string()
-                                    )
-                                )
-                            )
-                        )
+                        Ok(Some(
+                            Value::Float(value)
+                        ))
                     }
 
-                    None =>
-                        Ok(None),
+                    None => Ok(None),
                 }
             }
 
@@ -249,25 +270,24 @@ impl Interpreter {
                 source,
                 function,
             } => {
-                let input =
-                    {
-                        let mut source =
-                            source.borrow_mut();
+                let input = {
+                    let mut source =
+                        source.borrow_mut();
 
-                        self.next_iterator_value(
-                            &mut source,
-                            whole,
-                        )?
-                    };
+                    self.next_iterator_value(
+                        &mut source,
+                        whole,
+                    )?
+                };
 
                 match input {
                     Some(value) => {
                         let value =
-                        self.call_iterator_callback(
-                            function.clone(),
-                            vec![value],
-                            whole,
-                        )?;
+                            self.call_iterator_callback_1(
+                                function.clone(),
+                                value,
+                                whole,
+                            )?;
 
                         Ok(Some(value))
                     }
@@ -302,12 +322,10 @@ impl Interpreter {
                                 return Ok(None),
                         };
 
-                    let result = 
-                        self.call_iterator_callback(
+                    let result =
+                        self.call_iterator_callback_1(
                             predicate.clone(),
-                            vec![
-                                value.clone()
-                            ],
+                            value.clone(),
                             whole,
                         )?;
 
@@ -1058,12 +1076,23 @@ impl Interpreter {
 
             Block(exprs) => self.eval_block(exprs, true),
 
-            Lambda(params, body) => Ok(ControlFlow::Value(Value::Func(Rc::new(Function {
-                name: None,
-                params: params.clone(),
-                body: Rc::new((**body).clone()),
-                closure: self.env.clone(),
-            })))),
+            Lambda(
+                params, 
+                body
+            ) => Ok(
+                ControlFlow::Value(
+                    Value::Func(
+                        Rc::new(
+                            Function {
+                                name: None,
+                                params: params.clone(),
+                                body: Rc::new((**body).clone()),
+                                closure: self.env.clone(),
+                                }
+                            )
+                        )
+                    )
+                ),
 
             Call(
                 callee, 
@@ -1087,14 +1116,26 @@ impl Interpreter {
                 )
             }
 
-            Index(obj, index) => self.eval_index(obj, index, expr),
+            Index(
+                obj,
+                index
+            ) => {
+                self.eval_index(
+                    obj, 
+                    index, 
+                    expr
+                )
+            }
 
             Null => Ok(ControlFlow::Value(Value::Null)),
             Unit => Ok(ControlFlow::Value(Value::Unit)),
         }
     }
 
-    fn eval_value(&mut self, expr: &Expr) -> Result<Value> {
+    fn eval_value(
+        &mut self,
+        expr: &Expr
+    ) -> Result<Value> {
         match self.eval(expr)? {
             ControlFlow::Value(v) => Ok(v),
             ControlFlow::Return(_) =>
@@ -1124,7 +1165,11 @@ impl Interpreter {
         }
     }
 
-    fn lookup(&self, name: &str, expr: &Expr) -> Result<ControlFlow> {
+    fn lookup(
+        &self,
+        name: &str,
+        expr: &Expr
+    ) -> Result<ControlFlow> {
         self.env.get(name)
             .map(ControlFlow::Value)
             .ok_or_else(|| self.error(ErrorKind::Name, format!("{} is undefined", name), expr))
@@ -3627,46 +3672,17 @@ impl Interpreter {
         body: &Expr,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let iterator =
-            self.eval_iterable(
-                iterable,
-                whole,
-            )?;
+        let iterator = self.eval_iterable(
+            iterable,
+            whole,
+        )?;
 
-        let old_env =
-            self.env.clone();
-
-        self.env =
-            self.env.child();
+        let old_env = self.env.clone();
 
         self.loop_depth += 1;
 
         let result = (|| {
-            let mut names =
-                Vec::new();
-
-            collect_pattern_names(
-                pattern,
-                &mut names,
-            );
-
-            for name in names {
-                self.env
-                    .declare(
-                        name,
-                        Value::Unit,
-                    )
-                    .map_err(|message| {
-                        self.error(
-                            ErrorKind::Name,
-                            message,
-                            whole,
-                        )
-                    })?;
-            }
-
-            let mut last =
-                Value::Unit;
+            let mut last = Value::Unit;
 
             while let Some(value) =
                 self.next_from_iterator(
@@ -3674,46 +3690,73 @@ impl Interpreter {
                     whole,
                 )?
             {
-                let bindings =
-                    self.match_pattern_bindings(
-                        pattern,
-                        &value,
-                        whole,
-                    )?;
+                self.env = old_env.child();
 
-                for (name, value)
-                    in bindings
-                {
-                    self.env.assign_local(
-                        &name,
-                        value,
-                    );
+                match pattern {
+                    Pattern::Ident(name) => {
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+                    }
+
+                    Pattern::Wildcard => {}
+
+                    _ => {
+                        let bindings =
+                            self.match_pattern_bindings(
+                                pattern,
+                                &value,
+                                whole,
+                            )?;
+
+                        for (name, value) in bindings {
+                            self.env.define(
+                                name,
+                                value,
+                            );
+                        }
+                    }
                 }
 
-                match self.eval(body)? {
-                    ControlFlow::Value(value) =>
-                        last = value,
+                let flow =
+                    match &body.kind {
+                        ExprKind::Block(exprs) =>
+                            self.eval_block(
+                                exprs,
+                                false,
+                            )?,
 
-                    ControlFlow::Break =>
-                        break,
+                        _ =>
+                            self.eval(body)?,
+                    };
 
-                    ControlFlow::Continue =>
-                        continue,
+                match flow {
+                    ControlFlow::Value(value) => {
+                        last = value;
+                    }
 
-                    ControlFlow::Return(value) =>
+                    ControlFlow::Break => {
+                        break;
+                    }
+
+                    ControlFlow::Continue => {
+                        continue;
+                    }
+
+                    ControlFlow::Return(value) => {
                         return Ok(
                             ControlFlow::Return(value)
-                        ),
+                        );
+                    }
                 }
             }
 
-            Ok(
-                ControlFlow::Value(last)
-            )
+            Ok(ControlFlow::Value(last))
         })();
 
-        self.loop_depth -= 1;
         self.env = old_env;
+        self.loop_depth -= 1;
 
         result
     }
@@ -4276,127 +4319,148 @@ impl Interpreter {
         args: &[CallArg],
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let callable = self.eval_value(callee)?;
-
-        let evaluated = 
-            self.eval_call_args(args)?;
+        let callable =
+            self.eval_value(callee)?;
 
         match callable {
-            Value::Func(func) => {
-                self.call_function_with_evaluated_args(
-                    func, 
-                    evaluated, 
-                    None,
-                    whole
-                )
-            }
+            Value::Func(function)
+                if args.iter().all(|arg| arg.name.is_none()) =>
+            {
+                let args =
+                    self.eval_positional_args(args)?;
 
-            Value::Builtin(function) => {
-                // reject named arguments
-                let args= 
-                    self.positional_values(
-                        evaluated,
-                        "built-in function",
-                        whole,
-                    )?;
-
-                function(args)
-                    .map(ControlFlow::Value)
-                    .map_err(|message| {
-                        self.error(
-                            ErrorKind::Runtime,
-                            message,
-                            whole,
-                        )
-                    })
-            }
-
-            Value::BoundMethod(method) => {
-                self.call_bound_method(
-                    method,
-                    evaluated,
+                self.call_function(
+                    function,
+                    args,
                     whole,
                 )
             }
 
-            Value::Class(class) => {
-                Ok(
-                    ControlFlow::Value(
-                        self.instantiate_class(
-                            class,
-                            evaluated,
-                            whole,
-                        )?
-                    )
+            Value::Func(function) => {
+                let evaluated =
+                    self.eval_call_args(args)?;
+
+                self.call_function_with_evaluated_args(
+                    function,
+                    evaluated,
+                    None,
+                    whole,
                 )
             }
 
-            Value::EnumConstructor(constructor) => {
-                let fields =
-                    self.positional_values(
-                        evaluated,
-                        &format!(
-                            "{}.{}",
-                            constructor
-                                .enum_def()
-                                .name(),
-                            constructor.variant(),
+            callable => {
+                let evaluated =
+                    self.eval_call_args(args)?;
+
+                match callable {
+                    Value::Builtin(function) => {
+                        let args =
+                            self.positional_values(
+                                evaluated,
+                                "built-in function",
+                                whole,
+                            )?;
+
+                        function(args)
+                            .map(ControlFlow::Value)
+                            .map_err(|message| {
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    whole,
+                                )
+                            })
+                    }
+
+                    Value::BoundMethod(method) =>
+                        self.call_bound_method(
+                            method,
+                            evaluated,
+                            whole,
                         ),
-                        whole,
-                    )?;
 
-                let expected =
-                    constructor.arity();
+                    Value::Class(class) =>
+                        Ok(
+                            ControlFlow::Value(
+                                self.instantiate_class(
+                                    class,
+                                    evaluated,
+                                    whole,
+                                )?
+                            )
+                        ),
 
-                if fields.len() != expected {
-                    return Err(
-                        self.error(
-                            ErrorKind::Arity,
-                            format!(
-                                "{}.{} expects {} argument{}, got {}",
+                    Value::EnumConstructor(constructor) => {
+                        let fields =
+                            self.positional_values(
+                                evaluated,
+                                &format!(
+                                    "{}.{}",
+                                    constructor
+                                        .enum_def()
+                                        .name(),
+                                    constructor.variant(),
+                                ),
+                                whole,
+                            )?;
+
+                        let expected =
+                            constructor.arity();
+
+                        if fields.len() != expected {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Arity,
+                                    format!(
+                                        "{}.{} expects {} argument{}, got {}",
+                                        constructor
+                                            .enum_def()
+                                            .name(),
+                                        constructor.variant(),
+                                        expected,
+                                        if expected == 1 {
+                                            ""
+                                        } else {
+                                            "s"
+                                        },
+                                        fields.len(),
+                                    ),
+                                    whole,
+                                )
+                            );
+                        }
+
+                        let value =
+                            EnumValue::new(
                                 constructor
                                     .enum_def()
                                     .name(),
                                 constructor.variant(),
-                                expected,
-                                if expected == 1 {
-                                    ""
-                                } else {
-                                    "s"
-                                },
-                                fields.len(),
-                            ),
-                            whole,
+                                fields,
+                            );
+
+                        Ok(
+                            ControlFlow::Value(
+                                Value::EnumValue(
+                                    Rc::new(value)
+                                )
+                            )
                         )
-                    );
+                    }
+
+                    other =>
+                        Err(
+                            self.error(
+                                ErrorKind::Type,
+                                format!(
+                                    "{} is not callable",
+                                    other.type_name()
+                                ),
+                                whole,
+                            )
+                        ),
                 }
-
-                let value =
-                    EnumValue::new(
-                        constructor
-                            .enum_def()
-                            .name(),
-                        constructor.variant(),
-                        fields,
-                    );
-
-                Ok(
-                    ControlFlow::Value(
-                        Value::EnumValue(
-                            Rc::new(value)
-                        )
-                    )
-                )
             }
-
-            other => Err(
-                self.error(
-                    ErrorKind::Type,
-                    format!("{} is not callable",
-                    other.type_name()
-                ),
-                whole)
-            ),
         }
     }
 
@@ -4420,6 +4484,32 @@ impl Interpreter {
                     name: arg.name.clone(),
                     value,
                 }
+            );
+        }
+
+        Ok(values)
+    }
+    
+    fn eval_positional_args(
+        &mut self,
+        args: &[CallArg],
+    ) -> Result<Vec<Value>> {
+        let mut values =
+            Vec::with_capacity(args.len());
+
+        for arg in args {
+            if arg.name.is_some() {
+                return Err(
+                    self.error(
+                        ErrorKind::Runtime,
+                        "named arguments are not allowed in this call path",
+                        &arg.value,
+                    )
+                );
+            }
+
+            values.push(
+                self.eval_value(&arg.value)?
             );
         }
 
@@ -5527,9 +5617,9 @@ impl Interpreter {
         let result =
             match predicate {
                 Value::Func(function) => {
-                    self.call_function(
+                    self.call_function_1(
                         function.clone(),
-                        vec![argument],
+                        argument,
                         whole,
                     )?
                 }
@@ -5579,28 +5669,434 @@ impl Interpreter {
         }
     }
 
+    /// Wrapper for `call_function_positional()`
     fn call_function(
         &mut self,
-        func: crate::runtime::FuncRef,
+        func: FuncRef,
         args: Vec<Value>,
         whole: &Expr,
     ) -> Result<ControlFlow> {
-        let evaluated =
-            args.into_iter()
-                .map(|value| {
-                    EvaluatedArg {
-                        name: None,
-                        value,
-                    }
-                })
-                .collect();
-
-        self.call_function_with_evaluated_args(
+        self.call_function_positional(
             func,
-            evaluated,
-            None,
+            args,
             whole,
         )
+    }
+
+    /// Helper for 1-argument function
+    fn call_function_1(
+        &mut self,
+        function: FuncRef,
+        arg0: Value,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            function
+                .closure()
+                .child();
+
+        let result = (|| {
+            let parameters =
+                function.parameters();
+
+            if parameters.len() != 1 {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "function expects {} arguments, got 1",
+                            parameters.len()
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            match &parameters[0] {
+                // =========================================
+                // Fast path
+                // =========================================
+
+                Pattern::Ident(name) => {
+                    self.env.define(
+                        name.clone(),
+                        arg0,
+                    );
+                }
+
+                Pattern::Wildcard => {
+                    // intentionally ignored
+                }
+
+                // =========================================
+                // Fallback: destructuring
+                // =========================================
+
+                pattern => {
+                    let mut bindings =
+                        HashMap::new();
+
+                    let matched =
+                        match_pattern(
+                            pattern,
+                            &arg0,
+                            &mut bindings,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                    if !matched {
+                        return Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                "function argument does not match parameter pattern",
+                                whole,
+                            )
+                        );
+                    }
+
+                    for (name, value)
+                        in bindings
+                    {
+                        self.env.define(
+                            name,
+                            value,
+                        );
+                    }
+                }
+            }
+
+            self.eval_function_body(
+                function.body(),
+                whole,
+            )
+        })();
+
+        self.env =
+            old_env;
+
+        result
+    }
+
+    /// Helper for 2-argument function
+    fn call_function_2(
+        &mut self,
+        function: FuncRef,
+        arg0: Value,
+        arg1: Value,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            function
+                .closure()
+                .child();
+
+        let result = (|| {
+            let parameters =
+                function.parameters();
+
+            if parameters.len() != 2 {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "function expects {} arguments, got 2",
+                            parameters.len()
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            // =========================================
+            // parameter 0
+            // =========================================
+
+            match &parameters[0] {
+                Pattern::Ident(name) => {
+                    self.env.define(
+                        name.clone(),
+                        arg0,
+                    );
+                }
+
+                Pattern::Wildcard => {}
+
+                pattern => {
+                    let mut bindings =
+                        HashMap::new();
+
+                    let matched =
+                        match_pattern(
+                            pattern,
+                            &arg0,
+                            &mut bindings,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                    if !matched {
+                        return Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                "first function argument does not match parameter pattern",
+                                whole,
+                            )
+                        );
+                    }
+
+                    for (name, value)
+                        in bindings
+                    {
+                        self.env.define(
+                            name,
+                            value,
+                        );
+                    }
+                }
+            }
+
+            // =========================================
+            // parameter 1
+            // =========================================
+
+            match &parameters[1] {
+                Pattern::Ident(name) => {
+                    self.env.define(
+                        name.clone(),
+                        arg1,
+                    );
+                }
+
+                Pattern::Wildcard => {}
+
+                pattern => {
+                    let mut bindings =
+                        HashMap::new();
+
+                    let matched =
+                        match_pattern(
+                            pattern,
+                            &arg1,
+                            &mut bindings,
+                        )
+                        .map_err(|message| {
+                            self.error(
+                                ErrorKind::Runtime,
+                                message,
+                                whole,
+                            )
+                        })?;
+
+                    if !matched {
+                        return Err(
+                            self.error(
+                                ErrorKind::Runtime,
+                                "second function argument does not match parameter pattern",
+                                whole,
+                            )
+                        );
+                    }
+
+                    for (name, value)
+                        in bindings
+                    {
+                        self.env.define(
+                            name,
+                            value,
+                        );
+                    }
+                }
+            }
+
+            self.eval_function_body(
+                function.body(),
+                whole,
+            )
+        })();
+
+        self.env =
+            old_env;
+
+        result
+    }
+
+    fn eval_function_body(
+        &mut self,
+        body: &Expr,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let flow =
+            match body {
+                Expr {
+                    kind: ExprKind::Block(exprs),
+                    ..
+                } => {
+                    self.eval_block(
+                        exprs,
+                        false,
+                    )?
+                }
+
+                body => {
+                    self.eval(body)?
+                }
+            };
+
+        match flow {
+            ControlFlow::Value(value) =>
+                Ok(
+                    ControlFlow::Value(
+                        value
+                    )
+                ),
+
+            ControlFlow::Return(value) =>
+                Ok(
+                    ControlFlow::Value(
+                        value
+                    )
+                ),
+
+            ControlFlow::Break =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "break cannot escape function body",
+                        whole,
+                    )
+                ),
+
+            ControlFlow::Continue =>
+                Err(
+                    self.error(
+                        ErrorKind::Control,
+                        "continue cannot escape function body",
+                        whole,
+                    )
+                ),
+        }
+    }
+
+    fn call_function_positional(
+        &mut self,
+        function: FuncRef,
+        args: Vec<Value>,
+        whole: &Expr,
+    ) -> Result<ControlFlow> {
+        let old_env =
+            self.env.clone();
+
+        self.env =
+            function
+                .closure()
+                .child();
+
+        let result = (|| {
+            let parameters =
+                function.parameters();
+
+            if parameters.len()
+                != args.len()
+            {
+                return Err(
+                    self.error(
+                        ErrorKind::Arity,
+                        format!(
+                            "function expects {} arguments, got {}",
+                            parameters.len(),
+                            args.len()
+                        ),
+                        whole,
+                    )
+                );
+            }
+
+            for (
+                pattern,
+                value,
+            ) in parameters
+                .iter()
+                .zip(args.into_iter())
+            {
+                match pattern {
+                    Pattern::Ident(name) => {
+                        self.env.define(
+                            name.clone(),
+                            value,
+                        );
+                    }
+
+                    Pattern::Wildcard => {}
+
+                    pattern => {
+                        let mut bindings =
+                            HashMap::new();
+
+                        let matched =
+                            match_pattern(
+                                pattern,
+                                &value,
+                                &mut bindings,
+                            )
+                            .map_err(|message| {
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    whole,
+                                )
+                            })?;
+
+                        if !matched {
+                            return Err(
+                                self.error(
+                                    ErrorKind::Runtime,
+                                    "function argument does not match parameter pattern",
+                                    whole,
+                                )
+                            );
+                        }
+
+                        for (
+                            name,
+                            value,
+                        ) in bindings
+                        {
+                            self.env.define(
+                                name,
+                                value,
+                            );
+                        }
+                    }
+                }
+            }
+
+            self.eval_function_body(
+                function.body(),
+                whole,
+            )
+        })();
+
+        self.env =
+            old_env;
+
+        result
     }
 
     fn call_function_bound(
@@ -5701,41 +6197,10 @@ impl Interpreter {
                 // 2. Evaluate function body
                 // =================================================
 
-                match self.eval(
-                    function.body()
-                )? {
-                    ControlFlow::Value(value) =>
-                        Ok(
-                            ControlFlow::Value(
-                                value
-                            )
-                        ),
-
-                    ControlFlow::Return(value) =>
-                        Ok(
-                            ControlFlow::Value(
-                                value
-                            )
-                        ),
-
-                    ControlFlow::Break =>
-                        Err(
-                            self.error(
-                                ErrorKind::Control,
-                                "break cannot escape function body",
-                                whole,
-                            )
-                        ),
-
-                    ControlFlow::Continue =>
-                        Err(
-                            self.error(
-                                ErrorKind::Control,
-                                "continue cannot escape function body",
-                                whole,
-                            )
-                        ),
-                }
+                self.eval_function_body(
+                    function.body(),
+                    whole,
+                )
             })();
 
         // ---------------------------------------------------------
@@ -6090,15 +6555,10 @@ impl Interpreter {
                     );
                 }
 
-                let chars =
-                    string
-                        .chars()
-                        .collect::<Vec<char>>();
-
                 let iterator =
                     IteratorObj::Str {
-                        data: Rc::new(chars),
-                        index: 0,
+                        data: string.clone(),
+                        byte_index: 0,
                     };
 
                 Ok(
@@ -8579,13 +9039,11 @@ impl Interpreter {
                     )?
                 {
                     accumulator =
-                        self.call_iterator_callback(
+                        self.call_iterator_callback_2(
                             function.clone(),
-                            vec![
-                                accumulator,
-                                value,
-                            ],
-                            whole
+                            accumulator,
+                            value,
+                            whole,
                         )?;
                 }
 
@@ -8651,13 +9109,11 @@ impl Interpreter {
                         };
 
                     accumulator =
-                        self.call_iterator_callback(
+                        self.call_iterator_callback_2(
                             function.clone(),
-                            vec![
-                                accumulator,
-                                value,
-                            ],
-                            whole
+                            accumulator,
+                            value,
+                            whole,
                         )?;
                 }
 
@@ -9254,15 +9710,15 @@ impl Interpreter {
         value: Value,
         whole: &Expr,
     ) -> Result<bool> {
-        match self.call_iterator_callback(
+        match self.call_iterator_callback_1(
             function,
-            vec![value],
+            value,
             whole,
         )? {
             Value::Bool(result) =>
                 Ok(result),
 
-            other => {
+            other =>
                 Err(
                     self.error(
                         ErrorKind::Type,
@@ -9272,55 +9728,71 @@ impl Interpreter {
                         ),
                         whole,
                     )
-                )
-            }
+                ),
         }
     }
 
-    /// Helper for `call_iterator_method`
-    fn call_iterator_callback(
+    fn call_iterator_callback_1(
         &mut self,
         function: FuncRef,
-        args: Vec<Value>,
+        value: Value,
         whole: &Expr,
     ) -> Result<Value> {
-        match self.call_function(
+        match self.call_function_1(
             function,
-            args,
+            value,
             whole,
         )? {
             ControlFlow::Value(value) =>
                 Ok(value),
 
-            ControlFlow::Return(_) => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot return",
-                        whole,
-                    )
-                )
-            }
+            ControlFlow::Return(_) =>
+                unreachable!(
+                    "call_function_1 converts Return into Value"
+                ),
 
-            ControlFlow::Break => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot break",
-                        whole,
-                    )
-                )
-            }
+            ControlFlow::Break =>
+                unreachable!(
+                    "call_function_1 rejects Break"
+                ),
 
-            ControlFlow::Continue => {
-                Err(
-                    self.error(
-                        ErrorKind::Runtime,
-                        "iterator callback cannot continue",
-                        whole,
-                    )
-                )
-            }
+            ControlFlow::Continue =>
+                unreachable!(
+                    "call_function_1 rejects Continue"
+                ),
+        }
+    }
+
+    fn call_iterator_callback_2(
+        &mut self,
+        function: FuncRef,
+        left: Value,
+        right: Value,
+        whole: &Expr,
+    ) -> Result<Value> {
+        match self.call_function_2(
+            function,
+            left,
+            right,
+            whole,
+        )? {
+            ControlFlow::Value(value) =>
+                Ok(value),
+
+            ControlFlow::Return(_) =>
+                unreachable!(
+                    "call_function_2 converts Return into Value"
+                ),
+
+            ControlFlow::Break =>
+                unreachable!(
+                    "call_function_2 rejects Break"
+                ),
+
+            ControlFlow::Continue =>
+                unreachable!(
+                    "call_function_2 rejects Continue"
+                ),
         }
     }
 
@@ -11174,46 +11646,6 @@ fn match_enum_pattern(
     }
 
     Ok(true)
-}
-
-/// Helper for `eval_for()`
-fn collect_pattern_names(
-    pattern: &Pattern,
-    names: &mut Vec<String>,
-) {
-    match pattern {
-        Pattern::Wildcard
-        | Pattern::Int(_)
-        | Pattern::Float(_)
-        | Pattern::Bool(_)
-        | Pattern::Str(_) => {}
-
-        Pattern::Ident(name) => {
-            names.push(name.clone());
-        }
-
-        Pattern::Tuple(patterns) |
-        Pattern::List(patterns) => {
-            for pattern in patterns {
-                collect_pattern_names(
-                    pattern,
-                    names,
-                );
-            }
-        }
-
-        Pattern::Enum {
-            fields,
-            ..
-        } => {
-            for pattern in fields {
-                collect_pattern_names(
-                    pattern,
-                    names,
-                );
-            }
-        }
-    }
 }
 
 /// Helper to extract String name from Ident pattern
