@@ -3,9 +3,16 @@ use crate::{
         Error,
         ErrorKind,
         Result,
-    }, runtime::{
-        List, Value, operator, 
-    }, syntax::BinOp, 
+    }, 
+    runtime::{
+        List,
+        Value,
+        IteratorObj,
+        IteratorRef,
+        IterResult,
+        operator, 
+    },
+    syntax::BinOp, 
 };
 
 use super::{
@@ -215,6 +222,13 @@ impl Vm {
 
     fn execute(
         &mut self,
+    ) -> Result<Value> {
+        self.execute_until_depth(0)
+    }
+
+    fn execute_until_depth(
+        &mut self,
+        target_depth: usize,
     ) -> Result<Value> {
         loop {
             let instruction =
@@ -926,6 +940,69 @@ impl Vm {
                     }
                 }
 
+                OpCode::IteratorFrom => {
+                    let value =
+                        self.pop()?;
+
+                    let iterator =
+                        IteratorObj::from_value(
+                            value
+                        )
+                        .map_err(|message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        })?;
+
+                    self.push(
+                        Value::Iterator(
+                            iterator
+                        )
+                    );
+                }
+
+                OpCode::IteratorNext => {
+                    let value =
+                        self.pop()?;
+
+                    let Value::Iterator(
+                        iterator
+                    ) = value
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "IteratorNext expects Iterator",
+                                None,
+                            )
+                        );
+                    };
+
+                    match self.iterator_next(
+                        iterator
+                    )? {
+                        IterResult::Item(value) => {
+                            self.push(value);
+
+                            self.push(
+                                Value::Bool(true)
+                            );
+                        }
+
+                        IterResult::End => {
+                            self.push(
+                                Value::Unit
+                            );
+
+                            self.push(
+                                Value::Bool(false)
+                            );
+                        }
+                    }
+                }
+
                 OpCode::Return => {
                     let result =
                         self.pop()?;
@@ -939,7 +1016,9 @@ impl Vm {
                             )
                         })?;
 
-                    if self.frames.is_empty() {
+                    if self.frames.len() ==
+                        target_depth
+                    {
                         return Ok(result);
                     }
 
@@ -1170,6 +1249,146 @@ impl Vm {
                 }
             )
         )
+    }
+
+    fn call_closure_sync(
+        &mut self,
+        closure: ClosureRef,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let caller_depth =
+            self.frames.len();
+
+        let local_count =
+            closure
+                .function
+                .chunk
+                .local_count;
+
+        let mut locals =
+            args;
+
+        locals.resize(
+            local_count,
+            Value::Unit,
+        );
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals,
+                cells:
+                    vec![
+                        None;
+                        local_count
+                    ],
+            }
+        );
+
+        self.execute_until_depth(
+            caller_depth
+        )
+    }
+
+    fn iterator_next(
+        &mut self,
+        iterator: IteratorRef,
+    ) -> Result<IterResult> {
+        let kind =
+            iterator.borrow().clone();
+
+        match kind {
+            IteratorObj::List { .. }
+            | IteratorObj::Str { .. }
+            | IteratorObj::Vector { .. }
+            | IteratorObj::Range { .. }
+            | IteratorObj::Enumerate { .. }
+            | IteratorObj::Zip { .. }
+            | IteratorObj::Take { .. }
+            | IteratorObj::Skip { .. }
+            => {
+                IteratorObj::next(
+                    &iterator
+                )
+                .map_err(|message| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        message,
+                        None,
+                    )
+                })
+            }
+
+            IteratorObj::Map {
+                source,
+                function,
+            } => {
+                match self.iterator_next(
+                    source
+                )? {
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
+
+                    IterResult::Item(value) => {
+                        self.call_closure_sync(
+                            function,
+                            vec![value],
+                        )
+                        .map(
+                            IterResult::Item
+                        )
+                    }
+                }
+            }
+
+            IteratorObj::Filter {
+                source,
+                predicate,
+            } => {
+                loop {
+                    match self.iterator_next(
+                        source.clone()
+                    )? {
+                        IterResult::End =>
+                            return Ok(
+                                IterResult::End
+                            ),
+
+                        IterResult::Item(value) => {
+                            let result =
+                                self.call_closure_sync(
+                                    predicate.clone(),
+                                    vec![value.clone()],
+                                )?;
+
+                            let Value::Bool(
+                                keep
+                            ) = result
+                            else {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        "filter predicate must return Bool",
+                                        None,
+                                    )
+                                );
+                            };
+
+                            if keep {
+                                return Ok(
+                                    IterResult::Item(
+                                        value
+                                    )
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[inline]

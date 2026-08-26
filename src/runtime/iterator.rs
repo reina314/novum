@@ -2,10 +2,10 @@ use super::{
     List,
     ListRef,
     Value,
-    FuncRef,
     StrRef,
     VectorRef,
 };
+use crate::vm::ClosureRef;
 use std::{
     rc::Rc,
     cell::RefCell,
@@ -37,12 +37,12 @@ pub enum IteratorObj {
 
     Map {
         source: IteratorRef,
-        function: FuncRef,
+        function: ClosureRef,
     },
 
     Filter {
         source: IteratorRef,
-        predicate: FuncRef,
+        predicate: ClosureRef,
     },
 
     Enumerate {
@@ -64,6 +64,11 @@ pub enum IteratorObj {
         source: IteratorRef,
         remaining: usize,
     },
+}
+
+pub enum IterResult {
+    Item(Value),
+    End,
 }
 
 impl IteratorObj {
@@ -210,6 +215,138 @@ impl IteratorObj {
                 ),
         }
     }
-}
 
+    pub fn next(
+        iterator: &IteratorRef,
+    ) -> Result<IterResult, String> {
+        let mut iterator =
+            iterator.borrow_mut();
+
+        match &mut *iterator {
+            Self::List {
+                data,
+                index,
+            } => {
+                let value =
+                    data.get(*index);
+
+                match value {
+                    Some(value) => {
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                value
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            Self::Str {
+                data,
+                byte_index,
+            } => {
+                let slice =
+                    &data[*byte_index..];
+
+                let Some(ch) =
+                    slice.chars().next()
+                else {
+                    return Ok(
+                        IterResult::End
+                    );
+                };
+
+                *byte_index +=
+                    ch.len_utf8();
+
+                Ok(
+                    IterResult::Item(
+                        Value::Str(
+                            Rc::new(
+                                ch.to_string()
+                            )
+                        )
+                    )
+                )
+            }
+
+            Self::Range {
+                current,
+                end,
+            } => {
+                if *current >= *end {
+                    return Ok(
+                        IterResult::End
+                    );
+                }
+
+                let value =
+                    *current;
+
+                *current += 1;
+
+                Ok(
+                    IterResult::Item(
+                        Value::Int(value)
+                    )
+                )
+            }
+
+            Self::Vector {
+                data,
+                index,
+            } => {
+                Err(
+                    "Vector iterator requires VM callback execution"
+                        .into()
+                )
+            }
+
+            Self::Map {
+                ..
+            } => {
+                // Implement after VM callback invocation
+                // is available.
+                Err(
+                    "Map iterator requires VM callback execution"
+                        .into()
+                )
+            }
+
+            Self::Filter {
+                ..
+            } => {
+                Err(
+                    "Filter iterator requires VM callback execution"
+                        .into()
+                )
+            }
+
+            Self::Enumerate {
+                ..
+            } |
+            Self::Zip {
+                ..
+            } |
+            Self::Take {
+                ..
+            } |
+            Self::Skip {
+                ..
+            } => {
+                Err(
+                    "iterator variant is not implemented yet"
+                        .into()
+                )
+            }
+        }
+    }
+}
 

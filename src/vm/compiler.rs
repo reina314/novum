@@ -1302,14 +1302,92 @@ impl Compiler {
                 callee,
                 args,
             ) => {
-                // Compile the callee first.
+                // VM intrinsics are resolved by the compiler and do not
+                // participate in normal lexical name resolution.
+                if let ExprKind::Ident(name) =
+                    &callee.kind
+                {
+                    match name.as_str() {
+                        "iter" => {
+                            if args.len() != 1 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Arity,
+                                        "iter() expects exactly one argument",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let arg =
+                                &args[0];
+
+                            if arg.name.is_some() {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "iter() does not support named arguments",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            self.compile_expr(
+                                &arg.value
+                            )?;
+
+                            self.chunk.emit(
+                                OpCode::IteratorFrom
+                            );
+
+                            return Ok(());
+                        }
+
+                        "next" => {
+                            if args.len() != 1 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Arity,
+                                        "next() expects exactly one argument",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let arg =
+                                &args[0];
+
+                            if arg.name.is_some() {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "next() does not support named arguments",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            self.compile_expr(
+                                &arg.value
+                            )?;
+
+                            self.chunk.emit(
+                                OpCode::IteratorNext
+                            );
+
+                            return Ok(());
+                        }
+
+                        _ => {}
+                    }
+                }
+
+                // Normal function call.
                 self.compile_expr(
                     callee
                 )?;
 
-                // Compile arguments in source order.
                 for arg in args {
-                    // VM currently supports only positional arguments.
                     if arg.name.is_some() {
                         return Err(
                             Error::new(

@@ -23,6 +23,9 @@ pub enum OpCode {
     IndexGet,
     IndexSet,
 
+    IteratorFrom,
+    IteratorNext,
+
     Add,
     Sub,
     Mul,

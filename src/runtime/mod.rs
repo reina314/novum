@@ -35,6 +35,7 @@ pub use set::{
 pub use iterator::{
     IteratorObj,
     IteratorRef,
+    IterResult,
 };
 pub use vector::{
     Vector,
