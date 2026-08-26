@@ -1247,26 +1247,20 @@ impl Compiler {
                 );
 
                 let mut end_jumps =
-                    Vec::new();
+                    Vec::with_capacity(
+                        arms.len()
+                    );
 
                 for arm in arms {
                     self.enter_scope();
 
+                    // Pattern failure jumps are intentionally left
+                    // unresolved until the arm body has been compiled.
                     let failures =
                         self.compile_pattern(
                             value_slot,
                             &arm.pattern,
                         )?;
-
-                    let next_arm_target =
-                        self.chunk.code.len();
-
-                    for jump in failures {
-                        self.chunk.patch_operand(
-                            jump,
-                            next_arm_target as u32,
-                        );
-                    }
 
                     self.compile_expr(
                         &arm.body
@@ -1282,9 +1276,21 @@ impl Compiler {
                         end_jump
                     );
 
+                    // If the pattern failed, continue with the next arm.
+                    let next_arm =
+                        self.chunk.code.len();
+
+                    for jump in failures {
+                        self.chunk.patch_operand(
+                            jump,
+                            next_arm as u32,
+                        );
+                    }
+
                     self.exit_scope();
                 }
 
+                // No arm matched.
                 self.chunk.emit(
                     OpCode::PatternFail
                 );

@@ -29,10 +29,7 @@ use std::{
     rc::Rc,
     env,
     fs,
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::PathBuf,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

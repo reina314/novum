@@ -1088,12 +1088,10 @@ impl Parser {
             self.parse_block()?;
 
         let else_branch =
-            if self.at_ident("else") {
+            if self.eat_if(TokenKind::Else) {
                 Some(
                     Box::new(
-                        if self.check(
-                            TokenKind::If
-                        ) {
+                        if self.check(TokenKind::If) {
                             self.parse_if()?
                         } else {
                             self.parse_block()?
@@ -1601,7 +1599,17 @@ impl Parser {
         loop {
             match self.peek().kind.clone() {
                 TokenKind::LParen => {
+                    let next =
+                        self.peek().clone();
+
                     if self.is_match_arm_start() {
+                        break;
+                    }
+
+                    if !self.is_adjacent(
+                        expr.span,
+                        next.span,
+                    ) {
                         break;
                     }
 
@@ -1630,6 +1638,16 @@ impl Parser {
                 }
 
                 TokenKind::LBracket => {
+                    let next =
+                        self.peek().clone();
+
+                    if !self.is_adjacent(
+                        expr.span,
+                        next.span,
+                    ) {
+                        break;
+                    }
+
                     self.eat();
 
                     let index =
@@ -1708,12 +1726,22 @@ impl Parser {
                                     "expected field name or tuple index after '.'",
                                     token.span,
                                 )
-                            )
+                            );
                         }
                     }
                 }
 
                 TokenKind::Question => {
+                    let token =
+                        self.peek().clone();
+
+                    if !self.is_adjacent(
+                        expr.span,
+                        token.span,
+                    ) {
+                        break;
+                    }
+
                     let start =
                         expr.span;
 
@@ -1731,8 +1759,7 @@ impl Parser {
                         );
                 }
 
-                _ =>
-                    break,
+                _ => break,
             }
         }
 
@@ -1744,38 +1771,58 @@ impl Parser {
     fn is_match_arm_start(
         &self,
     ) -> bool {
-        if !self.check(
-            TokenKind::LParen
-        ) {
-            return false;
-        }
+        let opening =
+            match self.peek().kind {
+                TokenKind::LParen =>
+                    Some(TokenKind::RParen),
 
-        let mut depth =
-            0usize;
+                TokenKind::LBracket =>
+                    Some(TokenKind::RBracket),
+
+                _ =>
+                    None,
+            };
+
+        let Some(closing) =
+            opening
+        else {
+            return false;
+        };
+
+        let mut stack =
+            vec![closing];
 
         let mut offset =
-            0usize;
+            1usize;
 
-        loop {
+        while !stack.is_empty() {
             match self.peek_n(offset).kind {
                 TokenKind::LParen => {
-                    depth += 1;
+                    stack.push(
+                        TokenKind::RParen
+                    );
                 }
 
-                TokenKind::RParen => {
-                    if depth == 0 {
+                TokenKind::LBracket => {
+                    stack.push(
+                        TokenKind::RBracket
+                    );
+                }
+
+                TokenKind::RParen
+                | TokenKind::RBracket => {
+                    let current =
+                        self.peek_n(offset)
+                            .kind
+                            .clone();
+
+                    if stack.last()
+                        != Some(&current)
+                    {
                         return false;
                     }
 
-                    depth -= 1;
-
-                    if depth == 0 {
-                        return self.peek_n(
-                            offset + 1
-                        )
-                        .kind
-                            == TokenKind::FatArrow;
-                    }
+                    stack.pop();
                 }
 
                 TokenKind::Eof => {
@@ -1787,6 +1834,19 @@ impl Parser {
 
             offset += 1;
         }
+
+        self.peek_n(offset)
+            .kind
+            == TokenKind::FatArrow
+    }
+
+    #[inline]
+    fn is_adjacent(
+        &self,
+        left: Span,
+        right: Span,
+    ) -> bool {
+        left.end == right.start
     }
 
     // ============================================================
@@ -2483,11 +2543,18 @@ impl Parser {
         if !self.eat_if(
             TokenKind::Comma
         ) {
-            self.expect(
-                TokenKind::RParen
-            )?;
+            let end =
+                self.expect(
+                    TokenKind::RParen
+                )?
+                .span;
 
-            return Ok(first);
+            return Ok(
+                Expr::new(
+                    first.kind,
+                    start.join(end),
+                )
+            );
         }
 
         let mut elements =
