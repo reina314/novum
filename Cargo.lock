@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "novum"
-version = "0.16.5"
+version = "0.17.0-beta.1"
 dependencies = [
  "csv",
  "nu-ansi-term",

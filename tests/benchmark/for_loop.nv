@@ -4,9 +4,10 @@ for i in 0..1000000 {
     x = x + i
 }
 
-print(x)
+x
+// print(x)
 
 // ________________________________________________________
-// Executed in  289.44 millis    fish           external
-//    usr time  280.19 millis    0.39 millis  279.80 millis
-//    sys time    7.81 millis    1.56 millis    6.25 millis
+// Executed in  164.71 millis    fish           external
+//    usr time  148.90 millis    0.35 millis  148.54 millis
+//    sys time   13.92 millis    1.41 millis   12.51 millis
