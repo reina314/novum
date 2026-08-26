@@ -644,6 +644,9 @@ impl Vm {
                         ]
                         .to_vec();
 
+                    let names =
+                        metadata.names.clone();
+
                     self.stack.truncate(
                         receiver_index
                     );
@@ -653,6 +656,7 @@ impl Vm {
                             receiver,
                             method.as_str(),
                             args,
+                            &names,
                         )?;
 
                     self.push(result);
@@ -763,7 +767,7 @@ impl Vm {
                             self.call_class(
                                 function_index,
                                 class,
-                                argc,
+                                &metadata.names,
                             )?;
                         }
 
@@ -2067,17 +2071,17 @@ impl Vm {
         closure: ClosureRef,
         names: &[Option<String>],
     ) -> Result<()> {
-        let raw_args =
+        let args =
             self.stack[
                 function_index + 1..
             ]
             .to_vec();
 
-        let args =
+        let bound =
             self.bind_arguments(
                 &closure.function.parameters,
                 names,
-                raw_args,
+                args,
             )?;
 
         self.stack.truncate(
@@ -2091,7 +2095,7 @@ impl Vm {
                 .local_count;
 
         let mut locals =
-            args;
+            bound;
 
         locals.resize(
             local_count,
@@ -2119,23 +2123,29 @@ impl Vm {
         closure: ClosureRef,
         args: Vec<Value>,
     ) -> Result<Value> {
-        let expected =
-            closure.function.arity as usize;
+        let names =
+            vec![None; args.len()];
 
-        if args.len() != expected {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    format!(
-                        "function expects {} arguments, got {}",
-                        expected,
-                        args.len()
-                    ),
-                    None,
-                )
-            );
-        }
-        
+        self.call_closure_sync_named(
+            closure,
+            args,
+            &names,
+        )
+    }
+
+    fn call_closure_sync_named(
+        &mut self,
+        closure: ClosureRef,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        let bound =
+            self.bind_arguments(
+                &closure.function.parameters,
+                names,
+                args,
+            )?;
+
         let caller_depth =
             self.frames.len();
 
@@ -2146,7 +2156,7 @@ impl Vm {
                 .local_count;
 
         let mut locals =
-            args;
+            bound;
 
         locals.resize(
             local_count,
@@ -2284,62 +2294,8 @@ impl Vm {
         &mut self,
         function_index: usize,
         class: ClassRef,
-        argc: usize,
+        names: &[Option<String>],
     ) -> Result<()> {
-        let constructor =
-            class.constructor();
-
-        // Validate the user-visible constructor arity.
-        match constructor.as_ref() {
-            Some(constructor) => {
-                let expected =
-                    constructor
-                        .function
-                        .arity
-                        .checked_sub(1)
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Arity,
-                                "class constructor must have self as its first parameter",
-                                None,
-                            )
-                        })?
-                        as usize;
-
-                if argc != expected {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            format!(
-                                "{}() expects {} arguments, got {}",
-                                class.name(),
-                                expected,
-                                argc,
-                            ),
-                            None,
-                        )
-                    );
-                }
-            }
-
-            None => {
-                if argc != 0 {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            format!(
-                                "{}() expects 0 arguments, got {}",
-                                class.name(),
-                                argc,
-                            ),
-                            None,
-                        )
-                    );
-                }
-            }
-        }
-
-        // Preserve user arguments before removing the call frame operands.
         let args =
             self.stack[
                 function_index + 1..
@@ -2353,16 +2309,14 @@ impl Vm {
         let object =
             class.instantiate();
 
-        // Evaluate field defaults for this specific instance.
         for field in class.fields() {
             let value =
                 match field.default() {
-                    Some(closure) => {
+                    Some(closure) =>
                         self.call_closure_sync(
                             closure,
                             Vec::new(),
-                        )?
-                    }
+                        )?,
 
                     None =>
                         Value::Unit,
@@ -2376,13 +2330,17 @@ impl Vm {
                 );
         }
 
-        // Run `new(self, ...)` after field initialization.
         if let Some(constructor) =
-            constructor
+            class.constructor()
         {
             let mut call_args =
                 Vec::with_capacity(
                     args.len() + 1
+                );
+
+            let mut call_names =
+                Vec::with_capacity(
+                    names.len() + 1
                 );
 
             call_args.push(
@@ -2391,16 +2349,34 @@ impl Vm {
                 )
             );
 
+            call_names.push(None);
+
             call_args.extend(
                 args
             );
 
-            // Constructor return value is intentionally discarded.
+            call_names.extend(
+                names.iter().cloned()
+            );
+
             let _ =
-                self.call_closure_sync(
+                self.call_closure_sync_named(
                     constructor,
                     call_args,
+                    &call_names,
                 )?;
+        } else if !args.is_empty() {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{}() expects 0 arguments, got {}",
+                        class.name(),
+                        args.len(),
+                    ),
+                    None,
+                )
+            );
         }
 
         self.push(
@@ -3215,11 +3191,28 @@ impl Vm {
         receiver: Value,
         name: &str,
         args: Vec<Value>,
+        names: &[Option<String>],
     ) -> Result<Value> {
         match receiver {
             Value::List(list) => {
+                ensure_positional_args(
+                    names
+                )?;
+
                 self.invoke_list_method(
                     list,
+                    name,
+                    args,
+                )
+            }
+
+            Value::Str(string) => {
+                ensure_positional_args(
+                    names
+                )?;
+                
+                self.invoke_string_method(
+                    string,
                     name,
                     args,
                 )
@@ -3234,6 +3227,10 @@ impl Vm {
             }
 
             Value::Iterator(iterator) => {
+                ensure_positional_args(
+                    names
+                )?;
+                
                 self.invoke_iterator_method(
                     iterator,
                     name,
@@ -3246,18 +3243,14 @@ impl Vm {
                 end,
                 inclusive,
             ) => {
+                ensure_positional_args(
+                    names
+                )?;
+
                 self.invoke_range_method(
                     start,
                     end,
                     inclusive,
-                    name,
-                    args,
-                )
-            }
-
-            Value::Str(string) => {
-                self.invoke_string_method(
-                    string,
                     name,
                     args,
                 )
@@ -3270,6 +3263,7 @@ impl Vm {
                     object,
                     name,
                     args,
+                    names,
                 )
             }
 
@@ -4163,12 +4157,13 @@ impl Vm {
         object: ObjectRef,
         name: &str,
         args: Vec<Value>,
+        names: &[Option<String>],
     ) -> Result<Value> {
-        if name == "init" {
+        if name == "new" {
             return Err(
                 Error::new(
                     ErrorKind::Name,
-                    "class constructor 'init' can only be called through the class",
+                    "class constructor 'new' can only be called through the class",
                     None,
                 )
             );
@@ -4201,19 +4196,32 @@ impl Vm {
                 args.len() + 1
             );
 
+        let mut call_names =
+            Vec::with_capacity(
+                names.len() + 1
+            );
+
+        // self is always positional parameter 0.
         call_args.push(
             Value::Object(
                 object
             )
         );
 
+        call_names.push(None);
+
         call_args.extend(
             args
         );
 
-        self.call_closure_sync(
+        call_names.extend(
+            names.iter().cloned()
+        );
+
+        self.call_closure_sync_named(
             method,
             call_args,
+            &call_names,
         )
     }
 
@@ -4386,4 +4394,23 @@ impl Vm {
         }
     }
 
+}
+
+#[inline]
+fn ensure_positional_args(
+    names: &[Option<String>],
+) -> Result<()> {
+    if names.iter()
+        .any(Option::is_some)
+    {
+        return Err(
+            Error::new(
+                ErrorKind::Runtime,
+                "named arguments are not supported for this method",
+                None,
+            )
+        );
+    }
+
+    Ok(())
 }

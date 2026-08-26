@@ -1464,5 +1464,52 @@ fn vm_named_arguments_out_of_order() {
     );
 }
 
+#[test]
+fn vm_named_constructor_arguments() {
+    assert_int(
+        r#"
+        class Point {
+            x = 0
+            y = 0
 
+            init = |self, x, y| {
+                self.x = x
+                self.y = y
+            }
+        }
+
+        let p =
+            Point(
+                y = 20,
+                x = 10,
+            )
+
+        p.x + p.y
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_mixed_method_arguments() {
+    assert_int(
+        r#"
+        class Calculator {
+            calc = |self, a, b, c| {
+                a + b * c
+            }
+        }
+
+        let c =
+            Calculator()
+
+        c.calc(
+            10,
+            c = 2,
+            b = 5,
+        )
+        "#,
+        20,
+    );
+}
 

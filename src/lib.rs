@@ -1,7 +1,4 @@
 //! Novum - a small expression-oriented programming language interpreter.
-//!
-//! The public pipeline is intentionally explicit:
-//! source -> lexer -> parser -> AST -> interpreter.
 
 pub mod error;
 pub mod runtime;
