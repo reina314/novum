@@ -12,8 +12,12 @@
 pub mod util;
 
 pub use util::{
+    encode_method_call,
+    decode_method_call,
     encode_class_counts,
     decode_class_counts,
+    encode_call_operand,
+    decode_call_operand,
     is_self_pattern,
 };
 

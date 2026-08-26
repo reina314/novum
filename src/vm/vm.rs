@@ -30,14 +30,17 @@ use crate::{
         apply_binop, 
     },
     syntax::BinOp,
-    stdlib::decode_class_counts,
+    stdlib::{
+        decode_class_counts,
+        decode_method_call,
+        decode_call_operand,
+    },
 };
 
 use super::{
     Chunk,
     OpCode,
     Instruction,
-    decode_method_call,
 };
 
 use std::{
@@ -45,6 +48,12 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
+
+#[derive(Clone)]
+struct RuntimeArg {
+    name: Option<String>,
+    value: Value,
+}
 
 pub struct Vm {
     stack: Vec<Value>,
@@ -636,8 +645,13 @@ impl Vm {
                 }
 
                 OpCode::Call => {
-                    let argc =
-                        operand as usize;
+                    let (
+                        call_site,
+                        argc,
+                    ) =
+                        decode_call_operand(
+                            operand
+                        );
 
                     let function_index =
                         self.stack
@@ -659,9 +673,7 @@ impl Vm {
                         ].clone();
 
                     match callable {
-                        Value::Closure(
-                            closure
-                        ) => {
+                        Value::Closure(closure) => {
                             self.call_closure_frame(
                                 function_index,
                                 closure,
@@ -679,9 +691,7 @@ impl Vm {
                             )?;
                         }
 
-                        Value::StructType(
-                            ty
-                        ) => {
+                        Value::StructType(ty) => {
                             self.call_struct_constructor(
                                 function_index,
                                 ty,
@@ -1849,6 +1859,100 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn bind_arguments(
+        &self,
+        parameters: &[String],
+        positional: &[Value],
+        named: &[(String, Value)],
+    ) -> Result<Vec<Value>> {
+        if positional.len() > parameters.len() {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "expected at most {} arguments, got {}",
+                        parameters.len(),
+                        positional.len(),
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let mut values =
+            vec![Value::Unit; parameters.len()];
+
+        let mut assigned =
+            vec![false; parameters.len()];
+
+        for (index, value) in
+            positional.iter().enumerate()
+        {
+            values[index] =
+                value.clone();
+
+            assigned[index] =
+                true;
+        }
+
+        for (
+            name,
+            value,
+        ) in named
+        {
+            let index =
+                parameters
+                    .iter()
+                    .position(
+                        |parameter|
+                            parameter == name
+                    )
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "unknown parameter '{}'",
+                                name
+                            ),
+                            None,
+                        )
+                    })?;
+
+            if assigned[index] {
+                return Err(
+                    Error::new(
+                        ErrorKind::Arity,
+                        format!(
+                            "argument '{}' specified more than once",
+                            name
+                        ),
+                        None,
+                    )
+                );
+            }
+
+            values[index] =
+                value.clone();
+
+            assigned[index] =
+                true;
+        }
+
+        if assigned.iter()
+            .any(|assigned| !assigned)
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    "missing required argument",
+                    None,
+                )
+            );
+        }
+
+        Ok(values)
     }
 
     fn call_closure_frame(

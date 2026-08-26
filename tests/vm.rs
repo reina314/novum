@@ -1428,6 +1428,41 @@ fn vm_class_constructor_return_value_is_ignored() {
     );
 }
 
+// ============================================================
+// Named arguments
+// ============================================================
+
+#[test]
+fn vm_named_function_arguments() {
+    assert_int(
+        r#"
+        let add =
+            |a, b| a + b
+
+        add(
+            a = 10,
+            b = 20,
+        )
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_named_arguments_out_of_order() {
+    assert_int(
+        r#"
+        let sub =
+            |a, b| a - b
+
+        sub(
+            b = 3,
+            a = 10,
+        )
+        "#,
+        7,
+    );
+}
 
 
 

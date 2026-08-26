@@ -70,20 +70,3 @@ pub enum OpCode {
 
     Halt,
 }
-
-pub fn encode_method_call(
-    method_index: u16,
-    argc: u16,
-) -> u32 {
-    ((method_index as u32) << 16)
-        | argc as u32
-}
-
-pub fn decode_method_call(
-    operand: u32,
-) -> (u16, u16) {
-    (
-        (operand >> 16) as u16,
-        (operand & 0xffff) as u16,
-    )
-}

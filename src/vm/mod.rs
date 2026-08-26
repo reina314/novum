@@ -6,6 +6,7 @@ pub mod vm;
 pub use chunk::{
     Chunk,
     Instruction,
+    CallSite,
 };
 
 pub use compiler::{
@@ -14,8 +15,6 @@ pub use compiler::{
 
 pub use instruction::{
     OpCode,
-    encode_method_call,
-    decode_method_call,
 };
 
 pub use vm::{

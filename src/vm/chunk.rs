@@ -35,6 +35,7 @@ pub struct Chunk {
     pub code: Vec<Instruction>,
     pub constants: Vec<Value>,
     pub local_count: usize,
+    pub call_sites: Vec<CallSite>,
 }
 
 impl Chunk {
@@ -104,6 +105,12 @@ impl Default for Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             local_count: 0,
+            call_sites: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct CallSite {
+    pub names: Vec<Option<String>>,
 }

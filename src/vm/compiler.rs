@@ -12,6 +12,7 @@ use crate::{
         Pattern,
         ListItem,
         IndexExpr,
+        CallArg,
     },
     runtime::{
         Value,
@@ -22,6 +23,7 @@ use crate::{
     },
     stdlib::{
         encode_class_counts,
+        encode_method_call,
         is_self_pattern,
     }
 };
@@ -29,7 +31,7 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
-    encode_method_call,
+    CallSite,
 };
 
 use std::{
@@ -742,6 +744,25 @@ impl Compiler {
             chunk: Rc::new(chunk),
             upvalue_specs,
         }
+    }
+
+    fn add_call_site(
+        &mut self,
+        args: &[CallArg],
+    ) -> usize {
+        let index =
+            self.chunk.call_sites.len();
+
+        self.chunk.call_sites.push(
+            CallSite {
+                names: args
+                    .iter()
+                    .map(|arg| arg.name.clone())
+                    .collect(),
+            }
+        );
+
+        index
     }
 
     pub fn compile_program(
