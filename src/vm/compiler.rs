@@ -332,7 +332,7 @@ impl Compiler {
                 );
 
                 self.chunk.emit(
-                    OpCode::FieldSet
+                    OpCode::FieldGet
                 );
             }
         }
@@ -382,15 +382,27 @@ impl Compiler {
                 object_slot,
                 name,
             } => {
-                let _ = object_slot;
-                let _ = name;
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    *object_slot as u32,
+                );
 
-                return Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "VM field assignment is not implemented yet",
-                        None,
-                    )
+                let field_constant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                name.clone()
+                            )
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    field_constant,
+                );
+
+                self.chunk.emit(
+                    OpCode::FieldSet
                 );
             }
         }
@@ -1077,7 +1089,7 @@ impl Compiler {
                 methods,
                 ..
             } => {
-                let name_constant =
+                let class_name_constant =
                     self.chunk.add_constant(
                         Value::Str(
                             Rc::new(
@@ -1088,16 +1100,15 @@ impl Compiler {
 
                 self.chunk.emit_operand(
                     OpCode::Constant,
-                    name_constant,
+                    class_name_constant,
                 );
 
-                // Compile field names and defaults.
                 for (
                     field_name,
                     default,
                 ) in fields
                 {
-                    let field_constant =
+                    let field_name_constant =
                         self.chunk.add_constant(
                             Value::Str(
                                 Rc::new(
@@ -1108,15 +1119,14 @@ impl Compiler {
 
                     self.chunk.emit_operand(
                         OpCode::Constant,
-                        field_constant,
+                        field_name_constant,
                     );
 
                     match default {
                         Some(expr) => {
                             let proto =
-                                self.compile_lambda_proto(
-                                    &[],
-                                    expr,
+                                self.compile_zero_arg_proto(
+                                    expr
                                 )?;
 
                             let proto_constant =
@@ -1140,13 +1150,12 @@ impl Compiler {
                     }
                 }
 
-                // Compile methods.
                 for (
                     method_name,
                     method,
                 ) in methods
                 {
-                    let method_constant =
+                    let method_name_constant =
                         self.chunk.add_constant(
                             Value::Str(
                                 Rc::new(
@@ -1157,7 +1166,7 @@ impl Compiler {
 
                     self.chunk.emit_operand(
                         OpCode::Constant,
-                        method_constant,
+                        method_name_constant,
                     );
 
                     let ExprKind::Lambda(
@@ -1169,7 +1178,10 @@ impl Compiler {
                         return Err(
                             Error::new(
                                 ErrorKind::Runtime,
-                                "class method must be a lambda",
+                                format!(
+                                    "class method '{}' must be a lambda",
+                                    method_name
+                                ),
                                 None,
                             )
                         );
@@ -1219,6 +1231,26 @@ impl Compiler {
                 self.chunk.emit_operand(
                     OpCode::NewClass,
                     operand,
+                );
+
+                // Bind the newly-created class object.
+                let class_slot =
+                    self.declare_local(
+                        name.clone()
+                    )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    class_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                // Class declarations are declarations, not expressions.
+                self.chunk.emit(
+                    OpCode::Unit
                 );
             }
 
@@ -2459,12 +2491,12 @@ impl Compiler {
                 object,
                 name,
             } => {
-                let object_slot =
-                    self.allocate_temp_local();
-
                 self.compile_expr(
                     object
                 )?;
+
+                let object_slot =
+                    self.allocate_temp_local();
 
                 self.chunk.emit_operand(
                     OpCode::StoreLocal,
@@ -2518,6 +2550,33 @@ impl Compiler {
             Rc::new(
                 compiler.finish_function(
                     params.len() as u16
+                )
+            )
+        )
+    }
+
+    fn compile_zero_arg_proto(
+        &self,
+        body: &Expr,
+    ) -> Result<FunctionRef> {
+        let mut compiler =
+            Compiler::new_function(
+                self.scope.clone(),
+                &[],
+            )?;
+
+        compiler.compile_expr(
+            body
+        )?;
+
+        compiler.chunk.emit(
+            OpCode::Return
+        );
+
+        Ok(
+            Rc::new(
+                compiler.finish_function(
+                    0
                 )
             )
         )

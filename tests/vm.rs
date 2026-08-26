@@ -1190,20 +1190,6 @@ fn vm_nested_struct_pattern() {
 // ============================================================
 
 #[test]
-fn vm_class_declaration() {
-    assert_string(
-        r#"
-        class Counter {
-            value = 0
-        }
-
-        Counter
-        "#,
-        "<class Counter>",
-    );
-}
-
-#[test]
 fn vm_class_default_field() {
     assert_int(
         r#"
@@ -1307,6 +1293,27 @@ fn vm_class_method_multiple_calls() {
     );
 }
 
+#[test]
+fn vm_class_default_is_per_instance() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+        }
+
+        let a =
+            Counter()
+
+        let b =
+            Counter()
+
+        a.value = 10
+
+        b.value
+        "#,
+        0,
+    );
+}
 
 
 

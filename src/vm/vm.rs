@@ -1447,7 +1447,7 @@ impl Vm {
                                     Error::new(
                                         ErrorKind::Name,
                                         format!(
-                                            "{} has no field '{}'",
+                                            "class '{}' has no field '{}'",
                                             class.name(),
                                             field,
                                         ),
