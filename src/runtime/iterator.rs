@@ -227,17 +227,12 @@ impl IteratorObj {
                 data,
                 index,
             } => {
-                let value =
-                    data.get(*index);
-
-                match value {
+                match data.get(*index) {
                     Some(value) => {
                         *index += 1;
 
                         Ok(
-                            IterResult::Item(
-                                value
-                            )
+                            IterResult::Item(value)
                         )
                     }
 
@@ -277,6 +272,33 @@ impl IteratorObj {
                 )
             }
 
+            Self::Vector {
+                data,
+                index,
+            } => {
+                Err(
+                    "Vector iterator requires VM callback execution"
+                        .into()
+                )
+
+                // match data.get(*index) {
+                //     Some(value) => {
+                //         *index += 1;
+
+                //         Ok(
+                //             IterResult::Item(
+                //                 value
+                //             )
+                //         )
+                //     }
+
+                //     None =>
+                //         Ok(
+                //             IterResult::End
+                //         ),
+                // }
+            }
+
             Self::Range {
                 current,
                 end,
@@ -299,53 +321,141 @@ impl IteratorObj {
                 )
             }
 
-            Self::Vector {
-                data,
+            Self::Enumerate {
+                source,
                 index,
             } => {
-                Err(
-                    "Vector iterator requires VM callback execution"
-                        .into()
-                )
+                let item =
+                    Self::next(source)?;
+
+                match item {
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
+
+                    IterResult::Item(value) => {
+                        let current =
+                            *index;
+
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                Value::Tuple(
+                                    Rc::new(
+                                        vec![
+                                            Value::Int(
+                                                current as i64
+                                            ),
+                                            value,
+                                        ]
+                                    )
+                                )
+                            )
+                        )
+                    }
+                }
             }
 
-            Self::Map {
-                ..
+            Self::Zip {
+                left,
+                right,
             } => {
-                // Implement after VM callback invocation
-                // is available.
+                let left_value =
+                    Self::next(left)?;
+
+                let right_value =
+                    Self::next(right)?;
+
+                match (
+                    left_value,
+                    right_value,
+                ) {
+                    (
+                        IterResult::Item(left),
+                        IterResult::Item(right),
+                    ) => {
+                        Ok(
+                            IterResult::Item(
+                                Value::Tuple(
+                                    Rc::new(
+                                        vec![
+                                            left,
+                                            right,
+                                        ]
+                                    )
+                                )
+                            )
+                        )
+                    }
+
+                    _ =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            Self::Take {
+                source,
+                remaining,
+            } => {
+                if *remaining == 0 {
+                    return Ok(
+                        IterResult::End
+                    );
+                }
+
+                match Self::next(source)? {
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
+
+                    IterResult::Item(value) => {
+                        *remaining -= 1;
+
+                        Ok(
+                            IterResult::Item(
+                                value
+                            )
+                        )
+                    }
+                }
+            }
+
+            Self::Skip {
+                source,
+                remaining,
+            } => {
+                while *remaining > 0 {
+                    match Self::next(source)? {
+                        IterResult::End =>
+                            return Ok(
+                                IterResult::End
+                            ),
+
+                        IterResult::Item(_) => {
+                            *remaining -= 1;
+                        }
+                    }
+                }
+
+                Self::next(source)
+            }
+
+            Self::Map { .. } =>
                 Err(
                     "Map iterator requires VM callback execution"
                         .into()
-                )
-            }
+                ),
 
-            Self::Filter {
-                ..
-            } => {
+            Self::Filter { .. } =>
                 Err(
                     "Filter iterator requires VM callback execution"
                         .into()
-                )
-            }
-
-            Self::Enumerate {
-                ..
-            } |
-            Self::Zip {
-                ..
-            } |
-            Self::Take {
-                ..
-            } |
-            Self::Skip {
-                ..
-            } => {
-                Err(
-                    "iterator variant is not implemented yet"
-                        .into()
-                )
-            }
+                ),
         }
     }
 }

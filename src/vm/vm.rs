@@ -26,6 +26,7 @@ use super::{
     Instruction,
     UpvalueSpec,
     CellRef,
+    decode_method_call,
 };
 
 use std::{
@@ -537,6 +538,89 @@ impl Vm {
 
                     *cell.borrow_mut() =
                         value;
+                }
+
+                OpCode::InvokeMethod => {
+                    let (
+                        method_index,
+                        argc,
+                    ) =
+                        decode_method_call(
+                            operand
+                        );
+
+                    let method =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .constants
+                            .get(
+                                method_index as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "method name constant out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let Value::Str(
+                        method
+                    ) = method
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "method name constant must be Str",
+                                None,
+                            )
+                        );
+                    };
+
+                    let argc =
+                        argc as usize;
+
+                    let receiver_index =
+                        self.stack
+                            .len()
+                            .checked_sub(
+                                argc + 1
+                            )
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "invalid method call stack",
+                                    None,
+                                )
+                            })?;
+
+                    let receiver =
+                        self.stack[
+                            receiver_index
+                        ]
+                        .clone();
+
+                    let args =
+                        self.stack[
+                            receiver_index + 1..
+                        ]
+                        .to_vec();
+
+                    self.stack.truncate(
+                        receiver_index
+                    );
+
+                    let result =
+                        self.invoke_method(
+                            receiver,
+                            method.as_str(),
+                            args,
+                        )?;
+
+                    self.push(result);
                 }
 
                 OpCode::Call => {
@@ -1387,6 +1471,361 @@ impl Vm {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Handles any type of method dispatches
+    /// List, Struct, Object, ... etc
+    fn invoke_method(
+        &mut self,
+        receiver: Value,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match receiver {
+            Value::List(list) => {
+                self.invoke_list_method(
+                    list,
+                    name,
+                    args,
+                )
+            }
+
+            Value::Iterator(iterator) => {
+                self.invoke_iterator_method(
+                    iterator,
+                    name,
+                    args,
+                )
+            }
+
+            Value::Range(
+                start,
+                end,
+                inclusive,
+            ) => {
+                self.invoke_range_method(
+                    start,
+                    end,
+                    inclusive,
+                    name,
+                    args,
+                )
+            }
+
+            Value::Str(string) => {
+                self.invoke_string_method(
+                    string,
+                    name,
+                    args,
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "method '{}' is not supported for this value",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn invoke_string_method(
+        &mut self,
+        string: crate::runtime::StrRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        todo!()
+    }
+
+    fn invoke_list_method(
+        &mut self,
+        list: crate::runtime::ListRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            "len" => {
+                if !args.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "len() expects no arguments",
+                            None,
+                        )
+                    );
+                }
+
+                Ok(
+                    Value::Int(
+                        list.len() as i64
+                    )
+                )
+            }
+
+            "push" => {
+                if args.len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "push() expects one argument",
+                            None,
+                        )
+                    );
+                }
+
+                list.push(
+                    args[0].clone()
+                );
+
+                Ok(
+                    Value::Unit
+                )
+            }
+
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            None,
+                        )
+                    );
+                }
+
+                let iterator =
+                    IteratorObj::from_value(
+                        Value::List(list)
+                    )
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Type,
+                            message,
+                            None,
+                        )
+                    })?;
+
+                Ok(
+                    Value::Iterator(
+                        iterator
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "List has no method '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn invoke_iterator_method(
+        &mut self,
+        iterator: IteratorRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            "next" => {
+                if !args.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "next() expects no arguments",
+                            None,
+                        )
+                    );
+                }
+
+                match self.iterator_next(
+                    iterator
+                )? {
+                    IterResult::Item(value) => {
+                        Ok(
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    value,
+                                    Value::Bool(true),
+                                ])
+                            )
+                        )
+                    }
+
+                    IterResult::End => {
+                        Ok(
+                            Value::Tuple(
+                                Rc::new(vec![
+                                    Value::Unit,
+                                    Value::Bool(false),
+                                ])
+                            )
+                        )
+                    }
+                }
+            }
+
+            "map" => {
+                if args.len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "map() expects one argument",
+                            None,
+                        )
+                    );
+                }
+
+                let Value::Closure(
+                    closure
+                ) = args[0].clone()
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            "map() expects a function",
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Map {
+                                    source: iterator,
+                                    function: closure,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "filter() expects one argument",
+                            None,
+                        )
+                    );
+                }
+
+                let Value::Closure(
+                    closure
+                ) = args[0].clone()
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            "filter() expects a function",
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Filter {
+                                    source: iterator,
+                                    predicate: closure,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "Iterator has no method '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn invoke_range_method(
+        &mut self,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            "iter" => {
+                if !args.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "iter() expects no arguments",
+                            None,
+                        )
+                    );
+                }
+
+                let iterator =
+                    IteratorObj::from_value(
+                        Value::Range(
+                            start,
+                            end,
+                            inclusive,
+                        )
+                    )
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Type,
+                            message,
+                            None,
+                        )
+                    })?;
+
+                Ok(
+                    Value::Iterator(
+                        iterator
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "Range has no method '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
             }
         }
     }

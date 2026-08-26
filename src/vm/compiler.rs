@@ -21,6 +21,7 @@ use super::{
     OpCode,
     UpvalueSpec,
     FunctionProto,
+    encode_method_call,
 };
 
 use std::{
@@ -1524,8 +1525,68 @@ impl Compiler {
                 callee,
                 args,
             ) => {
-                // VM intrinsics are resolved by the compiler and do not
-                // participate in normal lexical name resolution.
+                // receiver.method(...)
+                if let ExprKind::Field {
+                    object,
+                    name,
+                } = &callee.kind
+                {
+                    self.compile_expr(
+                        object
+                    )?;
+
+                    for arg in args {
+                        if arg.name.is_some() {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM currently does not support named arguments",
+                                    None,
+                                )
+                            );
+                        }
+
+                        self.compile_expr(
+                            &arg.value
+                        )?;
+                    }
+
+                    let method_index =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    name.clone()
+                                )
+                            )
+                        );
+
+                    let argc =
+                        args.len();
+
+                    if argc >
+                        u16::MAX as usize
+                    {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Arity,
+                                "too many method arguments",
+                                None,
+                            )
+                        );
+                    }
+
+                    self.chunk.emit_operand(
+                        OpCode::InvokeMethod,
+                        encode_method_call(
+                            method_index as u16,
+                            argc as u16,
+                        ),
+                    );
+
+                    return Ok(());
+                }
+
+                // Intrinsics
                 if let ExprKind::Ident(name) =
                     &callee.kind
                 {
@@ -1541,21 +1602,8 @@ impl Compiler {
                                 );
                             }
 
-                            let arg =
-                                &args[0];
-
-                            if arg.name.is_some() {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "iter() does not support named arguments",
-                                        None,
-                                    )
-                                );
-                            }
-
                             self.compile_expr(
-                                &arg.value
+                                &args[0].value
                             )?;
 
                             self.chunk.emit(
@@ -1576,21 +1624,8 @@ impl Compiler {
                                 );
                             }
 
-                            let arg =
-                                &args[0];
-
-                            if arg.name.is_some() {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "next() does not support named arguments",
-                                        None,
-                                    )
-                                );
-                            }
-
                             self.compile_expr(
-                                &arg.value
+                                &args[0].value
                             )?;
 
                             self.chunk.emit(
