@@ -1428,6 +1428,9 @@ impl Vm {
         )
     }
 
+    // ============================
+    //   Iterator
+    // ============================
     fn iterator_next(
         &mut self,
         iterator: IteratorRef,
@@ -2079,11 +2082,354 @@ impl Vm {
 
     fn invoke_string_method(
         &mut self,
-        string: crate::runtime::StrRef,
+        string: Rc<String>,
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value> {
-        todo!()
+        match name {
+            "chars" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let iterator =
+                    IteratorObj::Str {
+                        data: string,
+                        byte_index: 0,
+                    };
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                iterator
+                            )
+                        )
+                    )
+                )
+            }
+
+            "len" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Int(
+                        string.chars().count()
+                            as i64
+                    )
+                )
+            }
+
+            "trim" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            string
+                                .trim()
+                                .to_owned()
+                        )
+                    )
+                )
+            }
+
+            "to_upper" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            string
+                                .to_uppercase()
+                        )
+                    )
+                )
+            }
+
+            "to_lower" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            string
+                                .to_lowercase()
+                        )
+                    )
+                )
+            }
+
+            "contains" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    needle
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "contains() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Bool(
+                        string.contains(
+                            needle.as_str()
+                        )
+                    )
+                )
+            }
+
+            "starts_with" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    prefix
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "starts_with() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Bool(
+                        string.starts_with(
+                            prefix.as_str()
+                        )
+                    )
+                )
+            }
+
+            "ends_with" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    suffix
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "ends_with() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Bool(
+                        string.ends_with(
+                            suffix.as_str()
+                        )
+                    )
+                )
+            }
+
+            "split" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    separator
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "split() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                let values =
+                    string
+                        .split(
+                            separator.as_str()
+                        )
+                        .map(|part| {
+                            Value::Str(
+                                Rc::new(
+                                    part.to_owned()
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                Ok(
+                    Value::List(
+                        Rc::new(
+                            List::new(
+                                values
+                            )
+                        )
+                    )
+                )
+            }
+
+            "replace" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    2,
+                )?;
+
+                let Value::Str(
+                    from
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "replace() expects Str as first argument, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                let Value::Str(
+                    to
+                ) = &args[1]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "replace() expects Str as second argument, got {}",
+                                args[1].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            string.replace(
+                                from.as_str(),
+                                to.as_str(),
+                            )
+                        )
+                    )
+                )
+            }
+
+            "repeat" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Int(
+                    count
+                ) = args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "repeat() expects Int, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                if count < 0 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Value,
+                            "repeat() does not accept negative counts",
+                            None,
+                        )
+                    );
+                }
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            string.repeat(
+                                count as usize
+                            )
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "Str has no method '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
     }
 
     fn invoke_list_method(
