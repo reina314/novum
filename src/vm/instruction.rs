@@ -19,6 +19,8 @@ pub enum OpCode {
     NewList,
     ListAppend,
     ListExtendRange,
+
+    NewRange,
     
     IndexGet,
     IndexSet,

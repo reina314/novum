@@ -888,6 +888,53 @@ impl Compiler {
                 }
             }
 
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let Some(start) =
+                    start
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "VM currently requires a range start",
+                            None,
+                        )
+                    );
+                };
+
+                let Some(end) =
+                    end
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "VM currently requires a range end",
+                            None,
+                        )
+                    );
+                };
+
+                self.compile_expr(
+                    start
+                )?;
+
+                self.compile_expr(
+                    end
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::NewRange,
+                    if *inclusive {
+                        1
+                    } else {
+                        0
+                    },
+                );
+            }
+
             ExprKind::Index(
                 object,
                 IndexExpr::Single(index),

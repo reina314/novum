@@ -6,6 +6,7 @@ use crate::{
     }, 
     runtime::{
         List,
+        ListRef,
         Value,
         IteratorObj,
         IteratorRef,
@@ -916,6 +917,58 @@ impl Vm {
                     }
                 }
 
+                OpCode::NewRange => {
+                    let end =
+                        self.pop()?;
+
+                    let start =
+                        self.pop()?;
+
+                    let start =
+                        match start {
+                            Value::Int(value) =>
+                                value,
+
+                            other =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range start must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                ),
+                        };
+
+                    let end =
+                        match end {
+                            Value::Int(value) =>
+                                value,
+
+                            other =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range end must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                ),
+                        };
+
+                    self.push(
+                        Value::Range(
+                            start,
+                            end,
+                            operand != 0,
+                        )
+                    );
+                }
+
                 OpCode::IndexGet => {
                     let index =
                         self.pop()?;
@@ -1379,19 +1432,15 @@ impl Vm {
         &mut self,
         iterator: IteratorRef,
     ) -> Result<IterResult> {
-        let kind =
+        let state =
             iterator.borrow().clone();
 
-        match kind {
+        match state {
+            // Base iterators do not require VM execution.
             IteratorObj::List { .. }
             | IteratorObj::Str { .. }
             | IteratorObj::Vector { .. }
-            | IteratorObj::Range { .. }
-            | IteratorObj::Enumerate { .. }
-            | IteratorObj::Zip { .. }
-            | IteratorObj::Take { .. }
-            | IteratorObj::Skip { .. }
-            => {
+            | IteratorObj::Range { .. } => {
                 IteratorObj::next(
                     &iterator
                 )
@@ -1404,6 +1453,7 @@ impl Vm {
                 })
             }
 
+            // Lazy transformation.
             IteratorObj::Map {
                 source,
                 function,
@@ -1417,17 +1467,22 @@ impl Vm {
                         ),
 
                     IterResult::Item(value) => {
-                        self.call_closure_sync(
-                            function,
-                            vec![value],
-                        )
-                        .map(
-                            IterResult::Item
+                        let result =
+                            self.call_closure_sync(
+                                function,
+                                vec![value],
+                            )?;
+
+                        Ok(
+                            IterResult::Item(
+                                result
+                            )
                         )
                     }
                 }
             }
 
+            // Lazy filtering.
             IteratorObj::Filter {
                 source,
                 predicate,
@@ -1448,29 +1503,514 @@ impl Vm {
                                     vec![value.clone()],
                                 )?;
 
-                            let Value::Bool(
-                                keep
-                            ) = result
-                            else {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Type,
-                                        "filter predicate must return Bool",
-                                        None,
-                                    )
-                                );
-                            };
+                            match result {
+                                Value::Bool(true) => {
+                                    return Ok(
+                                        IterResult::Item(
+                                            value
+                                        )
+                                    );
+                                }
 
-                            if keep {
-                                return Ok(
-                                    IterResult::Item(
-                                        value
-                                    )
-                                );
+                                Value::Bool(false) => {
+                                    continue;
+                                }
+
+                                other => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Type,
+                                            format!(
+                                                "filter predicate must return Bool, got {}",
+                                                other.type_name()
+                                            ),
+                                            None,
+                                        )
+                                    );
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            // Add an index to each item.
+            IteratorObj::Enumerate {
+                source,
+                index: _,
+            } => {
+                match self.iterator_next(
+                    source
+                )? {
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
+
+                    IterResult::Item(value) => {
+                        if let IteratorObj::Enumerate {
+                            index,
+                            ..
+                        } = &mut *iterator.borrow_mut()
+                        {
+                            let current =
+                                *index;
+
+                            *index += 1;
+
+                            Ok(
+                                IterResult::Item(
+                                    Value::Tuple(
+                                        Rc::new(vec![
+                                            Value::Int(
+                                                current as i64
+                                            ),
+                                            value,
+                                        ])
+                                    )
+                                )
+                            )
+                        } else {
+                            unreachable!();
+                        }
+                    }
+                }
+            }
+
+            // Zip terminates when either source terminates.
+            IteratorObj::Zip {
+                left,
+                right,
+            } => {
+                let left_value =
+                    self.iterator_next(
+                        left
+                    )?;
+
+                let right_value =
+                    self.iterator_next(
+                        right
+                    )?;
+
+                match (
+                    left_value,
+                    right_value,
+                ) {
+                    (
+                        IterResult::Item(left),
+                        IterResult::Item(right),
+                    ) => {
+                        Ok(
+                            IterResult::Item(
+                                Value::Tuple(
+                                    Rc::new(vec![
+                                        left,
+                                        right,
+                                    ])
+                                )
+                            )
+                        )
+                    }
+
+                    _ =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            // Take at most `remaining` items.
+            IteratorObj::Take {
+                source,
+                remaining,
+            } => {
+                if remaining == 0 {
+                    return Ok(
+                        IterResult::End
+                    );
+                }
+
+                match self.iterator_next(
+                    source
+                )? {
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
+
+                    IterResult::Item(value) => {
+                        if let IteratorObj::Take {
+                            remaining,
+                            ..
+                        } = &mut *iterator.borrow_mut()
+                        {
+                            *remaining -= 1;
+                        }
+
+                        Ok(
+                            IterResult::Item(
+                                value
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Skip the first `remaining` items, then pass through.
+            IteratorObj::Skip {
+                source,
+                remaining,
+            } => {
+                let mut remaining =
+                    remaining;
+
+                while remaining > 0 {
+                    match self.iterator_next(
+                        source.clone()
+                    )? {
+                        IterResult::End =>
+                            return Ok(
+                                IterResult::End
+                            ),
+
+                        IterResult::Item(_) => {
+                            remaining -= 1;
+                        }
+                    }
+                }
+
+                if let IteratorObj::Skip {
+                    remaining: state_remaining,
+                    ..
+                } = &mut *iterator.borrow_mut()
+                {
+                    *state_remaining = 0;
+                }
+
+                self.iterator_next(
+                    source
+                )
+            }
+        }
+    }
+
+    fn collect_iterator(
+        &mut self,
+        iterator: IteratorRef,
+    ) -> Result<Value> {
+        let list =
+            Rc::new(
+                List::with_capacity(0)
+            );
+
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    list.push(value);
+                }
+
+                IterResult::End =>
+                    break,
+            }
+        }
+
+        Ok(
+            Value::List(list)
+        )
+    }
+
+    fn reduce_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        function: ClosureRef,
+    ) -> Result<Value> {
+        let first =
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) =>
+                    value,
+
+                IterResult::End =>
+                    return Ok(
+                        Value::Unit
+                    ),
+            };
+
+        let mut accumulator =
+            first;
+
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    accumulator =
+                        self.call_closure_sync(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                        )?;
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        accumulator
+                    ),
+            }
+        }
+    }
+
+    fn fold_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        mut accumulator: Value,
+        function: ClosureRef,
+    ) -> Result<Value> {
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    accumulator =
+                        self.call_closure_sync(
+                            function.clone(),
+                            vec![
+                                accumulator,
+                                value,
+                            ],
+                        )?;
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        accumulator
+                    ),
+            }
+        }
+    }
+
+    fn any_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        predicate: ClosureRef,
+    ) -> Result<Value> {
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    let result =
+                        self.call_closure_sync(
+                            predicate.clone(),
+                            vec![value],
+                        )?;
+
+                    match result {
+                        Value::Bool(true) =>
+                            return Ok(
+                                Value::Bool(true)
+                            ),
+
+                        Value::Bool(false) => {}
+
+                        other =>
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "any() predicate must return Bool, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            ),
+                    }
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        Value::Bool(false)
+                    ),
+            }
+        }
+    }
+
+    fn all_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        predicate: ClosureRef,
+    ) -> Result<Value> {
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    let result =
+                        self.call_closure_sync(
+                            predicate.clone(),
+                            vec![value],
+                        )?;
+
+                    match result {
+                        Value::Bool(false) =>
+                            return Ok(
+                                Value::Bool(false)
+                            ),
+
+                        Value::Bool(true) => {}
+
+                        other =>
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "all() predicate must return Bool, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            ),
+                    }
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        Value::Bool(true)
+                    ),
+            }
+        }
+    }
+
+    fn numeric_reduce(
+        &mut self,
+        iterator: IteratorRef,
+        op: BinOp,
+    ) -> Result<Value> {
+        let first =
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) =>
+                    value,
+
+                IterResult::End =>
+                    return Ok(
+                        Value::Int(
+                            if op == BinOp::Mul {
+                                1
+                            } else {
+                                0
+                            }
+                        )
+                    ),
+            };
+
+        let mut accumulator =
+            first;
+
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    accumulator =
+                        operator::apply_binop(
+                            op,
+                            accumulator,
+                            value,
+                        )
+                        .map_err(|message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        })?;
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        accumulator
+                    ),
+            }
+        }
+    }
+
+    fn extreme_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        maximum: bool,
+    ) -> Result<Value> {
+        let first =
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) =>
+                    value,
+
+                IterResult::End =>
+                    return Ok(
+                        Value::Unit
+                    ),
+            };
+
+        let mut extreme =
+            first;
+
+        loop {
+            match self.iterator_next(
+                iterator.clone()
+            )? {
+                IterResult::Item(value) => {
+                    let op =
+                        if maximum {
+                            BinOp::Gt
+                        } else {
+                            BinOp::Lt
+                        };
+
+                    let greater =
+                        operator::apply_binop(
+                            op,
+                            value.clone(),
+                            extreme.clone(),
+                        )
+                        .map_err(|message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        })?;
+
+                    let Value::Bool(
+                        replace
+                    ) = greater
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "comparison did not return Bool",
+                                None,
+                            )
+                        );
+                    };
+
+                    if replace {
+                        extreme =
+                            value;
+                    }
+                }
+
+                IterResult::End =>
+                    return Ok(
+                        extreme
+                    ),
             }
         }
     }
@@ -1548,21 +2088,17 @@ impl Vm {
 
     fn invoke_list_method(
         &mut self,
-        list: crate::runtime::ListRef,
+        list: ListRef,
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value> {
         match name {
             "len" => {
-                if !args.is_empty() {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "len() expects no arguments",
-                            None,
-                        )
-                    );
-                }
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
 
                 Ok(
                     Value::Int(
@@ -1572,35 +2108,25 @@ impl Vm {
             }
 
             "push" => {
-                if args.len() != 1 {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "push() expects one argument",
-                            None,
-                        )
-                    );
-                }
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
 
                 list.push(
                     args[0].clone()
                 );
 
-                Ok(
-                    Value::Unit
-                )
+                Ok(Value::Unit)
             }
 
             "iter" => {
-                if !args.is_empty() {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "iter() expects no arguments",
-                            None,
-                        )
-                    );
-                }
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
 
                 let iterator =
                     IteratorObj::from_value(
@@ -1615,9 +2141,41 @@ impl Vm {
                     })?;
 
                 Ok(
-                    Value::Iterator(
-                        iterator
+                    Value::Iterator(iterator)
+                )
+            }
+
+            "map"
+            | "filter"
+            | "enumerate"
+            | "zip"
+            | "take"
+            | "skip"
+            | "collect"
+            | "reduce"
+            | "fold"
+            | "any"
+            | "all"
+            | "sum"
+            | "product"
+            | "min"
+            | "max" => {
+                let iterator =
+                    IteratorObj::from_value(
+                        Value::List(list)
                     )
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Type,
+                            message,
+                            None,
+                        )
+                    })?;
+
+                self.invoke_iterator_method(
+                    iterator,
+                    name,
+                    args,
                 )
             }
 
@@ -1644,20 +2202,16 @@ impl Vm {
     ) -> Result<Value> {
         match name {
             "next" => {
-                if !args.is_empty() {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "next() expects no arguments",
-                            None,
-                        )
-                    );
-                }
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
 
                 match self.iterator_next(
                     iterator
                 )? {
-                    IterResult::Item(value) => {
+                    IterResult::Item(value) =>
                         Ok(
                             Value::Tuple(
                                 Rc::new(vec![
@@ -1665,10 +2219,9 @@ impl Vm {
                                     Value::Bool(true),
                                 ])
                             )
-                        )
-                    }
+                        ),
 
-                    IterResult::End => {
+                    IterResult::End =>
                         Ok(
                             Value::Tuple(
                                 Rc::new(vec![
@@ -1676,34 +2229,16 @@ impl Vm {
                                     Value::Bool(false),
                                 ])
                             )
-                        )
-                    }
+                        ),
                 }
             }
 
             "map" => {
-                if args.len() != 1 {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "map() expects one argument",
-                            None,
-                        )
-                    );
-                }
-
-                let Value::Closure(
-                    closure
-                ) = args[0].clone()
-                else {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            "map() expects a function",
-                            None,
-                        )
-                    );
-                };
+                let closure =
+                    Self::expect_closure_arg(
+                        name,
+                        &args,
+                    )?;
 
                 Ok(
                     Value::Iterator(
@@ -1720,28 +2255,11 @@ impl Vm {
             }
 
             "filter" => {
-                if args.len() != 1 {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "filter() expects one argument",
-                            None,
-                        )
-                    );
-                }
-
-                let Value::Closure(
-                    closure
-                ) = args[0].clone()
-                else {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            "filter() expects a function",
-                            None,
-                        )
-                    );
-                };
+                let closure =
+                    Self::expect_closure_arg(
+                        name,
+                        &args,
+                    )?;
 
                 Ok(
                     Value::Iterator(
@@ -1754,6 +2272,271 @@ impl Vm {
                             )
                         )
                     )
+                )
+            }
+
+            "enumerate" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Enumerate {
+                                    source: iterator,
+                                    index: 0,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            "zip" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let other =
+                    match &args[0] {
+                        Value::Iterator(
+                            iterator
+                        ) => iterator.clone(),
+
+                        value => {
+                            IteratorObj::from_value(
+                                value.clone()
+                            )
+                            .map_err(|message| {
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                )
+                            })?
+                        }
+                    };
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Zip {
+                                    left: iterator,
+                                    right: other,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            "take" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let count =
+                    Self::expect_int_arg(
+                        name,
+                        &args[0],
+                    )?;
+
+                if count < 0 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Value,
+                            "take() count must be non-negative",
+                            None,
+                        )
+                    );
+                }
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Take {
+                                    source: iterator,
+                                    remaining:
+                                        count as usize,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            "skip" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let count =
+                    Self::expect_int_arg(
+                        name,
+                        &args[0],
+                    )?;
+
+                if count < 0 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Value,
+                            "skip() count must be non-negative",
+                            None,
+                        )
+                    );
+                }
+
+                Ok(
+                    Value::Iterator(
+                        Rc::new(
+                            RefCell::new(
+                                IteratorObj::Skip {
+                                    source: iterator,
+                                    remaining:
+                                        count as usize,
+                                }
+                            )
+                        )
+                    )
+                )
+            }
+
+            "collect" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                self.collect_iterator(
+                    iterator
+                )
+            }
+
+            "reduce" => {
+                let closure =
+                    Self::expect_closure_arg(
+                        name,
+                        &args,
+                    )?;
+
+                self.reduce_iterator(
+                    iterator,
+                    closure,
+                )
+            }
+
+            "fold" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    2,
+                )?;
+
+                let initial =
+                    args[0].clone();
+
+                let closure =
+                    Self::expect_closure_arg_at(
+                        name,
+                        &args,
+                        1,
+                    )?;
+
+                self.fold_iterator(
+                    iterator,
+                    initial,
+                    closure,
+                )
+            }
+
+            "any" => {
+                let closure =
+                    Self::expect_closure_arg(
+                        name,
+                        &args,
+                    )?;
+
+                self.any_iterator(
+                    iterator,
+                    closure,
+                )
+            }
+
+            "all" => {
+                let closure =
+                    Self::expect_closure_arg(
+                        name,
+                        &args,
+                    )?;
+
+                self.all_iterator(
+                    iterator,
+                    closure,
+                )
+            }
+
+            "sum" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                self.numeric_reduce(
+                    iterator,
+                    BinOp::Add,
+                )
+            }
+
+            "product" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                self.numeric_reduce(
+                    iterator,
+                    BinOp::Mul,
+                )
+            }
+
+            "min" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                self.extreme_iterator(
+                    iterator,
+                    false,
+                )
+            }
+
+            "max" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                self.extreme_iterator(
+                    iterator,
+                    true,
                 )
             }
 
@@ -1780,33 +2563,29 @@ impl Vm {
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value> {
+        let iterator =
+            IteratorObj::from_value(
+                Value::Range(
+                    start,
+                    end,
+                    inclusive,
+                )
+            )
+            .map_err(|message| {
+                Error::new(
+                    ErrorKind::Type,
+                    message,
+                    None,
+                )
+            })?;
+
         match name {
             "iter" => {
-                if !args.is_empty() {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Arity,
-                            "iter() expects no arguments",
-                            None,
-                        )
-                    );
-                }
-
-                let iterator =
-                    IteratorObj::from_value(
-                        Value::Range(
-                            start,
-                            end,
-                            inclusive,
-                        )
-                    )
-                    .map_err(|message| {
-                        Error::new(
-                            ErrorKind::Type,
-                            message,
-                            None,
-                        )
-                    })?;
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
 
                 Ok(
                     Value::Iterator(
@@ -1816,15 +2595,10 @@ impl Vm {
             }
 
             _ => {
-                Err(
-                    Error::new(
-                        ErrorKind::Name,
-                        format!(
-                            "Range has no method '{}'",
-                            name
-                        ),
-                        None,
-                    )
+                self.invoke_iterator_method(
+                    iterator,
+                    name,
+                    args,
                 )
             }
         }
@@ -1850,6 +2624,103 @@ impl Vm {
             .expect(
                 "VM has no current frame"
             )
+    }
+
+    fn expect_arity(
+        &self,
+        name: &str,
+        args: &[Value],
+        expected: usize,
+    ) -> Result<()> {
+        if args.len() != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{}() expects {} argument(s), got {}",
+                        name,
+                        expected,
+                        args.len()
+                    ),
+                    None,
+                )
+            );
+        }
+
+        Ok(())
+    }
+
+    fn expect_int_arg(
+        name: &str,
+        value: &Value,
+    ) -> Result<i64> {
+        match value {
+            Value::Int(value) =>
+                Ok(*value),
+
+            other =>
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "{}() expects Int, got {}",
+                            name,
+                            other.type_name()
+                        ),
+                        None,
+                    )
+                )
+        }
+    }
+
+    fn expect_closure_arg(
+        name: &str,
+        args: &[Value],
+    ) -> Result<ClosureRef> {
+        Self::expect_closure_arg_at(
+            name,
+            args,
+            0,
+        )
+    }
+
+    fn expect_closure_arg_at(
+        name: &str,
+        args: &[Value],
+        index: usize,
+    ) -> Result<ClosureRef> {
+        let value =
+            args.get(index)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Arity,
+                        format!(
+                            "{}() missing closure argument",
+                            name
+                        ),
+                        None,
+                    )
+                })?;
+
+        match value {
+            Value::Closure(
+                closure
+            ) =>
+                Ok(closure.clone()),
+
+            other =>
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "{}() expects a function, got {}",
+                            name,
+                            other.type_name()
+                        ),
+                        None,
+                    )
+                )
+        }
     }
 
 }

@@ -219,17 +219,26 @@ impl IteratorObj {
     pub fn next(
         iterator: &IteratorRef,
     ) -> Result<IterResult, String> {
-        let mut iterator =
-            iterator.borrow_mut();
+        let variant =
+            iterator.borrow().clone();
 
-        match &mut *iterator {
+        match variant {
             Self::List {
                 data,
                 index,
             } => {
-                match data.get(*index) {
+                let value =
+                    data.get(index);
+
+                match value {
                     Some(value) => {
-                        *index += 1;
+                        if let Self::List {
+                            index,
+                            ..
+                        } = &mut *iterator.borrow_mut()
+                        {
+                            *index += 1;
+                        }
 
                         Ok(
                             IterResult::Item(value)
@@ -248,7 +257,7 @@ impl IteratorObj {
                 byte_index,
             } => {
                 let slice =
-                    &data[*byte_index..];
+                    &data[byte_index..];
 
                 let Some(ch) =
                     slice.chars().next()
@@ -258,8 +267,14 @@ impl IteratorObj {
                     );
                 };
 
-                *byte_index +=
-                    ch.len_utf8();
+                if let Self::Str {
+                    byte_index,
+                    ..
+                } = &mut *iterator.borrow_mut()
+                {
+                    *byte_index +=
+                        ch.len_utf8();
+                }
 
                 Ok(
                     IterResult::Item(
@@ -272,52 +287,69 @@ impl IteratorObj {
                 )
             }
 
-            Self::Vector {
-                data,
-                index,
-            } => {
-                Err(
-                    "Vector iterator requires VM callback execution"
-                        .into()
-                )
-
-                // match data.get(*index) {
-                //     Some(value) => {
-                //         *index += 1;
-
-                //         Ok(
-                //             IterResult::Item(
-                //                 value
-                //             )
-                //         )
-                //     }
-
-                //     None =>
-                //         Ok(
-                //             IterResult::End
-                //         ),
-                // }
-            }
-
             Self::Range {
                 current,
                 end,
             } => {
-                if *current >= *end {
+                if current >= end {
                     return Ok(
                         IterResult::End
                     );
                 }
 
-                let value =
-                    *current;
-
-                *current += 1;
+                if let Self::Range {
+                    current,
+                    ..
+                } = &mut *iterator.borrow_mut()
+                {
+                    *current += 1;
+                }
 
                 Ok(
                     IterResult::Item(
-                        Value::Int(value)
+                        Value::Int(current)
                     )
+                )
+            }
+
+            Self::Vector {
+                data,
+                index,
+            } => {
+                let value =
+                    data.borrow()
+                        .get(index)
+                        .map(|value| {
+                            Value::Float(value)
+                        });
+
+                match value {
+                    Some(value) => {
+                        if let Self::Vector {
+                            index,
+                            ..
+                        } = &mut *iterator.borrow_mut()
+                        {
+                            *index += 1;
+                        }
+
+                        Ok(
+                            IterResult::Item(value)
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            Self::Map { .. } |
+            Self::Filter { .. } => {
+                Err(
+                    "Map/Filter iterators must be evaluated by the VM"
+                        .into()
                 )
             }
 
@@ -325,36 +357,39 @@ impl IteratorObj {
                 source,
                 index,
             } => {
-                let item =
-                    Self::next(source)?;
-
-                match item {
-                    IterResult::End =>
-                        Ok(
-                            IterResult::End
-                        ),
-
+                match Self::next(&source)? {
                     IterResult::Item(value) => {
-                        let current =
-                            *index;
+                        if let Self::Enumerate {
+                            index,
+                            ..
+                        } = &mut *iterator.borrow_mut()
+                        {
+                            let current =
+                                *index;
 
-                        *index += 1;
+                            *index += 1;
 
-                        Ok(
-                            IterResult::Item(
-                                Value::Tuple(
-                                    Rc::new(
-                                        vec![
+                            Ok(
+                                IterResult::Item(
+                                    Value::Tuple(
+                                        Rc::new(vec![
                                             Value::Int(
                                                 current as i64
                                             ),
                                             value,
-                                        ]
+                                        ])
                                     )
                                 )
                             )
-                        )
+                        } else {
+                            unreachable!()
+                        }
                     }
+
+                    IterResult::End =>
+                        Ok(
+                            IterResult::End
+                        ),
                 }
             }
 
@@ -362,29 +397,24 @@ impl IteratorObj {
                 left,
                 right,
             } => {
-                let left_value =
-                    Self::next(left)?;
+                let lhs =
+                    Self::next(&left)?;
 
-                let right_value =
-                    Self::next(right)?;
+                let rhs =
+                    Self::next(&right)?;
 
-                match (
-                    left_value,
-                    right_value,
-                ) {
+                match (lhs, rhs) {
                     (
-                        IterResult::Item(left),
-                        IterResult::Item(right),
+                        IterResult::Item(lhs),
+                        IterResult::Item(rhs),
                     ) => {
                         Ok(
                             IterResult::Item(
                                 Value::Tuple(
-                                    Rc::new(
-                                        vec![
-                                            left,
-                                            right,
-                                        ]
-                                    )
+                                    Rc::new(vec![
+                                        lhs,
+                                        rhs,
+                                    ])
                                 )
                             )
                         )
@@ -401,62 +431,65 @@ impl IteratorObj {
                 source,
                 remaining,
             } => {
-                if *remaining == 0 {
+                if remaining == 0 {
                     return Ok(
                         IterResult::End
                     );
                 }
 
-                match Self::next(source)? {
-                    IterResult::End =>
-                        Ok(
-                            IterResult::End
-                        ),
+                let result =
+                    Self::next(&source)?;
 
-                    IterResult::Item(value) => {
+                if matches!(
+                    result,
+                    IterResult::Item(_)
+                ) {
+                    if let Self::Take {
+                        remaining,
+                        ..
+                    } = &mut *iterator.borrow_mut()
+                    {
                         *remaining -= 1;
-
-                        Ok(
-                            IterResult::Item(
-                                value
-                            )
-                        )
                     }
                 }
+
+                Ok(result)
             }
 
             Self::Skip {
                 source,
                 remaining,
             } => {
-                while *remaining > 0 {
-                    match Self::next(source)? {
+                let mut remaining =
+                    remaining;
+
+                while remaining > 0 {
+                    match Self::next(
+                        &source
+                    )? {
+                        IterResult::Item(_) => {
+                            remaining -= 1;
+                        }
+
                         IterResult::End =>
                             return Ok(
                                 IterResult::End
                             ),
-
-                        IterResult::Item(_) => {
-                            *remaining -= 1;
-                        }
                     }
                 }
 
-                Self::next(source)
+                if let Self::Skip {
+                    remaining: slot,
+                    ..
+                } = &mut *iterator.borrow_mut()
+                {
+                    *slot = 0;
+                }
+
+                Self::next(&source)
             }
-
-            Self::Map { .. } =>
-                Err(
-                    "Map iterator requires VM callback execution"
-                        .into()
-                ),
-
-            Self::Filter { .. } =>
-                Err(
-                    "Filter iterator requires VM callback execution"
-                        .into()
-                ),
         }
     }
+
 }
 
