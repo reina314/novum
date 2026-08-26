@@ -900,3 +900,125 @@ fn vm_pattern_binding_can_be_reassigned() {
         12,
     );
 }
+
+// ============================================================
+// Enum
+// ============================================================
+
+#[test]
+fn vm_enum_constructor() {
+    assert_int(
+        r#"
+        enum Option {
+            Some
+            None
+        }
+
+        let x =
+            Option.Some(42)
+
+        match x {
+            Option.Some(v) => v
+            Option.None => 0
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn vm_enum_unit_variant() {
+    assert_int(
+        r#"
+        enum Option {
+            Some
+            None
+        }
+
+        let x =
+            Option.None
+
+        match x {
+            Option.Some(v) => v
+            Option.None => 123
+        }
+        "#,
+        123,
+    );
+}
+
+#[test]
+fn vm_enum_second_match_arm() {
+    assert_int(
+        r#"
+        enum Result {
+            Ok
+            Err
+        }
+
+        let x =
+            Result.Err
+
+        match x {
+            Result.Ok(v) => v
+            Result.Err => 99
+        }
+        "#,
+        99,
+    );
+}
+
+#[test]
+fn vm_enum_nested_pattern() {
+    assert_int(
+        r#"
+        enum Result {
+            Ok
+            Err
+        }
+
+        let x =
+            Result.Ok(
+                (10, 20)
+            )
+
+        match x {
+            Result.Ok((a, b)) =>
+                a + b
+
+            Result.Err =>
+                0
+        }
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_enum_list_field() {
+    assert_int(
+        r#"
+        enum Result {
+            Ok
+            Err
+        }
+
+        let x =
+            Result.Ok(
+                [10, 20]
+            )
+
+        match x {
+            Result.Ok([a, b]) =>
+                a + b
+
+            Result.Err =>
+                0
+        }
+        "#,
+        30,
+    );
+}
+
+
+

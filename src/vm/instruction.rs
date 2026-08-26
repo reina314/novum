@@ -27,12 +27,16 @@ pub enum OpCode {
     IndexGet,
     IndexSet,
 
+    FieldGet,
+    EnumFieldGet,
+    FieldSet,
+
     IteratorFrom,
     IteratorNext,
 
-    MatchType,
     MatchTuple,
     MatchList,
+    MatchEnum,
     PatternFail,
 
     Add,

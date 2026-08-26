@@ -8,6 +8,8 @@ use crate::{
         List,
         ListRef,
         Value,
+        EnumValue,
+        EnumConstructor,
         IteratorObj,
         IteratorRef,
         IterResult,
@@ -642,80 +644,42 @@ impl Vm {
                                 )
                             })?;
 
-                    let value =
+                    let callable =
                         self.stack[
                             function_index
                         ].clone();
 
-                    let Value::Closure(
-                        closure
-                    ) = value
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Type,
-                                "value is not callable",
-                                None,
-                            )
-                        );
-                    };
-
-                    if closure
-                        .function
-                        .arity as usize
-                        != argc
-                    {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Arity,
-                                format!(
-                                    "function expects {} arguments, got {}",
-                                    closure.function.arity,
-                                    argc
-                                ),
-                                None,
-                            )
-                        );
-                    }
-
-                    let args =
-                        self.stack[
-                            function_index + 1..
-                        ]
-                        .to_vec();
-
-                    self.stack.truncate(
-                        function_index
-                    );
-
-                    let local_count =
-                        closure
-                            .function
-                            .chunk
-                            .local_count;
-
-                    self.frames.push(
-                        CallFrame {
-                            closure,
-                            ip: 0,
-                            locals: {
-                                let mut locals =
-                                    args;
-
-                                locals.resize(
-                                    local_count,
-                                    Value::Unit,
-                                );
-
-                                locals
-                            },
-                            cells:
-                                vec![
-                                    None;
-                                    local_count
-                                ],
+                    match callable {
+                        Value::Closure(
+                            closure
+                        ) => {
+                            self.call_closure_frame(
+                                function_index,
+                                closure,
+                                argc,
+                            )?;
                         }
-                    );
+
+                        Value::EnumConstructor(
+                            constructor
+                        ) => {
+                            self.call_enum_constructor(
+                                function_index,
+                                constructor,
+                                argc,
+                            )?;
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "value is not callable",
+                                    None,
+                                )
+                            );
+                        }
+                    }
                 }
 
                 OpCode::Closure => {
@@ -1128,6 +1092,129 @@ impl Vm {
                     }
                 }
 
+                OpCode::FieldGet => {
+                    let field =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    let Value::Str(
+                        field
+                    ) = field
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "field name must be Str",
+                                None,
+                            )
+                        );
+                    };
+
+                    match object {
+                        Value::Enum(
+                            enum_def
+                        ) => {
+                            if enum_def
+                                .variant(
+                                    field.as_str()
+                                )
+                                .is_none()
+                            {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Name,
+                                        format!(
+                                            "enum '{}' has no variant '{}'",
+                                            enum_def.name(),
+                                            field
+                                        ),
+                                        None,
+                                    )
+                                );
+                            }
+
+                            self.push(
+                                Value::EnumConstructor(
+                                    EnumConstructor::new(
+                                        enum_def,
+                                        field.as_str(),
+                                    )
+                                )
+                            );
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "unsupported field access",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                OpCode::EnumFieldGet => {
+                    let index =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    let Value::EnumValue(
+                        value
+                    ) = object
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "EnumFieldGet expects EnumValue",
+                                None,
+                            )
+                        );
+                    };
+
+                    let Value::Int(
+                        index
+                    ) = index
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "enum field index must be Int",
+                                None,
+                            )
+                        );
+                    };
+
+                    if index < 0 {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Index,
+                                "enum field index must be non-negative",
+                                None,
+                            )
+                        );
+                    }
+
+                    let field =
+                        value.field(
+                            index as usize
+                        )
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Index,
+                                "enum field index out of bounds",
+                                None,
+                            )
+                        })?;
+
+                    self.push(field);
+                }
+
                 OpCode::IteratorFrom => {
                     let value =
                         self.pop()?;
@@ -1209,6 +1296,67 @@ impl Vm {
                     );
                 }
 
+                OpCode::MatchEnum => {
+                    let variant =
+                        self.pop()?;
+
+                    let enum_name =
+                        self.pop()?;
+
+                    let value =
+                        self.pop()?;
+
+                    let Value::Str(
+                        enum_name
+                    ) = enum_name
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "MatchEnum expects enum name",
+                                None,
+                            )
+                        );
+                    };
+
+                    let Value::Str(
+                        variant
+                    ) = variant
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "MatchEnum expects variant name",
+                                None,
+                            )
+                        );
+                    };
+
+                    let matched =
+                        match &value {
+                            Value::EnumValue(
+                                value
+                            ) => {
+                                value.enum_name()
+                                    == enum_name.as_str()
+                                    && value.variant()
+                                        == variant.as_str()
+                                    && value.fields().len()
+                                        == operand as usize
+                            }
+
+                            _ => false,
+                        };
+
+                    self.push(value);
+
+                    self.push(
+                        Value::Bool(
+                            matched
+                        )
+                    );
+                }
+
                 OpCode::MatchList => {
                     let value =
                         self.pop()?;
@@ -1277,6 +1425,163 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn call_closure_frame(
+        &mut self,
+        function_index: usize,
+        closure: ClosureRef,
+        argc: usize,
+    ) -> Result<()> {
+        if closure
+            .function
+            .arity as usize
+            != argc
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "function expects {} arguments, got {}",
+                        closure.function.arity,
+                        argc
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let args =
+            self.stack[
+                function_index + 1..
+            ]
+            .to_vec();
+
+        self.stack.truncate(
+            function_index
+        );
+
+        let local_count =
+            closure
+                .function
+                .chunk
+                .local_count;
+
+        let mut locals =
+            args;
+
+        locals.resize(
+            local_count,
+            Value::Unit,
+        );
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals,
+                cells:
+                    vec![
+                        None;
+                        local_count
+                    ],
+            }
+        );
+
+        Ok(())
+    }
+
+    fn call_closure_sync(
+        &mut self,
+        closure: ClosureRef,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let caller_depth =
+            self.frames.len();
+
+        let local_count =
+            closure
+                .function
+                .chunk
+                .local_count;
+
+        let mut locals =
+            args;
+
+        locals.resize(
+            local_count,
+            Value::Unit,
+        );
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals,
+                cells:
+                    vec![
+                        None;
+                        local_count
+                    ],
+            }
+        );
+
+        self.execute_until_depth(
+            caller_depth
+        )
+    }
+
+    fn call_enum_constructor(
+        &mut self,
+        function_index: usize,
+        constructor: EnumConstructor,
+        argc: usize,
+    ) -> Result<()> {
+        let expected =
+            constructor.arity();
+
+        if argc != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects {} arguments, got {}",
+                        constructor,
+                        expected,
+                        argc
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let args =
+            self.stack[
+                function_index + 1..
+            ]
+            .to_vec();
+
+        self.stack.truncate(
+            function_index
+        );
+
+        let value =
+            EnumValue::new(
+                constructor
+                    .enum_def()
+                    .name(),
+                constructor
+                    .variant(),
+                args,
+            );
+
+        self.push(
+            Value::EnumValue(
+                Rc::new(value)
+            )
+        );
+
+        Ok(())
     }
 
     #[inline]
@@ -1482,46 +1787,6 @@ impl Vm {
                     upvalues,
                 }
             )
-        )
-    }
-
-    fn call_closure_sync(
-        &mut self,
-        closure: ClosureRef,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        let caller_depth =
-            self.frames.len();
-
-        let local_count =
-            closure
-                .function
-                .chunk
-                .local_count;
-
-        let mut locals =
-            args;
-
-        locals.resize(
-            local_count,
-            Value::Unit,
-        );
-
-        self.frames.push(
-            CallFrame {
-                closure,
-                ip: 0,
-                locals,
-                cells:
-                    vec![
-                        None;
-                        local_count
-                    ],
-            }
-        );
-
-        self.execute_until_depth(
-            caller_depth
         )
     }
 

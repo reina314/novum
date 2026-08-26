@@ -412,6 +412,68 @@ impl Compiler {
         )
     }
 
+    fn emit_enum_match(
+        &mut self,
+        value_slot: u16,
+        path: &[String],
+        field_count: usize,
+    ) -> Result<usize> {
+        if path.len() != 2 {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "enum pattern requires Enum.Variant",
+                    None,
+                )
+            );
+        }
+
+        let enum_name =
+            self.chunk.add_constant(
+                Value::Str(
+                    Rc::new(
+                        path[0].clone()
+                    )
+                )
+            );
+
+        let variant =
+            self.chunk.add_constant(
+                Value::Str(
+                    Rc::new(
+                        path[1].clone()
+                    )
+                )
+            );
+
+        self.chunk.emit_operand(
+            OpCode::LoadLocal,
+            value_slot as u32,
+        );
+
+        self.chunk.emit_operand(
+            OpCode::Constant,
+            enum_name,
+        );
+
+        self.chunk.emit_operand(
+            OpCode::Constant,
+            variant,
+        );
+
+        self.chunk.emit_operand(
+            OpCode::MatchEnum,
+            field_count as u32,
+        );
+
+        Ok(
+            self.chunk.emit_operand(
+                OpCode::JumpIfFalse,
+                0,
+            )
+        )
+    }
+
     fn enter_scope(
         &mut self,
     ) {
@@ -879,6 +941,45 @@ impl Compiler {
                 );
             }
 
+            ExprKind::EnumDecl(def) => {
+                let mut enum_def =
+                    crate::runtime::EnumDef::new(
+                        def.name.clone()
+                    );
+
+                for variant in
+                    &def.variants
+                {
+                    enum_def
+                        .add_variant(
+                            variant.name.clone(),
+                            variant.fields.len(),
+                        )
+                        .map_err(|message| {
+                            Error::new(
+                                ErrorKind::Name,
+                                message,
+                                None,
+                            )
+                        })?;
+                }
+
+                let enum_ref =
+                    Rc::new(enum_def);
+
+                let constant =
+                    self.chunk.add_constant(
+                        Value::Enum(
+                            enum_ref
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    constant,
+                );
+            }
+
             ExprKind::List(items) => {
                 let explicit_capacity =
                     items
@@ -1033,6 +1134,33 @@ impl Compiler {
 
                 self.chunk.emit(
                     OpCode::IndexGet
+                );
+            }
+
+            ExprKind::Field {
+                object,
+                name,
+            } => {
+                self.compile_expr(
+                    object
+                )?;
+
+                let constant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                name.clone()
+                            )
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    constant,
+                );
+
+                self.chunk.emit(
+                    OpCode::FieldGet
                 );
             }
 
@@ -2343,13 +2471,112 @@ impl Compiler {
                 }
             }
 
-            Pattern::Enum { .. } => {
-                return Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "enum patterns are not implemented yet",
-                        None,
-                    )
+            Pattern::Enum {
+                path,
+                fields,
+            } => {
+                if path.len() != 2 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "enum pattern requires Enum.Variant",
+                            None,
+                        )
+                    );
+                }
+
+                let enum_name =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                path[0].clone()
+                            )
+                        )
+                    );
+
+                let variant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                path[1].clone()
+                            )
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    value_slot as u32,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    enum_name,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    variant,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::MatchEnum,
+                    fields.len() as u32,
+                );
+
+                let failure =
+                    self.chunk.emit_operand(
+                        OpCode::JumpIfFalse,
+                        0,
+                    );
+
+                for (
+                    index,
+                    pattern,
+                ) in fields.iter().enumerate()
+                {
+                    let field_slot =
+                        self.allocate_temp_local();
+
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        value_slot as u32,
+                    );
+
+                    let index_constant =
+                        self.chunk.add_constant(
+                            Value::Int(
+                                index as i64
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        index_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::IndexGet
+                    );
+
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        field_slot as u32,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+
+                    failures.extend(
+                        self.compile_pattern(
+                            field_slot,
+                            pattern,
+                        )?
+                    );
+                }
+
+                failures.push(
+                    failure
                 );
             }
         }
