@@ -53,6 +53,25 @@ impl Chunk {
     }
 
     #[inline]
+    pub fn add_call_site(
+        &mut self,
+        names: Vec<Option<String>>,
+        method: Option<u32>,
+    ) -> u32 {
+        let index =
+            self.call_sites.len();
+
+        self.call_sites.push(
+            CallSite {
+                names,
+                method,
+            }
+        );
+
+        index as u32
+    }
+
+    #[inline]
     pub fn emit(
         &mut self,
         opcode: OpCode,
@@ -113,4 +132,5 @@ impl Default for Chunk {
 #[derive(Clone, Debug)]
 pub struct CallSite {
     pub names: Vec<Option<String>>,
+    pub method: Option<u32>,
 }

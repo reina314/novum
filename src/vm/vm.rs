@@ -32,8 +32,6 @@ use crate::{
     syntax::BinOp,
     stdlib::{
         decode_class_counts,
-        decode_method_call,
-        decode_call_operand,
     },
 };
 
@@ -48,12 +46,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
-
-#[derive(Clone)]
-struct RuntimeArg {
-    name: Option<String>,
-    value: Value,
-}
 
 pub struct Vm {
     stack: Vec<Value>,
@@ -126,6 +118,7 @@ impl Vm {
             Rc::new(
                 FunctionProto {
                     arity: 0,
+                    parameters: Vec::new(),
                     chunk: chunk.clone(),
                     upvalue_specs: Vec::new(),
                 }
@@ -162,6 +155,7 @@ impl Vm {
             Rc::new(
                 FunctionProto {
                     arity: 0,
+                    parameters: Vec::new(),
                     chunk: chunk.clone(),
                     upvalue_specs: Vec::new(),
                 }
@@ -562,13 +556,33 @@ impl Vm {
                 }
 
                 OpCode::InvokeMethod => {
-                    let (
-                        method_index,
-                        argc,
-                    ) =
-                        decode_method_call(
-                            operand
-                        );
+                    let call_site =
+                        operand as usize;
+
+                    let metadata =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .call_sites
+                            .get(call_site)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "call-site index out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let method_index =
+                        metadata.method.ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "InvokeMethod requires method call-site metadata",
+                                None,
+                            )
+                        })?;
 
                     let method =
                         self.current_frame()
@@ -602,7 +616,7 @@ impl Vm {
                     };
 
                     let argc =
-                        argc as usize;
+                        metadata.names.len();
 
                     let receiver_index =
                         self.stack
@@ -645,13 +659,27 @@ impl Vm {
                 }
 
                 OpCode::Call => {
-                    let (
-                        call_site,
-                        argc,
-                    ) =
-                        decode_call_operand(
-                            operand
-                        );
+                    let call_site =
+                        operand as usize;
+
+                    let metadata =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .call_sites
+                            .get(call_site)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "call-site index out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let argc =
+                        metadata.names.len();
 
                     let function_index =
                         self.stack
@@ -673,17 +701,32 @@ impl Vm {
                         ].clone();
 
                     match callable {
-                        Value::Closure(closure) => {
+                        Value::Closure(
+                            closure
+                        ) => {
                             self.call_closure_frame(
                                 function_index,
                                 closure,
-                                argc,
+                                &metadata.names,
                             )?;
                         }
 
                         Value::EnumConstructor(
                             constructor
                         ) => {
+                            if metadata.names
+                                .iter()
+                                .any(Option::is_some)
+                            {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "named arguments are not supported for enum constructors",
+                                        None,
+                                    )
+                                );
+                            }
+
                             self.call_enum_constructor(
                                 function_index,
                                 constructor,
@@ -691,7 +734,22 @@ impl Vm {
                             )?;
                         }
 
-                        Value::StructType(ty) => {
+                        Value::StructType(
+                            ty
+                        ) => {
+                            if metadata.names
+                                .iter()
+                                .any(Option::is_some)
+                            {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "named arguments are not supported for struct constructors",
+                                        None,
+                                    )
+                                );
+                            }
+
                             self.call_struct_constructor(
                                 function_index,
                                 ty,
@@ -699,7 +757,9 @@ impl Vm {
                             )?;
                         }
 
-                        Value::Class(class) => {
+                        Value::Class(
+                            class
+                        ) => {
                             self.call_class(
                                 function_index,
                                 class,
@@ -1864,80 +1924,126 @@ impl Vm {
     fn bind_arguments(
         &self,
         parameters: &[String],
-        positional: &[Value],
-        named: &[(String, Value)],
+        names: &[Option<String>],
+        values: Vec<Value>,
     ) -> Result<Vec<Value>> {
-        if positional.len() > parameters.len() {
+        if names.len() != values.len() {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "call-site metadata does not match arguments",
+                    None,
+                )
+            );
+        }
+
+        if values.len() >
+            parameters.len()
+        {
             return Err(
                 Error::new(
                     ErrorKind::Arity,
                     format!(
-                        "expected at most {} arguments, got {}",
+                        "function expects at most {} arguments, got {}",
                         parameters.len(),
-                        positional.len(),
+                        values.len()
                     ),
                     None,
                 )
             );
         }
 
-        let mut values =
-            vec![Value::Unit; parameters.len()];
+        let mut bound =
+            vec![
+                Value::Unit;
+                parameters.len()
+            ];
 
         let mut assigned =
-            vec![false; parameters.len()];
+            vec![
+                false;
+                parameters.len()
+            ];
 
-        for (index, value) in
-            positional.iter().enumerate()
-        {
-            values[index] =
-                value.clone();
-
-            assigned[index] =
-                true;
-        }
+        let mut positional_index =
+            0usize;
 
         for (
             name,
             value,
-        ) in named
+        ) in names.iter()
+            .zip(values.into_iter())
         {
-            let index =
-                parameters
-                    .iter()
-                    .position(
-                        |parameter|
-                            parameter == name
-                    )
-                    .ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::Name,
-                            format!(
-                                "unknown parameter '{}'",
-                                name
-                            ),
-                            None,
-                        )
-                    })?;
+            match name {
+                None => {
+                    while positional_index <
+                        assigned.len()
+                        &&
+                        assigned[positional_index]
+                    {
+                        positional_index += 1;
+                    }
 
-            if assigned[index] {
-                return Err(
-                    Error::new(
-                        ErrorKind::Arity,
-                        format!(
-                            "argument '{}' specified more than once",
-                            name
-                        ),
-                        None,
-                    )
-                );
+                    if positional_index >=
+                        parameters.len()
+                    {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Arity,
+                                "too many positional arguments",
+                                None,
+                            )
+                        );
+                    }
+
+                    bound[positional_index] =
+                        value;
+
+                    assigned[positional_index] =
+                        true;
+
+                    positional_index += 1;
+                }
+
+                Some(name) => {
+                    let index =
+                        parameters
+                            .iter()
+                            .position(
+                                |parameter|
+                                    parameter == name
+                            )
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Name,
+                                    format!(
+                                        "unknown parameter '{}'",
+                                        name
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    if assigned[index] {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Arity,
+                                format!(
+                                    "argument '{}' specified more than once",
+                                    name
+                                ),
+                                None,
+                            )
+                        );
+                    }
+
+                    bound[index] =
+                        value;
+
+                    assigned[index] =
+                        true;
+                }
             }
-
-            values[index] =
-                value.clone();
-
-            assigned[index] =
-                true;
         }
 
         if assigned.iter()
@@ -1952,38 +2058,27 @@ impl Vm {
             );
         }
 
-        Ok(values)
+        Ok(bound)
     }
 
     fn call_closure_frame(
         &mut self,
         function_index: usize,
         closure: ClosureRef,
-        argc: usize,
+        names: &[Option<String>],
     ) -> Result<()> {
-        if closure
-            .function
-            .arity as usize
-            != argc
-        {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    format!(
-                        "function expects {} arguments, got {}",
-                        closure.function.arity,
-                        argc
-                    ),
-                    None,
-                )
-            );
-        }
-
-        let args =
+        let raw_args =
             self.stack[
                 function_index + 1..
             ]
             .to_vec();
+
+        let args =
+            self.bind_arguments(
+                &closure.function.parameters,
+                names,
+                raw_args,
+            )?;
 
         self.stack.truncate(
             function_index

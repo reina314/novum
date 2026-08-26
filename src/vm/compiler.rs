@@ -23,7 +23,6 @@ use crate::{
     },
     stdlib::{
         encode_class_counts,
-        encode_method_call,
         is_self_pattern,
     }
 };
@@ -31,7 +30,6 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
-    CallSite,
 };
 
 use std::{
@@ -63,7 +61,6 @@ enum LValue {
 }
 
 struct LoopContext {
-    condition_target: usize,
     cleanup_target: Option<usize>,
     continue_jumps: Vec<usize>,
     break_jumps: Vec<usize>,
@@ -112,6 +109,7 @@ pub struct Compiler {
     next_local_slot: u16,
     loops: Vec<LoopContext>,
     loop_local_stack: Vec<Vec<u16>>,
+    function_parameters: Vec<String>,
 }
 
 impl Compiler {
@@ -122,6 +120,7 @@ impl Compiler {
             next_local_slot: 0,
             loops: Vec::new(),
             loop_local_stack: Vec::new(),
+            function_parameters: Vec::new(),
         }
     }
 
@@ -142,7 +141,13 @@ impl Compiler {
                 next_local_slot: 0,
                 loops: Vec::new(),
                 loop_local_stack: Vec::new(),
+                function_parameters: Vec::new(),
             };
+
+        let mut parameter_names =
+            Vec::with_capacity(
+                params.len()
+            );
 
         for (
             index,
@@ -168,10 +173,17 @@ impl Compiler {
                     name.clone(),
                     index as u16,
                 );
+
+            parameter_names.push(
+                name.clone()
+            );
         }
 
         compiler.next_local_slot =
             params.len() as u16;
+
+        compiler.function_parameters =
+            parameter_names;
 
         Ok(compiler)
     }
@@ -741,6 +753,8 @@ impl Compiler {
 
         FunctionProto {
             arity,
+            parameters:
+                self.function_parameters,
             chunk: Rc::new(chunk),
             upvalue_specs,
         }
@@ -749,20 +763,33 @@ impl Compiler {
     fn add_call_site(
         &mut self,
         args: &[CallArg],
-    ) -> usize {
-        let index =
-            self.chunk.call_sites.len();
+        method: Option<u32>,
+    ) -> Result<u32> {
+        if args.len() >
+            u16::MAX as usize
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    "too many call arguments",
+                    None,
+                )
+            );
+        }
 
-        self.chunk.call_sites.push(
-            CallSite {
-                names: args
-                    .iter()
-                    .map(|arg| arg.name.clone())
-                    .collect(),
-            }
-        );
+        let names =
+            args.iter()
+                .map(|arg|
+                    arg.name.clone()
+                )
+                .collect();
 
-        index
+        Ok(
+            self.chunk.add_call_site(
+                names,
+                method,
+            )
+        )
     }
 
     pub fn compile_program(
@@ -1759,8 +1786,6 @@ impl Compiler {
 
                 self.loops.push(
                     LoopContext {
-                        condition_target,
-
                         cleanup_target:
                             None,
 
@@ -1925,9 +1950,6 @@ impl Compiler {
 
                 self.loops.push(
                     LoopContext {
-                        condition_target:
-                            loop_start,
-
                         cleanup_target:
                             None,
 
@@ -2181,22 +2203,6 @@ impl Compiler {
                         object
                     )?;
 
-                    for arg in args {
-                        if arg.name.is_some() {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "VM currently does not support named arguments",
-                                    None,
-                                )
-                            );
-                        }
-
-                        self.compile_expr(
-                            &arg.value
-                        )?;
-                    }
-
                     let method_index =
                         self.chunk.add_constant(
                             Value::Str(
@@ -2206,27 +2212,21 @@ impl Compiler {
                             )
                         );
 
-                    let argc =
-                        args.len();
-
-                    if argc >
-                        u16::MAX as usize
-                    {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Arity,
-                                "too many method arguments",
-                                None,
-                            )
-                        );
+                    for arg in args {
+                        self.compile_expr(
+                            &arg.value
+                        )?;
                     }
+
+                    let call_site =
+                        self.add_call_site(
+                            args,
+                            Some(method_index),
+                        )?;
 
                     self.chunk.emit_operand(
                         OpCode::InvokeMethod,
-                        encode_method_call(
-                            method_index as u16,
-                            argc as u16,
-                        ),
+                        call_site,
                     );
 
                     return Ok(());
@@ -2291,24 +2291,20 @@ impl Compiler {
                 )?;
 
                 for arg in args {
-                    if arg.name.is_some() {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM currently does not support named arguments",
-                                None,
-                            )
-                        );
-                    }
-
                     self.compile_expr(
                         &arg.value
                     )?;
                 }
 
+                let call_site =
+                    self.add_call_site(
+                        args,
+                        None,
+                    )?;
+
                 self.chunk.emit_operand(
                     OpCode::Call,
-                    args.len() as u32,
+                    call_site,
                 );
             }
 

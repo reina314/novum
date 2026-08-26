@@ -19,7 +19,7 @@ pub enum UpvalueSpec {
 #[derive(Debug, Clone)]
 pub struct FunctionProto {
     pub arity: u16,
-    // pub parameters: Vec<String>,
+    pub parameters: Vec<String>,
     pub chunk: Rc<Chunk>,
     pub upvalue_specs: Vec<UpvalueSpec>,
 }
