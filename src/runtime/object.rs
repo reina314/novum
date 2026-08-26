@@ -1,6 +1,5 @@
 use super::{
     ClassRef,
-    FuncRef,
     Value,
 };
 

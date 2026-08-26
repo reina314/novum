@@ -13,7 +13,10 @@ use crate::{
         ListItem,
         IndexExpr,
     },
-    runtime::Value,
+    runtime::{
+        Value,
+        StructType,
+    },
 };
 
 use super::{
@@ -929,6 +932,79 @@ impl Compiler {
                 );
 
                 // Enum declarations do not produce a value.
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+            }
+
+            ExprKind::StructDecl {
+                name,
+                fields,
+                methods,
+                ..
+            } => {
+                if !methods.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "struct methods are not supported; use class",
+                            None,
+                        )
+                    );
+                }
+
+                let field_names =
+                    fields
+                        .iter()
+                        .map(
+                            |(name, _)| name.clone()
+                        )
+                        .collect::<Vec<_>>();
+
+                if fields.iter()
+                    .any(|(_, default)| default.is_some())
+                {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "struct fields cannot have default values; use class",
+                            None,
+                        )
+                    );
+                }
+
+                let ty =
+                    StructType::new(
+                        name.clone(),
+                        field_names,
+                    );
+
+                let slot =
+                    self.declare_local(
+                        name.clone()
+                    )?;
+
+                let constant =
+                    self.chunk.add_constant(
+                        Value::StructType(
+                            Rc::new(ty)
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    constant,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
                 self.chunk.emit(
                     OpCode::Unit
                 );

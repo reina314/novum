@@ -14,7 +14,9 @@ use crate::{
         IteratorObj,
         IteratorRef,
         IterResult,
-        operator, 
+        StructValue,
+        StructTypeRef,
+        apply_binop, 
     },
     syntax::BinOp, 
 };
@@ -671,6 +673,16 @@ impl Vm {
                             )?;
                         }
 
+                        Value::StructType(
+                            ty
+                        ) => {
+                            self.call_struct_constructor(
+                                function_index,
+                                ty,
+                                argc,
+                            )?;
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -1161,6 +1173,29 @@ impl Vm {
                             }
                         }
 
+                        Value::Struct(
+                            value
+                        ) => {
+                            let field =
+                                value
+                                    .get_field(
+                                        field.as_str()
+                                    )
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Name,
+                                            format!(
+                                                "{} has no field '{}'",
+                                                value.type_name(),
+                                                field,
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(field);
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -1609,6 +1644,62 @@ impl Vm {
         Ok(())
     }
 
+    fn call_struct_constructor(
+        &mut self,
+        function_index: usize,
+        ty: StructTypeRef,
+        argc: usize,
+    ) -> Result<()> {
+        let expected =
+            ty.fields().len();
+
+        if argc != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects {} arguments, got {}",
+                        ty.name(),
+                        expected,
+                        argc,
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let fields =
+            self.stack[
+                function_index + 1..
+            ]
+            .to_vec();
+
+        self.stack.truncate(
+            function_index
+        );
+
+        let value =
+            StructValue::new(
+                ty,
+                fields,
+            )
+            .map_err(|message| {
+                Error::new(
+                    ErrorKind::Type,
+                    message,
+                    None,
+                )
+            })?;
+
+        self.push(
+            Value::Struct(
+                Rc::new(value)
+            )
+        );
+
+        Ok(())
+    }
+
     #[inline]
     fn fetch_instruction(
         &mut self,
@@ -1691,7 +1782,7 @@ impl Vm {
         let left = self.pop()?;
 
         let result =
-            operator::apply_binop(
+            apply_binop(
                 op,
                 left,
                 right,
@@ -2309,7 +2400,7 @@ impl Vm {
             )? {
                 IterResult::Item(value) => {
                     accumulator =
-                        operator::apply_binop(
+                        apply_binop(
                             op,
                             accumulator,
                             value,
@@ -2365,7 +2456,7 @@ impl Vm {
                         };
 
                     let greater =
-                        operator::apply_binop(
+                        apply_binop(
                             op,
                             value.clone(),
                             extreme.clone(),

@@ -1021,3 +1021,90 @@ fn vm_enum_nested_list_pattern() {
     );
 }
 
+// ============================================================
+// Struct
+// ============================================================
+
+#[test]
+fn vm_struct_constructor() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        let p =
+            Point(10, 20)
+
+        p.x
+        "#,
+        10,
+    );
+}
+
+#[test]
+fn vm_struct_second_field() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        let p =
+            Point(10, 20)
+
+        p.y
+        "#,
+        20,
+    );
+}
+
+#[test]
+fn vm_struct_value_semantics() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        let a =
+            Point(10, 20)
+
+        let b =
+            a
+
+        b.x
+        "#,
+        10,
+    );
+}
+
+#[test]
+fn vm_struct_nested_value() {
+    assert_int(
+        r#"
+        struct Point {
+            x
+            y
+        }
+
+        struct Line {
+            start
+            end
+        }
+
+        let line =
+            Line(
+                Point(1, 2),
+                Point(3, 4),
+            )
+
+        line.end.x
+        "#,
+        3,
+    );
+}
+

@@ -1,5 +1,4 @@
 use super::{
-    FuncRef,
     Object,
     ObjectRef,
 };

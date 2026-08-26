@@ -280,6 +280,11 @@ pub enum Pattern {
         path: Vec<String>,
         fields: Vec<Pattern>,
     },
+
+    // Struct {
+    //     path: Vec<String>,
+    //     fields: Vec<(String, Pattern)>,
+    // },
 }
 
 pub fn span_of_index(

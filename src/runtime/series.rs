@@ -1,7 +1,7 @@
 use super::{
     Value,
     Matrix,
-    DataFrame,
+    // DataFrame,
 };
 
 use std::{
@@ -438,67 +438,67 @@ impl Series {
         )
     }
 
-    pub fn value_counts(
-        &self,
-    ) -> Result<DataFrame, String> {
-        let mut values =
-            Vec::<Value>::new();
+    // pub fn value_counts(
+    //     &self,
+    // ) -> Result<DataFrame, String> {
+    //     let mut values =
+    //         Vec::<Value>::new();
 
-        let mut counts =
-            Vec::<Value>::new();
+    //     let mut counts =
+    //         Vec::<Value>::new();
 
-        for value in &self.data {
-            let mut found =
-                None;
+    //     for value in &self.data {
+    //         let mut found =
+    //             None;
 
-            for i in 0..values.len() {
-                if Value::eq_values(
-                    value,
-                    &values[i],
-                )? {
-                    found = Some(i);
-                    break;
-                }
-            }
+    //         for i in 0..values.len() {
+    //             if Value::eq_values(
+    //                 value,
+    //                 &values[i],
+    //             )? {
+    //                 found = Some(i);
+    //                 break;
+    //             }
+    //         }
 
-            match found {
-                Some(index) => {
-                    if let Value::Int(count) =
-                        &mut counts[index]
-                    {
-                        *count += 1;
-                    }
-                }
+    //         match found {
+    //             Some(index) => {
+    //                 if let Value::Int(count) =
+    //                     &mut counts[index]
+    //                 {
+    //                     *count += 1;
+    //                 }
+    //             }
 
-                None => {
-                    values.push(
-                        value.clone()
-                    );
+    //             None => {
+    //                 values.push(
+    //                     value.clone()
+    //                 );
 
-                    counts.push(
-                        Value::Int(1)
-                    );
-                }
-            }
-        }
+    //                 counts.push(
+    //                     Value::Int(1)
+    //                 );
+    //             }
+    //         }
+    //     }
 
-        DataFrame::from_series(
-            vec![
-                Rc::new(
-                    Series::new(
-                        "value",
-                        values,
-                    )
-                ),
-                Rc::new(
-                    Series::new(
-                        "count",
-                        counts,
-                    )
-                ),
-            ]
-        )
-    }
+    //     DataFrame::from_series(
+    //         vec![
+    //             Rc::new(
+    //                 Series::new(
+    //                     "value",
+    //                     values,
+    //                 )
+    //             ),
+    //             Rc::new(
+    //                 Series::new(
+    //                     "count",
+    //                     counts,
+    //                 )
+    //             ),
+    //         ]
+    //     )
+    // }
 
     pub fn fmt_display(
         &self,

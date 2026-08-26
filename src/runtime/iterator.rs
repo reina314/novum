@@ -355,7 +355,7 @@ impl IteratorObj {
 
             Self::Enumerate {
                 source,
-                index,
+                index: _,
             } => {
                 match Self::next(&source)? {
                     IterResult::Item(value) => {
