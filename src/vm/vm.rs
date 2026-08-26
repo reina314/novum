@@ -762,6 +762,35 @@ impl Vm {
                     );
                 }
 
+                OpCode::NewTuple => {
+                    let count =
+                        operand as usize;
+
+                    if self.stack.len() < count {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM stack underflow while creating tuple",
+                                None,
+                            )
+                        );
+                    }
+
+                    let start =
+                        self.stack.len() - count;
+
+                    let values =
+                        self.stack
+                            .drain(start..)
+                            .collect::<Vec<_>>();
+
+                    self.push(
+                        Value::Tuple(
+                            Rc::new(values)
+                        )
+                    );
+                }
+
                 OpCode::NewList => {
                     let list =
                         Rc::new(
@@ -991,18 +1020,43 @@ impl Vm {
                                 );
                             }
 
-                            let index =
-                                index as usize;
+                            let value =
+                                list.get(
+                                    index as usize
+                                )
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "list index out of bounds",
+                                        None,
+                                    )
+                                })?;
+
+                            self.push(value);
+                        }
+
+                        (
+                            Value::Tuple(tuple),
+                            Value::Int(index),
+                        ) => {
+                            if index < 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "tuple index must be non-negative",
+                                        None,
+                                    )
+                                );
+                            }
 
                             let value =
-                                list.get(index)
+                                tuple
+                                    .get(index as usize)
+                                    .cloned()
                                     .ok_or_else(|| {
                                         Error::new(
                                             ErrorKind::Index,
-                                            format!(
-                                                "list index out of bounds: {}",
-                                                index
-                                            ),
+                                            "tuple index out of bounds",
                                             None,
                                         )
                                     })?;
@@ -1010,10 +1064,7 @@ impl Vm {
                             self.push(value);
                         }
 
-                        (
-                            _,
-                            _
-                        ) => {
+                        _ => {
                             return Err(
                                 Error::new(
                                     ErrorKind::Type,
@@ -1138,6 +1189,52 @@ impl Vm {
                             );
                         }
                     }
+                }
+
+                OpCode::MatchTuple => {
+                    let value =
+                        self.pop()?;
+
+                    let matched =
+                        matches!(
+                            &value,
+                            Value::Tuple(tuple)
+                                if tuple.len()
+                                    == operand as usize
+                        );
+
+                    self.push(value);
+                    self.push(
+                        Value::Bool(matched)
+                    );
+                }
+
+                OpCode::MatchList => {
+                    let value =
+                        self.pop()?;
+
+                    let matched =
+                        matches!(
+                            &value,
+                            Value::List(list)
+                                if list.len()
+                                    == operand as usize
+                        );
+
+                    self.push(value);
+                    self.push(
+                        Value::Bool(matched)
+                    );
+                }
+
+                OpCode::PatternFail => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "match expression has no matching arm",
+                            None,
+                        )
+                    );
                 }
 
                 OpCode::Return => {

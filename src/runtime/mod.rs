@@ -1,5 +1,4 @@
-#[cfg(feature = "legacy-interpreter")]
-pub mod control;
+// pub mod control;
 
 // #[cfg(feature = "legacy-interpreter")]
 pub mod env;
@@ -102,8 +101,8 @@ pub use path::{
     PathRef,
 };
 
-#[cfg(feature = "legacy-interpreter")]
-pub use control::ControlFlow;
+
+// pub use control::ControlFlow;
 
 // #[cfg(feature = "legacy-interpreter")]
 pub use env::Env;

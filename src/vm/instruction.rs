@@ -16,6 +16,8 @@ pub enum OpCode {
 
     Closure,
 
+    NewTuple,
+
     NewList,
     ListAppend,
     ListExtendRange,
@@ -27,6 +29,11 @@ pub enum OpCode {
 
     IteratorFrom,
     IteratorNext,
+
+    MatchType,
+    MatchTuple,
+    MatchList,
+    PatternFail,
 
     Add,
     Sub,

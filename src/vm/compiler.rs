@@ -382,6 +382,36 @@ impl Compiler {
         Ok(())
     }
 
+    fn emit_literal_pattern(
+        &mut self,
+        value_slot: u16,
+        expected: Value,
+    ) -> usize {
+        self.chunk.emit_operand(
+            OpCode::LoadLocal,
+            value_slot as u32,
+        );
+
+        let constant =
+            self.chunk.add_constant(
+                expected
+            );
+
+        self.chunk.emit_operand(
+            OpCode::Constant,
+            constant,
+        );
+
+        self.chunk.emit(
+            OpCode::Eq
+        );
+
+        self.chunk.emit_operand(
+            OpCode::JumpIfFalse,
+            0,
+        )
+    }
+
     fn enter_scope(
         &mut self,
     ) {
@@ -664,6 +694,9 @@ impl Compiler {
             OpCode::Halt
         );
 
+        self.chunk.local_count =
+            self.next_local_slot as usize;
+
         Ok(
             std::mem::take(
                 &mut self.chunk
@@ -696,6 +729,9 @@ impl Compiler {
         self.chunk.emit(
             OpCode::Halt
         );
+
+        self.chunk.local_count =
+            self.next_local_slot as usize;
 
         Ok(self.chunk)
     }
@@ -793,6 +829,54 @@ impl Compiler {
                 self.compile_binop(
                     *op
                 )?;
+            }
+
+            ExprKind::Tuple(elements) => {
+                if elements.len() > u16::MAX as usize {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "tuple is too large",
+                            None,
+                        )
+                    );
+                }
+
+                for element in elements {
+                    self.compile_expr(
+                        element
+                    )?;
+                }
+
+                self.chunk.emit_operand(
+                    OpCode::NewTuple,
+                    elements.len() as u32,
+                );
+            }
+
+            ExprKind::TupleIndex {
+                object,
+                index,
+            } => {
+                self.compile_expr(
+                    object
+                )?;
+
+                let constant =
+                    self.chunk.add_constant(
+                        Value::Int(
+                            *index as i64
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    constant,
+                );
+
+                self.chunk.emit(
+                    OpCode::IndexGet
+                );
             }
 
             ExprKind::List(items) => {
@@ -957,33 +1041,59 @@ impl Compiler {
                 value,
                 ..
             } => {
-                match pattern {
-                    Pattern::Ident(name) => {
-                        self.compile_expr(
-                            value
-                        )?;
+                self.compile_expr(
+                    value
+                )?;
 
-                        let slot =
-                            self.declare_local(
-                                name.clone()
-                            )?;
+                let value_slot =
+                    self.allocate_temp_local();
 
-                        self.chunk.emit_operand(
-                            OpCode::StoreLocal,
-                            slot as u32,
-                        );
-                    }
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    value_slot as u32,
+                );
 
-                    _ => {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM currently supports only identifier bindings",
-                                None,
-                            )
-                        );
-                    }
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                let failures =
+                    self.compile_pattern(
+                        value_slot,
+                        pattern,
+                    )?;
+
+                let success_jump =
+                    self.chunk.emit_operand(
+                        OpCode::Jump,
+                        0,
+                    );
+
+                let failure_target =
+                    self.chunk.code.len();
+
+                for jump in failures {
+                    self.chunk.patch_operand(
+                        jump,
+                        failure_target as u32,
+                    );
                 }
+
+                self.chunk.emit(
+                    OpCode::PatternFail
+                );
+
+                let end =
+                    self.chunk.code.len();
+
+                self.chunk.patch_operand(
+                    success_jump,
+                    end as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Unit
+                );
             }
 
             ExprKind::Assign {
@@ -1114,6 +1224,80 @@ impl Compiler {
                     jump_end,
                     end as u32,
                 );
+            }
+
+            ExprKind::Match {
+                value,
+                arms,
+            } => {
+                self.compile_expr(
+                    value
+                )?;
+
+                let value_slot =
+                    self.allocate_temp_local();
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    value_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                let mut end_jumps =
+                    Vec::new();
+
+                for arm in arms {
+                    self.enter_scope();
+
+                    let failures =
+                        self.compile_pattern(
+                            value_slot,
+                            &arm.pattern,
+                        )?;
+
+                    let next_arm_target =
+                        self.chunk.code.len();
+
+                    for jump in failures {
+                        self.chunk.patch_operand(
+                            jump,
+                            next_arm_target as u32,
+                        );
+                    }
+
+                    self.compile_expr(
+                        &arm.body
+                    )?;
+
+                    let end_jump =
+                        self.chunk.emit_operand(
+                            OpCode::Jump,
+                            0,
+                        );
+
+                    end_jumps.push(
+                        end_jump
+                    );
+
+                    self.exit_scope();
+                }
+
+                self.chunk.emit(
+                    OpCode::PatternFail
+                );
+
+                let end =
+                    self.chunk.code.len();
+
+                for jump in end_jumps {
+                    self.chunk.patch_operand(
+                        jump,
+                        end as u32,
+                    );
+                }
             }
 
             ExprKind::While(
@@ -1950,4 +2134,221 @@ impl Compiler {
             }
         }
     }
+
+    fn compile_pattern(
+        &mut self,
+        value_slot: u16,
+        pattern: &Pattern,
+    ) -> Result<Vec<usize>> {
+        let mut failures =
+            Vec::new();
+
+        match pattern {
+            Pattern::Wildcard => {}
+
+            Pattern::Ident(name) => {
+                let slot =
+                    self.declare_local(
+                        name.clone()
+                    )?;
+
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    value_slot as u32,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+            }
+
+            Pattern::Int(value) => {
+                failures.push(
+                    self.emit_literal_pattern(
+                        value_slot,
+                        Value::Int(*value),
+                    )
+                );
+            }
+
+            Pattern::Float(value) => {
+                failures.push(
+                    self.emit_literal_pattern(
+                        value_slot,
+                        Value::Float(*value),
+                    )
+                );
+            }
+
+            Pattern::Bool(value) => {
+                failures.push(
+                    self.emit_literal_pattern(
+                        value_slot,
+                        Value::Bool(*value),
+                    )
+                );
+            }
+
+            Pattern::Str(value) => {
+                failures.push(
+                    self.emit_literal_pattern(
+                        value_slot,
+                        Value::Str(
+                            Rc::new(
+                                value.clone()
+                            )
+                        ),
+                    )
+                );
+            }
+
+            Pattern::Tuple(patterns) => {
+                let mut element_slots =
+                    Vec::with_capacity(
+                        patterns.len()
+                    );
+
+                for index in
+                    0..patterns.len()
+                {
+                    let element_slot =
+                        self.allocate_temp_local();
+
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        value_slot as u32,
+                    );
+
+                    let index_constant =
+                        self.chunk.add_constant(
+                            Value::Int(
+                                index as i64
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        index_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::IndexGet
+                    );
+
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        element_slot as u32,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+
+                    element_slots.push(
+                        element_slot
+                    );
+                }
+
+                for (
+                    pattern,
+                    slot,
+                ) in patterns
+                    .iter()
+                    .zip(
+                        element_slots
+                    )
+                {
+                    failures.extend(
+                        self.compile_pattern(
+                            slot,
+                            pattern,
+                        )?
+                    );
+                }
+            }
+
+            Pattern::List(patterns) => {
+                let mut element_slots =
+                    Vec::with_capacity(
+                        patterns.len()
+                    );
+
+                for index in
+                    0..patterns.len()
+                {
+                    let element_slot =
+                        self.allocate_temp_local();
+
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        value_slot as u32,
+                    );
+
+                    let index_constant =
+                        self.chunk.add_constant(
+                            Value::Int(
+                                index as i64
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        index_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::IndexGet
+                    );
+
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        element_slot as u32,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+
+                    element_slots.push(
+                        element_slot
+                    );
+                }
+
+                for (
+                    pattern,
+                    slot,
+                ) in patterns
+                    .iter()
+                    .zip(
+                        element_slots
+                    )
+                {
+                    failures.extend(
+                        self.compile_pattern(
+                            slot,
+                            pattern,
+                        )?
+                    );
+                }
+            }
+
+            Pattern::Enum { .. } => {
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "enum patterns are not implemented yet",
+                        None,
+                    )
+                );
+            }
+        }
+
+        Ok(failures)
+    }
+
 }
