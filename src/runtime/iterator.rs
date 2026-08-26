@@ -4,8 +4,8 @@ use super::{
     Value,
     StrRef,
     VectorRef,
+    ClosureRef,
 };
-use crate::vm::ClosureRef;
 use std::{
     rc::Rc,
     cell::RefCell,

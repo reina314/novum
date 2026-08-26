@@ -7,12 +7,13 @@ pub mod series;
 // pub mod dataframe;
 // pub mod grouped_dataframe;
 pub mod module;
-// pub mod object;
-// pub mod class;
+pub mod object;
+pub mod class;
 pub mod r#struct;
 pub mod r#enum;
 pub mod value;
 pub mod path;
+pub mod function;
 
 
 pub use operator::apply_binop;
@@ -52,14 +53,15 @@ pub use module::{
     ModulePath,
     ModuleContext,
 };
-// pub use object::{
-//     Object,
-//     ObjectRef,
-// };
-// pub use class::{
-//     Class,
-//     ClassRef,
-// };
+pub use object::{
+    Object,
+    ObjectRef,
+};
+pub use class::{
+    Class,
+    ClassRef,
+    FieldDefinition,
+};
 pub use r#struct::{
     StructType,
     StructTypeRef,
@@ -83,6 +85,15 @@ pub use value::{
 pub use path::{
     PathValue,
     PathRef,
+};
+pub use function::{
+    CallFrame,
+    CellRef,
+    Closure,
+    ClosureRef,
+    FunctionProto,
+    FunctionRef,
+    UpvalueSpec,
 };
 
 

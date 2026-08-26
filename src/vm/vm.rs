@@ -16,28 +16,34 @@ use crate::{
         IterResult,
         StructValue,
         StructTypeRef,
+        CallFrame,
+        FunctionProto,
+        FunctionRef,
+        Closure,
+        ClosureRef,
+        UpvalueSpec,
+        CellRef,
+        Class,
+        ClassRef,
+        ObjectRef,
+        FieldDefinition,
         apply_binop, 
     },
-    syntax::BinOp, 
+    syntax::BinOp,
+    stdlib::decode_class_counts,
 };
 
 use super::{
     Chunk,
     OpCode,
-    CallFrame,
-    FunctionProto,
-    FunctionRef,
-    Closure,
-    ClosureRef,
     Instruction,
-    UpvalueSpec,
-    CellRef,
     decode_method_call,
 };
 
 use std::{
     rc::Rc,
     cell::RefCell,
+    collections::HashMap,
 };
 
 pub struct Vm {
@@ -683,6 +689,14 @@ impl Vm {
                             )?;
                         }
 
+                        Value::Class(class) => {
+                            self.call_class(
+                                function_index,
+                                class,
+                                argc,
+                            )?;
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -779,6 +793,165 @@ impl Vm {
                     self.push(
                         Value::List(
                             list
+                        )
+                    );
+                }
+
+                OpCode::NewClass => {
+                    let (
+                        field_count,
+                        method_count,
+                    ) =
+                        decode_class_counts(
+                            operand
+                        );
+
+                    let required =
+                        1
+                        + field_count * 2
+                        + method_count * 2;
+
+                    if self.stack.len() < required {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM stack underflow while creating class",
+                                None,
+                            )
+                        );
+                    }
+
+                    let mut method_values =
+                        Vec::with_capacity(
+                            method_count
+                        );
+
+                    for _ in 0..method_count {
+                        let closure =
+                            self.pop()?;
+
+                        let name =
+                            self.pop()?;
+
+                        let (
+                            name,
+                            closure,
+                        ) =
+                            match (name, closure) {
+                                (
+                                    Value::Str(name),
+                                    Value::Closure(closure),
+                                ) => (
+                                    name,
+                                    closure,
+                                ),
+
+                                _ => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "invalid class method descriptor",
+                                            None,
+                                        )
+                                    );
+                                }
+                            };
+
+                        method_values.push(
+                            (
+                                name.to_string(),
+                                closure,
+                            )
+                        );
+                    }
+
+                    let mut field_values =
+                        Vec::with_capacity(
+                            field_count
+                        );
+
+                    for _ in 0..field_count {
+                        let default =
+                            self.pop()?;
+
+                        let name =
+                            self.pop()?;
+
+                        let name =
+                            match name {
+                                Value::Str(name) =>
+                                    name,
+
+                                _ => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "invalid class field descriptor",
+                                            None,
+                                        )
+                                    );
+                                }
+                            };
+
+                        let default =
+                            match default {
+                                Value::Closure(closure) =>
+                                    Some(closure),
+
+                                Value::Unit =>
+                                    None,
+
+                                _ => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "invalid class field default",
+                                            None,
+                                        )
+                                    );
+                                }
+                            };
+
+                        field_values.push(
+                            FieldDefinition::new(
+                                name.as_str(),
+                                default,
+                            )
+                        );
+                    }
+
+                    let class_name =
+                        match self.pop()? {
+                            Value::Str(name) =>
+                                name,
+
+                            _ => {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "class name must be Str",
+                                        None,
+                                    )
+                                );
+                            }
+                        };
+
+                    let methods:
+                        HashMap<String, ClosureRef> =
+                        method_values
+                            .into_iter()
+                            .collect();
+
+                    let class =
+                        Class::new(
+                            class_name.as_str(),
+                            field_values,
+                            methods,
+                        );
+
+                    self.push(
+                        Value::Class(
+                            Rc::new(class)
                         )
                     );
                 }
@@ -1196,11 +1369,118 @@ impl Vm {
                             self.push(field);
                         }
 
+                        Value::Object(
+                            object
+                        ) => {
+                            let value =
+                                object
+                                    .borrow()
+                                    .get_field(
+                                        field.as_str()
+                                    )
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Name,
+                                            format!(
+                                                "{} has no field '{}'",
+                                                object.borrow().type_name(),
+                                                field,
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(value);
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
                                     ErrorKind::Type,
                                     "unsupported field access",
+                                    None,
+                                )
+                            );
+                        }
+                    }
+                }
+
+                OpCode::FieldSet => {
+                    let field =
+                        self.pop()?;
+
+                    let object =
+                        self.pop()?;
+
+                    let value =
+                        self.pop()?;
+
+                    let Value::Str(
+                        field
+                    ) = field
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "field name must be Str",
+                                None,
+                            )
+                        );
+                    };
+
+                    match object {
+                        Value::Object(object) => {
+                            let class = {
+                                let object_ref =
+                                    object.borrow();
+
+                                object_ref.class()
+                            };
+
+                            if class
+                                .field(
+                                    field.as_str()
+                                )
+                                .is_none()
+                            {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Name,
+                                        format!(
+                                            "{} has no field '{}'",
+                                            class.name(),
+                                            field,
+                                        ),
+                                        None,
+                                    )
+                                );
+                            }
+
+                            object
+                                .borrow_mut()
+                                .set_field(
+                                    field.as_str(),
+                                    value.clone(),
+                                );
+
+                            self.push(value);
+                        }
+
+                        Value::Struct(_) => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "struct fields are immutable",
+                                    None,
+                                )
+                            );
+                        }
+
+                        _ => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "field assignment requires an object",
                                     None,
                                 )
                             );
@@ -1778,6 +2058,65 @@ impl Vm {
         self.push(
             Value::Struct(
                 Rc::new(value)
+            )
+        );
+
+        Ok(())
+    }
+
+    fn call_class(
+        &mut self,
+        function_index: usize,
+        class: ClassRef,
+        argc: usize,
+    ) -> Result<()> {
+        if argc != 0 {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{}() expects 0 arguments, got {}",
+                        class.name(),
+                        argc,
+                    ),
+                    None,
+                )
+            );
+        }
+
+        self.stack.truncate(
+            function_index
+        );
+
+        let object =
+            class.instantiate();
+
+        for field in class.fields() {
+            let value =
+                match field.default() {
+                    Some(closure) => {
+                        self.call_closure_sync(
+                            closure,
+                            Vec::new(),
+                        )?
+                    }
+
+                    None => {
+                        Value::Unit
+                    }
+                };
+
+            object
+                .borrow_mut()
+                .set_field(
+                    field.name(),
+                    value,
+                );
+        }
+
+        self.push(
+            Value::Object(
+                object
             )
         );
 
@@ -2630,6 +2969,16 @@ impl Vm {
             Value::Str(string) => {
                 self.invoke_string_method(
                     string,
+                    name,
+                    args,
+                )
+            }
+
+            Value::Object(
+                object
+            ) => {
+                self.invoke_object_method(
+                    object,
                     name,
                     args,
                 )
@@ -3518,6 +3867,56 @@ impl Vm {
                 )
             }
         }
+    }
+
+    fn invoke_object_method(
+        &mut self,
+        object: ObjectRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let class = {
+            let object_ref =
+                object.borrow();
+
+            object_ref.class()
+        };
+
+        let method =
+            class
+                .method(name)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "class '{}' has no method '{}'",
+                            class.name(),
+                            name,
+                        ),
+                        None,
+                    )
+                })?;
+
+        let mut call_args =
+            Vec::with_capacity(
+                args.len() + 1
+            );
+
+        // `self` is always argument 0.
+        call_args.push(
+            Value::Object(
+                object
+            )
+        );
+
+        call_args.extend(
+            args
+        );
+
+        self.call_closure_sync(
+            method,
+            call_args,
+        )
     }
 
     fn invoke_enum_constructor(

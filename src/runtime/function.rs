@@ -3,9 +3,8 @@ use std::{
     rc::Rc,
 };
 
-use crate::runtime::Value;
-
-use super::chunk::Chunk;
+use super::Value;
+use crate::vm::Chunk;
 
 pub type CellRef = Rc<RefCell<Value>>;
 pub type FunctionRef = Rc<FunctionProto>;

@@ -1,108 +1,105 @@
-use crate::runtime::{
-    ModuleRef,
-    Value,
-    Env,
-};
 
-use std::{
-    collections::HashMap,
-};
-
-pub mod builtin;
-pub mod math;
-pub mod linalg;
-pub mod process;
-pub mod fs;
-pub mod csv;
-pub mod json;
-pub mod stats;
+// pub mod builtin;
+// pub mod math;
+// pub mod linalg;
+// pub mod process;
+// pub mod fs;
+// pub mod csv;
+// pub mod json;
+// pub mod stats;
 
 // For internal use
-pub mod general;
+pub mod util;
 
-/// Defines eager stdlib module
-pub fn install_builtins(
-    env: &Env
-) {
-    builtin::install_builtins(env);
+pub use util::{
+    encode_class_counts,
+    decode_class_counts,
+    is_self_pattern,
+};
 
-    for (name, value) 
-        in builtins() {
-        env.define(name, value);
-    }
-}
+// Defines eager stdlib module
+// pub fn install_builtins(
+//     env: &Env
+// ) {
+//     builtin::install_builtins(env);
 
-/// Defines lazy stdlib module
-pub fn load_module(
-    name: &str,
-) -> Option<ModuleRef> {
-    match name {
-        "stats" =>
-            Some(stats::module()),
+//     for (name, value) 
+//         in builtins() {
+//         env.define(name, value);
+//     }
+// }
 
-        "linalg" =>
-            Some(linalg::module()),
+// Defines lazy stdlib module
+// pub fn load_module(
+//     name: &str,
+// ) -> Option<ModuleRef> {
+//     match name {
+//         "stats" =>
+//             Some(stats::module()),
 
-        "process" =>
-            Some(process::module()),
+//         "linalg" =>
+//             Some(linalg::module()),
 
-        "fs" =>
-            Some(fs::module()),
+//         "process" =>
+//             Some(process::module()),
 
-        "math" =>
-            Some(math::module()),
+//         "fs" =>
+//             Some(fs::module()),
 
-        "csv" =>
-            Some(csv::module()),
+//         "math" =>
+//             Some(math::module()),
 
-        "json" =>
-            Some(json::module()),
+//         "csv" =>
+//             Some(csv::module()),
 
-        _ => None,
-    }
-}
+//         "json" =>
+//             Some(json::module()),
 
-fn builtins()
-    -> HashMap<String, Value>
-{
-    let mut map = HashMap::new();
+//         _ => None,
+//     }
+// }
 
-    //== Math (math.rs) ======================
-    // DEPRECATED and use `math_module()` instead
-    // This section is for backward compatibility only
-    map.insert(
-        "sqrt".into(),
-        Value::Builtin(math::sqrt),
-    );
-    //========================================
+// fn builtins()
+//     -> HashMap<String, Value>
+// {
+//     let mut map = HashMap::new();
 
-
-    //== Linear Algebra (linalg.rs) ==========
-    // DEPRECATED and use `linalg_module()` instead
-    // This section is for backward compatibility only
-    map.insert(
-        "matrix".into(),
-        Value::Builtin(linalg::matrix),
-    );
-    //========================================
+//     //== Math (math.rs) ======================
+//     // DEPRECATED and use `math_module()` instead
+//     // This section is for backward compatibility only
+//     map.insert(
+//         "sqrt".into(),
+//         Value::Builtin(math::sqrt),
+//     );
+//     //========================================
 
 
-    //== Descriptive Statistics (stats/descriptive.rs) ==========
-    // DEPRECATED and use `stats_module()` instead
-    // This section is for backward compatibility only
+//     //== Linear Algebra (linalg.rs) ==========
+//     // DEPRECATED and use `linalg_module()` instead
+//     // This section is for backward compatibility only
+//     map.insert(
+//         "matrix".into(),
+//         Value::Builtin(linalg::matrix),
+//     );
+//     //========================================
+
+
+//     //== Descriptive Statistics (stats/descriptive.rs) ==========
+//     // DEPRECATED and use `stats_module()` instead
+//     // This section is for backward compatibility only
     
-    // EMPTY
+//     // EMPTY
 
-    //========================================
+//     //========================================
 
 
-    //== Inferential Statistics (stats/inferential.rs) ==========
-    // DEPRECATED and use `stats_module()` instead
-    // This section is for backward compatibility only
+//     //== Inferential Statistics (stats/inferential.rs) ==========
+//     // DEPRECATED and use `stats_module()` instead
+//     // This section is for backward compatibility only
     
-    // EMPTY
+//     // EMPTY
 
-    //========================================
+//     //========================================
 
-    map
-}
+//     map
+// }

@@ -1,9 +1,8 @@
 use super::{
+    ClosureRef,
     Object,
     ObjectRef,
 };
-
-use crate::syntax::Expr;
 
 use std::{
     collections::HashMap,
@@ -16,13 +15,13 @@ pub type ClassRef = Rc<Class>;
 
 pub struct FieldDefinition {
     name: String,
-    default: Option<Box<Expr>>,
+    default: Option<ClosureRef>,
 }
 
 impl FieldDefinition {
     pub fn new(
         name: impl Into<String>,
-        default: Option<Box<Expr>>,
+        default: Option<ClosureRef>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -38,28 +37,27 @@ impl FieldDefinition {
 
     pub fn default(
         &self,
-    ) -> Option<&Expr> {
-        self.default.as_deref()
+    ) -> Option<ClosureRef> {
+        self.default.clone()
     }
 }
-
 
 pub struct Class {
     name: String,
     fields: Vec<FieldDefinition>,
-    constructor: Option<FuncRef>,
-    methods: HashMap<String, FuncRef>,
+    methods: HashMap<String, ClosureRef>,
 }
 
 impl Class {
     pub fn new(
         name: impl Into<String>,
+        fields: Vec<FieldDefinition>,
+        methods: HashMap<String, ClosureRef>,
     ) -> Self {
         Self {
             name: name.into(),
-            fields: Vec::new(),
-            constructor: None,
-            methods: HashMap::new(),
+            fields,
+            methods,
         }
     }
 
@@ -69,66 +67,31 @@ impl Class {
         &self.name
     }
 
-    pub fn add_field(
-        &mut self,
-        name: impl Into<String>,
-        default: Option<Box<Expr>>,
-    ) {
-        self.fields.push(
-            FieldDefinition::new(
-                name,
-                default,
-            )
-        );
-    }
-
     pub fn fields(
         &self,
     ) -> &[FieldDefinition] {
         &self.fields
     }
 
-    pub fn set_constructor(
-        &mut self,
-        function: FuncRef,
-    ) {
-        self.constructor =
-            Some(function);
-    }
-
-    pub fn constructor(
-        &self,
-    ) -> Option<FuncRef> {
-        self.constructor.clone()
-    }
-
-    pub fn add_method(
-        &mut self,
-        name: impl Into<String>,
-        function: FuncRef,
-    ) {
-        self.methods.insert(
-            name.into(),
-            function,
-        );
-    }
-
-    pub fn get_method(
+    pub fn field(
         &self,
         name: &str,
-    ) -> Option<FuncRef> {
+    ) -> Option<&FieldDefinition> {
+        self.fields
+            .iter()
+            .find(
+                |field|
+                    field.name() == name
+            )
+    }
+
+    pub fn method(
+        &self,
+        name: &str,
+    ) -> Option<ClosureRef> {
         self.methods
             .get(name)
             .cloned()
-    }
-
-    pub fn has_method(
-        &self,
-        name: &str,
-    ) -> bool {
-        self.methods.contains_key(
-            name
-        )
     }
 
     pub fn instantiate(
@@ -136,12 +99,13 @@ impl Class {
     ) -> ObjectRef {
         Rc::new(
             RefCell::new(
-                Object::with_class(
+                Object::new(
                     self.clone()
                 )
             )
         )
     }
+
 }
 
 impl fmt::Debug for Class {
@@ -158,13 +122,10 @@ impl fmt::Debug for Class {
                 "fields",
                 &self.fields
                     .iter()
-                    .map(FieldDefinition::name)
+                    .map(
+                        FieldDefinition::name
+                    )
                     .collect::<Vec<_>>(),
-            )
-            .field(
-                "constructor",
-                &self.constructor
-                    .is_some(),
             )
             .field(
                 "methods",
@@ -173,5 +134,18 @@ impl fmt::Debug for Class {
                     .collect::<Vec<_>>(),
             )
             .finish()
+    }
+}
+
+impl fmt::Display for Class {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "<class {}>",
+            self.name
+        )
     }
 }

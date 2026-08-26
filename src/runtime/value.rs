@@ -1,10 +1,10 @@
 use super::{
     SetRef,
     IteratorRef,
-    // ObjectRef,
+    ObjectRef,
+    ClassRef,
     StructTypeRef,
     StructValueRef,
-    // ClassRef,
     EnumRef,
     EnumValueRef,
     EnumConstructor,
@@ -15,9 +15,6 @@ use super::{
     // GroupedDataFrameRef,
     ModuleRef,
     PathRef,
-};
-
-use crate::vm::{
     ClosureRef,
     FunctionRef,
 };
@@ -219,6 +216,9 @@ pub enum Value {
     StructType(StructTypeRef),
     Struct(StructValueRef),
 
+    Object(ObjectRef),
+    Class(ClassRef),
+
     Vector(VectorRef),
     Matrix(MatrixRef),
 
@@ -226,8 +226,6 @@ pub enum Value {
     // DataFrame(DataFrameRef),
     // GroupedDataFrame(GroupedDataFrameRef),
 
-    // Object(ObjectRef),
-    // Class(ClassRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -263,6 +261,9 @@ impl Value {
             Self::StructType(_) => "StructType",
             Self::Struct(_) => "Struct",
 
+            Self::Object(_) => "Object",
+            Self::Class(_) => "Class",
+
             Self::Vector(_) => "Vector",
             Self::Matrix(_) => "Matrix",
             
@@ -270,8 +271,6 @@ impl Value {
             // Self::DataFrame(_) => "DataFrame",
             // Self::GroupedDataFrame(_) => "GroupedDataFrame",
 
-            // Self::Object(_) => "Object",
-            // Self::Class(_) => "Class",
             Self::Module(_) => "Module",
 
             Self::Enum(_) => "Enum",
@@ -551,9 +550,9 @@ impl fmt::Debug for Value {
 
             // Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
-            // Self::Object(v) => write!(f, "{:?}", v.borrow()),
+            Self::Object(v) => write!(f, "{:?}", v.borrow()),
 
-            // Self::Class(class) => write!(f, "<class {}>", class.name()),
+            Self::Class(class) => write!(f, "<class {}>", class.name()),
 
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
@@ -712,14 +711,12 @@ impl fmt::Display for Value {
             // Self::DataFrame(df) =>
             //     df.fmt_display(f),
 
-            // Self::Object(object) => 
-            //     object.borrow().fmt_display(f),
+            Self::Object(object) => object.borrow().fmt_display(f),
 
-            // Self::Class(class) => 
-            // write!(f, "<class {}>", class.name()),
+            Self::Class(class) => 
+            write!(f, "<class {}>", class.name()),
 
-            Self::Module(module) =>
-                write!(f, "<module {}>", module.borrow().name()),
+            Self::Module(module) => write!(f, "<module {}>", module.borrow().name()),
 
             Self::Enum(definition) =>
                 write!(f, "<enum {}>", definition.name()),

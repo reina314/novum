@@ -7,6 +7,7 @@ pub mod error;
 pub mod runtime;
 pub mod syntax;
 pub mod vm;
+pub mod stdlib;
 
 pub use error::{
     Error,

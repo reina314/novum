@@ -1,4 +1,7 @@
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    stdlib::is_self_pattern,
+};
 use super::{
     ast::*,
     Span,
@@ -2884,17 +2887,6 @@ impl Parser {
             }
         )
     }
-}
-
-#[inline]
-fn is_self_pattern(
-    pattern: &Pattern,
-) -> bool {
-    matches!(
-        pattern,
-        Pattern::Ident(name)
-            if name == "self"
-    )
 }
 
 fn assignment_binop(

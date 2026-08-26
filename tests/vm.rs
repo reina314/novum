@@ -1184,3 +1184,131 @@ fn vm_nested_struct_pattern() {
         10,
     );
 }
+
+// ============================================================
+// Class
+// ============================================================
+
+#[test]
+fn vm_class_declaration() {
+    assert_string(
+        r#"
+        class Counter {
+            value = 0
+        }
+
+        Counter
+        "#,
+        "<class Counter>",
+    );
+}
+
+#[test]
+fn vm_class_default_field() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 10
+        }
+
+        let c =
+            Counter()
+
+        c.value
+        "#,
+        10,
+    );
+}
+
+#[test]
+fn vm_class_field_assignment() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 10
+        }
+
+        let c =
+            Counter()
+
+        c.value = 50
+
+        c.value
+        "#,
+        50,
+    );
+}
+
+#[test]
+fn vm_class_reference_semantics() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+        }
+
+        let a =
+            Counter()
+
+        let b =
+            a
+
+        a.value = 10
+
+        b.value
+        "#,
+        10,
+    );
+}
+
+#[test]
+fn vm_class_method() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+
+            inc = |self| {
+                self.value += 1
+                self.value
+            }
+        }
+
+        let c =
+            Counter()
+
+        c.inc()
+        "#,
+        1,
+    );
+}
+
+#[test]
+fn vm_class_method_multiple_calls() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+
+            inc = |self| {
+                self.value += 1
+                self.value
+            }
+        }
+
+        let c =
+            Counter()
+
+        c.inc()
+        c.inc()
+        c.inc()
+        "#,
+        3,
+    );
+}
+
+
+
+
+
+

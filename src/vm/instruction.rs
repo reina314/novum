@@ -17,32 +17,30 @@ pub enum OpCode {
     Closure,
 
     NewTuple,
-    MatchTuple,
-
     NewList,
-    MatchList,
+    NewStruct,
+    NewClass,
+    NewRange,
+    
     ListAppend,
     ListExtendRange,
 
-    EnumFieldGet,
+    MatchTuple,
     MatchEnum,
-
-    NewStruct,
-    StructFieldGet,
+    MatchList,
     MatchStruct,
+    PatternFail,
 
-    NewRange,
-    
     IndexGet,
-    IndexSet,
-
     FieldGet,
+    EnumFieldGet,
+    StructFieldGet,
+
+    IndexSet,
     FieldSet,
 
     IteratorFrom,
     IteratorNext,
-
-    PatternFail,
 
     Add,
     Sub,

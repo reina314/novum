@@ -16,14 +16,19 @@ use crate::{
     runtime::{
         Value,
         StructType,
+        UpvalueSpec,
+        FunctionProto,
+        FunctionRef,
     },
+    stdlib::{
+        encode_class_counts,
+        is_self_pattern,
+    }
 };
 
 use super::{
     Chunk,
     OpCode,
-    UpvalueSpec,
-    FunctionProto,
     encode_method_call,
 };
 
@@ -307,19 +312,27 @@ impl Compiler {
                 object_slot,
                 name,
             } => {
-                let _ = name;
-
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     *object_slot as u32,
                 );
 
-                return Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "VM field access is not implemented yet",
-                        None,
-                    )
+                let field_constant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                name.clone()
+                            )
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    field_constant,
+                );
+
+                self.chunk.emit(
+                    OpCode::FieldSet
                 );
             }
         }
@@ -1055,6 +1068,157 @@ impl Compiler {
 
                 self.chunk.emit(
                     OpCode::Unit
+                );
+            }
+
+            ExprKind::ClassDecl {
+                name,
+                fields,
+                methods,
+                ..
+            } => {
+                let name_constant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(
+                                name.clone()
+                            )
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    name_constant,
+                );
+
+                // Compile field names and defaults.
+                for (
+                    field_name,
+                    default,
+                ) in fields
+                {
+                    let field_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    field_name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        field_constant,
+                    );
+
+                    match default {
+                        Some(expr) => {
+                            let proto =
+                                self.compile_lambda_proto(
+                                    &[],
+                                    expr,
+                                )?;
+
+                            let proto_constant =
+                                self.chunk.add_constant(
+                                    Value::FunctionProto(
+                                        proto
+                                    )
+                                );
+
+                            self.chunk.emit_operand(
+                                OpCode::Closure,
+                                proto_constant,
+                            );
+                        }
+
+                        None => {
+                            self.chunk.emit(
+                                OpCode::Unit
+                            );
+                        }
+                    }
+                }
+
+                // Compile methods.
+                for (
+                    method_name,
+                    method,
+                ) in methods
+                {
+                    let method_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    method_name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        method_constant,
+                    );
+
+                    let ExprKind::Lambda(
+                        params,
+                        body,
+                    ) =
+                        &method.kind
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "class method must be a lambda",
+                                None,
+                            )
+                        );
+                    };
+
+                    if params.first()
+                        .map(is_self_pattern)
+                        != Some(true)
+                    {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Name,
+                                format!(
+                                    "method '{}' must have 'self' as its first parameter",
+                                    method_name
+                                ),
+                                None,
+                            )
+                        );
+                    }
+
+                    let proto =
+                        self.compile_lambda_proto(
+                            params,
+                            body,
+                        )?;
+
+                    let proto_constant =
+                        self.chunk.add_constant(
+                            Value::FunctionProto(
+                                proto
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Closure,
+                        proto_constant,
+                    );
+                }
+
+                let operand =
+                    encode_class_counts(
+                        fields.len(),
+                        methods.len(),
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::NewClass,
+                    operand,
                 );
             }
 
@@ -1929,27 +2093,11 @@ impl Compiler {
                 params,
                 body,
             ) => {
-                let mut compiler =
-                    Compiler::new_function(
-                        self.scope.clone(),
-                        params,
-                    )?;
-
-                compiler.compile_expr(
-                    body
-                )?;
-
-                compiler.chunk.emit(
-                    OpCode::Return
-                );
-
-                let proto =
-                    compiler.finish_function(
-                        params.len() as u16
-                    );
-
                 let function =
-                    Rc::new(proto);
+                    self.compile_lambda_proto(
+                        params,
+                        body,
+                    )?;
 
                 let index =
                     self.chunk.add_constant(
@@ -2345,6 +2493,34 @@ impl Compiler {
                 )
             }
         }
+    }
+
+    fn compile_lambda_proto(
+        &self,
+        params: &[Pattern],
+        body: &Expr,
+    ) -> Result<FunctionRef> {
+        let mut compiler =
+            Compiler::new_function(
+                self.scope.clone(),
+                params,
+            )?;
+
+        compiler.compile_expr(
+            body
+        )?;
+
+        compiler.chunk.emit(
+            OpCode::Return
+        );
+
+        Ok(
+            Rc::new(
+                compiler.finish_function(
+                    params.len() as u16
+                )
+            )
+        )
     }
 
     fn compile_pattern(
