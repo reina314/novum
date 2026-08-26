@@ -1920,6 +1920,23 @@ impl Vm {
         closure: ClosureRef,
         args: Vec<Value>,
     ) -> Result<Value> {
+        let expected =
+            closure.function.arity as usize;
+
+        if args.len() != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "function expects {} arguments, got {}",
+                        expected,
+                        args.len()
+                    ),
+                    None,
+                )
+            );
+        }
+        
         let caller_depth =
             self.frames.len();
 
@@ -2070,19 +2087,65 @@ impl Vm {
         class: ClassRef,
         argc: usize,
     ) -> Result<()> {
-        if argc != 0 {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    format!(
-                        "{}() expects 0 arguments, got {}",
-                        class.name(),
-                        argc,
-                    ),
-                    None,
-                )
-            );
+        let constructor =
+            class.constructor();
+
+        // Validate the user-visible constructor arity.
+        match constructor.as_ref() {
+            Some(constructor) => {
+                let expected =
+                    constructor
+                        .function
+                        .arity
+                        .checked_sub(1)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Arity,
+                                "class constructor must have self as its first parameter",
+                                None,
+                            )
+                        })?
+                        as usize;
+
+                if argc != expected {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}() expects {} arguments, got {}",
+                                class.name(),
+                                expected,
+                                argc,
+                            ),
+                            None,
+                        )
+                    );
+                }
+            }
+
+            None => {
+                if argc != 0 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            format!(
+                                "{}() expects 0 arguments, got {}",
+                                class.name(),
+                                argc,
+                            ),
+                            None,
+                        )
+                    );
+                }
+            }
         }
+
+        // Preserve user arguments before removing the call frame operands.
+        let args =
+            self.stack[
+                function_index + 1..
+            ]
+            .to_vec();
 
         self.stack.truncate(
             function_index
@@ -2091,6 +2154,7 @@ impl Vm {
         let object =
             class.instantiate();
 
+        // Evaluate field defaults for this specific instance.
         for field in class.fields() {
             let value =
                 match field.default() {
@@ -2101,9 +2165,8 @@ impl Vm {
                         )?
                     }
 
-                    None => {
-                        Value::Unit
-                    }
+                    None =>
+                        Value::Unit,
                 };
 
             object
@@ -2112,6 +2175,33 @@ impl Vm {
                     field.name(),
                     value,
                 );
+        }
+
+        // Run `new(self, ...)` after field initialization.
+        if let Some(constructor) =
+            constructor
+        {
+            let mut call_args =
+                Vec::with_capacity(
+                    args.len() + 1
+                );
+
+            call_args.push(
+                Value::Object(
+                    object.clone()
+                )
+            );
+
+            call_args.extend(
+                args
+            );
+
+            // Constructor return value is intentionally discarded.
+            let _ =
+                self.call_closure_sync(
+                    constructor,
+                    call_args,
+                )?;
         }
 
         self.push(
@@ -3875,6 +3965,16 @@ impl Vm {
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value> {
+        if name == "init" {
+            return Err(
+                Error::new(
+                    ErrorKind::Name,
+                    "class constructor 'init' can only be called through the class",
+                    None,
+                )
+            );
+        }
+
         let class = {
             let object_ref =
                 object.borrow();
@@ -3902,7 +4002,6 @@ impl Vm {
                 args.len() + 1
             );
 
-        // `self` is always argument 0.
         call_args.push(
             Value::Object(
                 object

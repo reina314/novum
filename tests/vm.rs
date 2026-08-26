@@ -1315,6 +1315,118 @@ fn vm_class_default_is_per_instance() {
     );
 }
 
+#[test]
+fn vm_class_constructor() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+
+            init = |self, initial| {
+                self.value = initial
+            }
+        }
+
+        let c =
+            Counter(10)
+
+        c.value
+        "#,
+        10,
+    );
+}
+
+#[test]
+fn vm_class_constructor_and_method() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+
+            init = |self, initial| {
+                self.value = initial
+            }
+
+            inc = |self| {
+                self.value += 1
+                self.value
+            }
+        }
+
+        let c =
+            Counter(10)
+
+        c.inc()
+        "#,
+        11,
+    );
+}
+
+#[test]
+fn vm_class_constructor_multiple_args() {
+    assert_int(
+        r#"
+        class Point {
+            x = 0
+            y = 0
+
+            init = |self, x, y| {
+                self.x = x
+                self.y = y
+            }
+        }
+
+        let p =
+            Point(10, 20)
+
+        p.x + p.y
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_class_defaults_before_constructor() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 10
+
+            init = |self| {
+                self.value += 5
+            }
+        }
+
+        let c =
+            Counter()
+
+        c.value
+        "#,
+        15,
+    );
+}
+
+#[test]
+fn vm_class_constructor_return_value_is_ignored() {
+    assert_int(
+        r#"
+        class Counter {
+            value = 0
+
+            init = |self| {
+                self.value = 42
+                999
+            }
+        }
+
+        let c =
+            Counter()
+
+        c.value
+        "#,
+        42,
+    );
+}
 
 
 

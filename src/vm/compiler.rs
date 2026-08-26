@@ -1103,6 +1103,7 @@ impl Compiler {
                     class_name_constant,
                 );
 
+                // Compile field names and per-instance default expressions.
                 for (
                     field_name,
                     default,
@@ -1150,25 +1151,12 @@ impl Compiler {
                     }
                 }
 
+                // Compile methods into closures.
                 for (
                     method_name,
                     method,
                 ) in methods
                 {
-                    let method_name_constant =
-                        self.chunk.add_constant(
-                            Value::Str(
-                                Rc::new(
-                                    method_name.clone()
-                                )
-                            )
-                        );
-
-                    self.chunk.emit_operand(
-                        OpCode::Constant,
-                        method_name_constant,
-                    );
-
                     let ExprKind::Lambda(
                         params,
                         body,
@@ -1203,6 +1191,20 @@ impl Compiler {
                         );
                     }
 
+                    let method_name_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    method_name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        method_name_constant,
+                    );
+
                     let proto =
                         self.compile_lambda_proto(
                             params,
@@ -1233,7 +1235,7 @@ impl Compiler {
                     operand,
                 );
 
-                // Bind the newly-created class object.
+                // Bind the resulting Class value to its declared name.
                 let class_slot =
                     self.declare_local(
                         name.clone()
@@ -1248,7 +1250,7 @@ impl Compiler {
                     OpCode::Pop
                 );
 
-                // Class declarations are declarations, not expressions.
+                // A declaration evaluates to Unit.
                 self.chunk.emit(
                     OpCode::Unit
                 );

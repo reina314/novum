@@ -94,6 +94,14 @@ impl Class {
             .cloned()
     }
 
+    pub fn constructor(
+        &self,
+    ) -> Option<ClosureRef> {
+        self.methods
+            .get("init")
+            .cloned()
+    }
+
     pub fn instantiate(
         self: &ClassRef,
     ) -> ObjectRef {
