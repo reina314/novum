@@ -1244,6 +1244,90 @@ impl Compiler {
         }
     }
 
+    fn fused_result_capacity(
+        &self,
+        source: &Expr,
+        stages: &[PipelineStage],
+    ) -> Result<usize> {
+        let ExprKind::Range {
+            start:
+                Some(start),
+            end:
+                Some(end),
+            inclusive,
+        } =
+            &source.kind
+        else {
+            return Ok(0);
+        };
+
+        let (
+            ExprKind::Int(start),
+            ExprKind::Int(end),
+        ) =
+            (
+                &start.kind,
+                &end.kind,
+            )
+        else {
+            return Ok(0);
+        };
+
+        if *end < *start {
+            return Ok(0);
+        }
+
+        let end =
+            if *inclusive {
+                end.checked_add(1)
+            } else {
+                Some(*end)
+            }
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Overflow,
+                    "fused pipeline range size overflow",
+                    None,
+                )
+            })?;
+
+        let count =
+            end
+                .checked_sub(*start)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "fused pipeline range size overflow",
+                        None,
+                    )
+                })?;
+
+        /*
+        * A filter can only reduce the number of elements,
+        * while a map preserves cardinality.
+        *
+        * Therefore the range cardinality is always a safe
+        * upper bound for the result.
+        *
+        * Take may make the actual result smaller.
+        */
+        let mut capacity =
+            count as usize;
+
+        for stage in stages {
+            if let PipelineStage::Take(
+                take
+            ) = stage {
+                capacity =
+                    capacity.min(
+                        *take
+                    );
+            }
+        }
+
+        Ok(capacity)
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
@@ -3445,17 +3529,38 @@ impl Compiler {
         stages: &[PipelineStage],
     ) -> Result<()> {
         /*
-        * --------------------------------------------------------
-        * 1. Allocate pipeline state
-        * --------------------------------------------------------
+        * ========================================================
+        * 1. Pipeline state
+        * ========================================================
         */
 
+        /*
+        * Current pipeline value.
+        *
+        * This is the slot bound to the lambda parameter:
+        *
+        *     .map(|x| ...)
+        *
+        *     x -> item_slot
+        */
         let item_slot =
             self.allocate_temp_local();
 
-        let result_slot =
-            self.allocate_temp_local();
+        /*
+        * Iterator source for non-Range pipelines.
+        */
+        let mut iterator_slot =
+            None;
 
+        /*
+        * Direct Range source state.
+        */
+        let mut range_state =
+            None;
+
+        /*
+        * Each Skip/Take stage gets its own state slot.
+        */
         let mut stage_state_slots =
             vec![None; stages.len()];
 
@@ -3465,9 +3570,13 @@ impl Compiler {
         ) in stages.iter().enumerate()
         {
             match stage {
-                PipelineStage::Skip(count)
+                PipelineStage::Skip(
+                    count
+                )
                 |
-                PipelineStage::Take(count) => {
+                PipelineStage::Take(
+                    count
+                ) => {
                     let slot =
                         self.allocate_temp_local();
 
@@ -3503,165 +3612,142 @@ impl Compiler {
         }
 
         /*
-        * --------------------------------------------------------
-        * 2. Allocate result list
-        * --------------------------------------------------------
+        * ========================================================
+        * 2. Result list
+        * ========================================================
+        *
+        * Keep the result list on the operand stack for the
+        * entire loop.
+        *
+        * stack:
+        *
+        *     [result_list]
+        *
+        * ListAppend consumes the value and leaves the list.
         */
-
         self.chunk.emit_operand(
             OpCode::NewList,
-            0,
-        );
-
-        self.chunk.emit_operand(
-            OpCode::StoreLocal,
-            result_slot as u32,
-        );
-
-        self.chunk.emit(
-            OpCode::Pop
+            self.fused_result_capacity(
+                source,
+                stages,
+            )? as u32,
         );
 
         /*
-        * --------------------------------------------------------
-        * 3. Lower source
-        *
-        * Range is directly lowered to a loop.
-        * Everything else uses IteratorFrom.
-        * --------------------------------------------------------
+        * ========================================================
+        * 3. Source lowering
+        * ========================================================
         */
 
-        let range =
-            match &source.kind {
-                ExprKind::Range {
-                    start:
-                        Some(start),
-                    end:
-                        Some(end),
-                    inclusive,
-                } => {
+        match &source.kind {
+            ExprKind::Range {
+                start:
+                    Some(start),
+                end:
+                    Some(end),
+                inclusive,
+            } => {
+                let current_slot =
+                    self.allocate_temp_local();
+
+                self.compile_expr(
+                    start
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    current_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                let end_slot =
+                    self.allocate_temp_local();
+
+                self.compile_expr(
+                    end
+                )?;
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    end_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                range_state =
                     Some((
-                        start.as_ref(),
-                        end.as_ref(),
+                        current_slot,
+                        end_slot,
                         *inclusive,
-                    ))
-                }
+                    ));
+            }
 
-                _ => None,
-            };
+            _ => {
+                self.compile_expr(
+                    source
+                )?;
 
-        let (
-            range_current_slot,
-            range_end_slot,
-            iterator_slot,
-            range_inclusive,
-        ) =
-            match range {
-                Some((
-                    start,
-                    end,
-                    inclusive,
-                )) => {
-                    let current_slot =
-                        self.allocate_temp_local();
+                /*
+                * Normalize List/String/Vector/Range/Iterator
+                * into IteratorRef.
+                */
+                self.chunk.emit(
+                    OpCode::IteratorFrom
+                );
 
-                    self.compile_expr(
-                        start
-                    )?;
+                let slot =
+                    self.allocate_temp_local();
 
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        current_slot as u32,
-                    );
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    slot as u32,
+                );
 
-                    self.chunk.emit(
-                        OpCode::Pop
-                    );
+                self.chunk.emit(
+                    OpCode::Pop
+                );
 
-                    let end_slot =
-                        self.allocate_temp_local();
-
-                    self.compile_expr(
-                        end
-                    )?;
-
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        end_slot as u32,
-                    );
-
-                    self.chunk.emit(
-                        OpCode::Pop
-                    );
-
-                    (
-                        Some(current_slot),
-                        Some(end_slot),
-                        None,
-                        inclusive,
-                    )
-                }
-
-                None => {
-                    self.compile_expr(
-                        source
-                    )?;
-
-                    self.chunk.emit(
-                        OpCode::IteratorFrom
-                    );
-
-                    let slot =
-                        self.allocate_temp_local();
-
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        slot as u32,
-                    );
-
-                    self.chunk.emit(
-                        OpCode::Pop
-                    );
-
-                    (
-                        None,
-                        None,
-                        Some(slot),
-                        false,
-                    )
-                }
-            };
+                iterator_slot =
+                    Some(slot);
+            }
+        }
 
         /*
-        * --------------------------------------------------------
+        * ========================================================
         * 4. Main loop
-        * --------------------------------------------------------
+        * ========================================================
         */
 
         let loop_start =
             self.chunk.code.len();
 
+        /*
+        * The terminating jump of the source.
+        */
         let source_end_jump =
-            match (
-                range_current_slot,
-                range_end_slot,
-            ) {
-                (
-                    Some(current),
-                    Some(end),
-                ) => {
+            match range_state {
+                Some((
+                    current_slot,
+                    end_slot,
+                    inclusive,
+                )) => {
                     self.chunk.emit_operand(
                         OpCode::LoadLocal,
-                        current as u32,
+                        current_slot as u32,
                     );
 
                     self.chunk.emit_operand(
                         OpCode::LoadLocal,
-                        end as u32,
+                        end_slot as u32,
                     );
 
                     self.chunk.emit(
-                        if range_inclusive {
+                        if inclusive {
                             OpCode::Leq
                         } else {
                             OpCode::Lt
@@ -3674,7 +3760,7 @@ impl Compiler {
                     )
                 }
 
-                _ => {
+                None => {
                     let iterator =
                         iterator_slot.expect(
                             "iterator slot missing"
@@ -3697,16 +3783,23 @@ impl Compiler {
             };
 
         /*
-        * --------------------------------------------------------
+        * ========================================================
         * 5. Load current item
-        * --------------------------------------------------------
+        * ========================================================
         */
 
-        match range_current_slot {
-            Some(current) => {
+        match range_state {
+            Some((
+                current_slot,
+                _,
+                _,
+            )) => {
+                /*
+                * item = current
+                */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
-                    current as u32,
+                    current_slot as u32,
                 );
 
                 self.chunk.emit_operand(
@@ -3721,13 +3814,13 @@ impl Compiler {
                 /*
                 * current += 1
                 *
-                * This is done before the pipeline stages so
-                * every next-item jump starts from the next source
-                * element.
+                * This is deliberately done before the
+                * pipeline body so a `continue`/filter rejection
+                * always progresses the range.
                 */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
-                    current as u32,
+                    current_slot as u32,
                 );
 
                 let one =
@@ -3746,7 +3839,7 @@ impl Compiler {
 
                 self.chunk.emit_operand(
                     OpCode::StoreLocal,
-                    current as u32,
+                    current_slot as u32,
                 );
 
                 self.chunk.emit(
@@ -3756,7 +3849,7 @@ impl Compiler {
 
             None => {
                 /*
-                * IteratorNext:
+                * IteratorNext produced:
                 *
                 *     item
                 *     bool
@@ -3775,9 +3868,9 @@ impl Compiler {
         }
 
         /*
-        * --------------------------------------------------------
-        * 6. Stage compilation
-        * --------------------------------------------------------
+        * ========================================================
+        * 6. Pipeline stages
+        * ========================================================
         */
 
         let mut next_item_jumps =
@@ -3793,10 +3886,9 @@ impl Compiler {
         {
             match stage {
                 /*
-                * map(|x| expr)
-                *
-                * compile_pipeline_lambda() directly emits
-                * expr bytecode into THIS function.
+                * ------------------------------------------------
+                * Map
+                * ------------------------------------------------
                 */
                 PipelineStage::Map(
                     lambda
@@ -3806,6 +3898,10 @@ impl Compiler {
                         item_slot,
                     )?;
 
+                    /*
+                    * Result of the lambda becomes the new
+                    * pipeline item.
+                    */
                     self.chunk.emit_operand(
                         OpCode::StoreLocal,
                         item_slot as u32,
@@ -3817,9 +3913,9 @@ impl Compiler {
                 }
 
                 /*
-                * filter(|x| expr)
-                *
-                * The body leaves Bool on the stack.
+                * ------------------------------------------------
+                * Filter
+                * ------------------------------------------------
                 */
                 PipelineStage::Filter(
                     lambda
@@ -3829,6 +3925,9 @@ impl Compiler {
                         item_slot,
                     )?;
 
+                    /*
+                    * Predicate leaves Bool on stack.
+                    */
                     let next =
                         self.chunk.emit_operand(
                             OpCode::JumpIfFalse,
@@ -3841,104 +3940,24 @@ impl Compiler {
                 }
 
                 /*
-                * skip(n)
+                * ------------------------------------------------
+                * Skip
+                * ------------------------------------------------
                 */
-                PipelineStage::Skip(
-                    _
-                ) => {
+                PipelineStage::Skip(_) => {
                     let slot =
                         stage_state_slots[index]
                             .expect(
                                 "missing skip state slot"
                             );
 
-                    self.chunk.emit_operand(
-                        OpCode::LoadLocal,
-                        slot as u32,
-                    );
-
-                    let zero =
-                        self.chunk.add_constant(
-                            Value::Int(0)
-                        );
-
-                    self.chunk.emit_operand(
-                        OpCode::Constant,
-                        zero,
-                    );
-
-                    self.chunk.emit(
-                        OpCode::Gt
-                    );
-
-                    let done =
-                        self.chunk.emit_operand(
-                            OpCode::JumpIfFalse,
-                            0,
-                        );
-
                     /*
-                    * remaining -= 1
+                    * remaining == 0
+                    *     continue pipeline
+                    *
+                    * remaining > 0
+                    *     decrement and discard item
                     */
-                    self.chunk.emit_operand(
-                        OpCode::LoadLocal,
-                        slot as u32,
-                    );
-
-                    let one =
-                        self.chunk.add_constant(
-                            Value::Int(1)
-                        );
-
-                    self.chunk.emit_operand(
-                        OpCode::Constant,
-                        one,
-                    );
-
-                    self.chunk.emit(
-                        OpCode::Sub
-                    );
-
-                    self.chunk.emit_operand(
-                        OpCode::StoreLocal,
-                        slot as u32,
-                    );
-
-                    self.chunk.emit(
-                        OpCode::Pop
-                    );
-
-                    let next =
-                        self.chunk.emit_operand(
-                            OpCode::Jump,
-                            0,
-                        );
-
-                    next_item_jumps.push(
-                        next
-                    );
-
-                    let stage_body =
-                        self.chunk.code.len();
-
-                    self.chunk.patch_operand(
-                        done,
-                        stage_body as u32,
-                    );
-                }
-
-                /*
-                * take(n)
-                */
-                PipelineStage::Take(
-                    _
-                ) => {
-                    let slot =
-                        stage_state_slots[index]
-                            .expect(
-                                "missing take state slot"
-                            );
-
                     self.chunk.emit_operand(
                         OpCode::LoadLocal,
                         slot as u32,
@@ -3960,30 +3979,110 @@ impl Compiler {
 
                     let continue_stage =
                         self.chunk.emit_operand(
-                            OpCode::JumpIfFalse,
+                            OpCode::JumpIfTrue,
                             0,
                         );
 
                     /*
-                    * remaining == 0
-                    * -> terminate the entire pipeline.
+                    * remaining -= 1
                     */
-                    let end =
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        slot as u32,
+                    );
+
+                    let one =
+                        self.chunk.add_constant(
+                            Value::Int(1)
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        one,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Sub
+                    );
+
+                    self.chunk.emit_operand(
+                        OpCode::StoreLocal,
+                        slot as u32,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+
+                    /*
+                    * Skip this item.
+                    */
+                    let next =
                         self.chunk.emit_operand(
                             OpCode::Jump,
                             0,
                         );
 
-                    end_jumps.push(
-                        end
+                    next_item_jumps.push(
+                        next
                     );
 
-                    let stage_body =
+                    let stage_target =
                         self.chunk.code.len();
 
                     self.chunk.patch_operand(
                         continue_stage,
-                        stage_body as u32,
+                        stage_target as u32,
+                    );
+                }
+
+                /*
+                * ------------------------------------------------
+                * Take
+                * ------------------------------------------------
+                */
+                PipelineStage::Take(_) => {
+                    let slot =
+                        stage_state_slots[index]
+                            .expect(
+                                "missing take state slot"
+                            );
+
+                    /*
+                    * remaining == 0
+                    *     end pipeline
+                    *
+                    * remaining > 0
+                    *     consume one slot
+                    *     continue
+                    */
+                    self.chunk.emit_operand(
+                        OpCode::LoadLocal,
+                        slot as u32,
+                    );
+
+                    let zero =
+                        self.chunk.add_constant(
+                            Value::Int(0)
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        zero,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Eq
+                    );
+
+                    let end =
+                        self.chunk.emit_operand(
+                            OpCode::JumpIfTrue,
+                            0,
+                        );
+
+                    end_jumps.push(
+                        end
                     );
 
                     /*
@@ -4021,16 +4120,22 @@ impl Compiler {
         }
 
         /*
-        * --------------------------------------------------------
-        * 7. Append accepted item
-        * --------------------------------------------------------
+        * ========================================================
+        * 7. Append
+        * ========================================================
+        *
+        * Stack:
+        *
+        *     [result_list]
+        *
+        * Load the current item:
+        *
+        *     [result_list, item]
+        *
+        * ListAppend:
+        *
+        *     [result_list]
         */
-
-        self.chunk.emit_operand(
-            OpCode::LoadLocal,
-            result_slot as u32,
-        );
-
         self.chunk.emit_operand(
             OpCode::LoadLocal,
             item_slot as u32,
@@ -4041,20 +4146,21 @@ impl Compiler {
         );
 
         /*
-        * --------------------------------------------------------
-        * 8. Next source item
-        * --------------------------------------------------------
+        * ========================================================
+        * 8. Next iteration
+        * ========================================================
+        *
+        * The result list remains on the stack.
         */
-
         self.chunk.emit_operand(
             OpCode::Jump,
             loop_start as u32,
         );
 
         /*
-        * --------------------------------------------------------
-        * 9. Resolve loop exits
-        * --------------------------------------------------------
+        * ========================================================
+        * 9. Patch exits
+        * ========================================================
         */
 
         let loop_end =
@@ -4065,18 +4171,14 @@ impl Compiler {
             loop_end as u32,
         );
 
-        for jump in
-            next_item_jumps
-        {
+        for jump in next_item_jumps {
             self.chunk.patch_operand(
                 jump,
                 loop_start as u32,
             );
         }
 
-        for jump in
-            end_jumps
-        {
+        for jump in end_jumps {
             self.chunk.patch_operand(
                 jump,
                 loop_end as u32,
@@ -4084,8 +4186,10 @@ impl Compiler {
         }
 
         /*
-        * IteratorNext pushes Unit when exhausted.
-        * Direct Range does not.
+        * Generic IteratorNext leaves Unit when it reaches
+        * the end. The Range path does not.
+        *
+        * The result list is below this Unit.
         */
         if iterator_slot.is_some() {
             self.chunk.emit(
@@ -4094,16 +4198,8 @@ impl Compiler {
         }
 
         /*
-        * --------------------------------------------------------
-        * 10. Result
-        * --------------------------------------------------------
+        * The result list is already on the operand stack.
         */
-
-        self.chunk.emit_operand(
-            OpCode::LoadLocal,
-            result_slot as u32,
-        );
-
         Ok(())
     }
 
