@@ -14,11 +14,6 @@ pub fn module() -> ModuleRef {
         Module::new("math");
 
     module.set_exported(
-        "sqrt",
-        Value::Builtin(sqrt),
-    );
-
-    module.set_exported(
         "abs",
         Value::Builtin(abs),
     );

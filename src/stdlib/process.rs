@@ -2,16 +2,21 @@ use std::{
     cell::RefCell,
     rc::Rc,
     process::Command,
+    collections::HashMap,
 };
 
 use crate::{
-    stdlib::general,
+    stdlib::{
+        result_ok,
+        result_err,
+        option_some,
+        option_none,
+    },
     runtime::{
         List,
         Module,
         ModuleRef,
         Value,
-        Object,
         PathValue,
     },
 };
@@ -75,11 +80,7 @@ pub fn args(
 
     Ok(
         Value::List(
-            Rc::new(
-                RefCell::new(
-                    values
-                )
-            )
+            List::new(values)
         )
     )
 }
@@ -113,7 +114,7 @@ pub fn env(
     ) {
         Ok(value) =>
             Ok(
-                general::option_some(
+                option_some(
                     Value::Str(
                         Rc::new(value)
                     )
@@ -124,7 +125,7 @@ pub fn env(
             std::env::VarError::NotPresent
         ) =>
             Ok(
-                general::option_none()
+                option_none()
             ),
 
         Err(error) =>
@@ -150,7 +151,7 @@ pub fn cwd(
     match std::env::current_dir() {
         Ok(path) =>
             Ok(
-                general::result_ok(
+                result_ok(
                     Value::Path(
                         Rc::new(
                             PathValue::new(path)
@@ -161,7 +162,7 @@ pub fn cwd(
 
         Err(error) =>
             Ok(
-                general::result_err(
+                result_err(
                     format!(
                         "failed to get current directory: {}",
                         error
@@ -216,7 +217,7 @@ pub fn set_env(
     );
 
     Ok(
-        general::result_ok(
+        result_ok(
             Value::Unit
         )
     )
@@ -270,7 +271,7 @@ pub fn run(
 
             Err(error) =>
                 return Ok(
-                    general::result_err(
+                    result_err(
                         format!(
                             "failed to execute '{}': {}",
                             command,
@@ -299,7 +300,7 @@ pub fn run(
         .into_owned();
 
     Ok(
-        general::result_ok(
+        result_ok(
             make_process_result(
                 status as i64,
                 stdout,
@@ -333,15 +334,15 @@ fn collect_string_args(
     list: &List,
     function: &str,
 ) -> Result<Vec<String>, String> {
-    let list =
-        list.borrow();
+    let values =
+        list.iter_cloned();
 
     let mut result =
         Vec::with_capacity(
-            list.len()
+            values.len()
         );
 
-    for value in list.iter() {
+    for value in values {
         match value {
             Value::Str(value) =>
                 result.push(
@@ -367,33 +368,31 @@ fn make_process_result(
     stdout: String,
     stderr: String,
 ) -> Value {
-    let mut object =
-        Object::new();
+    let mut result =
+        HashMap::new();
 
-    object.set_field(
-        "status",
+    result.insert(
+        "status".to_string(),
         Value::Int(status),
     );
 
-    object.set_field(
-        "stdout",
+    result.insert(
+        "stdout".to_string(),
         Value::Str(
             Rc::new(stdout)
         ),
     );
 
-    object.set_field(
-        "stderr",
+    result.insert(
+        "stderr".to_string(),
         Value::Str(
             Rc::new(stderr)
         ),
     );
 
-    Value::Object(
+    Value::Dict(
         Rc::new(
-            RefCell::new(
-                object
-            )
+            RefCell::new(result)
         )
     )
 }

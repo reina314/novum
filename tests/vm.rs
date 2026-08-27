@@ -1808,5 +1808,72 @@ fn vm_pub_local_is_error() {
     );
 }
 
+// ============================================================
+// Stdlib
+// ============================================================
+
+#[test]
+fn builtin_len() {
+    assert_int(
+        "len([1, 2, 3])",
+        3,
+    );
+}
+
+#[test]
+fn builtin_typeof() {
+    assert_string(
+        "typeof(42)",
+        "Int",
+    );
+}
+
+#[test]
+fn builtin_str() {
+    assert_string(
+        "str(42)",
+        "42",
+    );
+}
+
+#[test]
+fn stdlib_math_sqrt() {
+    assert_float(
+        r#"
+        import math as m
+        m.sqrt(16)
+        "#,
+        4.0,
+    );
+}
+
+#[test]
+fn stdlib_math_sin() {
+    assert_float(
+        r#"
+        import math as m
+        m.sin(m.pi())
+        "#,
+        0.0,
+    );
+}
+
+#[test]
+fn stdlib_fs_exists() {
+    match run(
+        r#"
+        import fs
+        fs.exists("__novum_file_that_does_not_exist__")
+        "#
+    ) {
+        Ok(Value::Bool(false)) => {}
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
 
 

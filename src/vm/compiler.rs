@@ -2799,6 +2799,22 @@ impl Compiler {
                         OpCode::LoadUpvalue,
                         slot as u32,
                     );
+                } else if crate::stdlib::builtin::contains(
+                    name
+                ) {
+                    let constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::LoadBuiltin,
+                        constant,
+                    );
                 } else {
                     return Err(
                         Error::new(

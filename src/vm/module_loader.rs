@@ -46,6 +46,27 @@ impl ModuleLoader {
         module_path: &crate::runtime::ModulePath,
         importing_file: Option<&Path>,
     ) -> Result<PathBuf> {
+        self.try_resolve(
+            module_path,
+            importing_file,
+        )?
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Import,
+                format!(
+                    "module '{}' not found",
+                    module_path
+                ),
+                None,
+            )
+        })
+    }
+
+    pub fn try_resolve(
+        &self,
+        module_path: &crate::runtime::ModulePath,
+        importing_file: Option<&Path>,
+    ) -> Result<Option<PathBuf>> {
         let mut candidates =
             Vec::new();
 
@@ -87,33 +108,29 @@ impl ModuleLoader {
             candidates
         {
             if candidate.is_file() {
-                return fs::canonicalize(
-                    &candidate
-                )
-                .map_err(|error| {
-                    Error::new(
-                        ErrorKind::Import,
-                        format!(
-                            "failed to canonicalize module '{}': {}",
-                            candidate.display(),
-                            error,
-                        ),
-                        None,
+                let canonical =
+                    fs::canonicalize(
+                        &candidate
                     )
-                });
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorKind::Import,
+                            format!(
+                                "failed to canonicalize module '{}': {}",
+                                candidate.display(),
+                                error,
+                            ),
+                            None,
+                        )
+                    })?;
+
+                return Ok(
+                    Some(canonical)
+                );
             }
         }
 
-        Err(
-            Error::new(
-                ErrorKind::Import,
-                format!(
-                    "module '{}' not found",
-                    module_path
-                ),
-                None,
-            )
-        )
+        Ok(None)
     }
 
     pub fn load_chunk(

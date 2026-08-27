@@ -4,6 +4,14 @@ use crate::{
         ErrorKind,
     },
     syntax::Pattern,
+    runtime::{
+        Value,
+        EnumValue,
+    },
+};
+
+use std::{
+    rc::Rc,
 };
 
 #[inline]
@@ -79,6 +87,66 @@ pub fn decode_call_operand(
     (
         (operand >> 16) as usize,
         (operand & 0xffff) as usize,
+    )
+}
+
+pub fn result_ok(
+    value: Value,
+) -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Result",
+                "Ok",
+                vec![value],
+            )
+        )
+    )
+}
+
+pub fn result_err(
+    message: impl Into<String>,
+) -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Result",
+                "Err",
+                vec![
+                    Value::Str(
+                        Rc::new(
+                            message.into()
+                        )
+                    )
+                ],
+            )
+        )
+    )
+}
+
+pub fn option_some(
+    value: Value,
+) -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "Some",
+                vec![value],
+            )
+        )
+    )
+}
+
+pub fn option_none() -> Value {
+    Value::EnumValue(
+        Rc::new(
+            EnumValue::new(
+                "Option",
+                "None",
+                Vec::new(),
+            )
+        )
     )
 }
 

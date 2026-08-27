@@ -1,9 +1,10 @@
+use crate::runtime::ModuleRef;
 
-// pub mod builtin;
-// pub mod math;
+pub mod builtin;
+pub mod fs;
+pub mod math;
+pub mod process;
 // pub mod linalg;
-// pub mod process;
-// pub mod fs;
 // pub mod csv;
 // pub mod json;
 // pub mod stats;
@@ -19,91 +20,26 @@ pub use util::{
     encode_call_operand,
     decode_call_operand,
     is_self_pattern,
+    result_err,
+    result_ok,
+    option_some,
+    option_none,
 };
 
-// Defines eager stdlib module
-// pub fn install_builtins(
-//     env: &Env
-// ) {
-//     builtin::install_builtins(env);
+/// Defines lazy stdlib module
+pub fn load_module(
+    name: &str,
+) -> Option<ModuleRef> {
+    match name {
+        "fs" => Some(fs::module()),
+        "math" => Some(math::module()),
+        "process" => Some(process::module()),
+        
+        // "stats" => Some(stats::module()),
+        // "linalg" => Some(linalg::module()),
+        // "csv" => Some(csv::module()),
+        // "json" => Some(json::module()),
 
-//     for (name, value) 
-//         in builtins() {
-//         env.define(name, value);
-//     }
-// }
-
-// Defines lazy stdlib module
-// pub fn load_module(
-//     name: &str,
-// ) -> Option<ModuleRef> {
-//     match name {
-//         "stats" =>
-//             Some(stats::module()),
-
-//         "linalg" =>
-//             Some(linalg::module()),
-
-//         "process" =>
-//             Some(process::module()),
-
-//         "fs" =>
-//             Some(fs::module()),
-
-//         "math" =>
-//             Some(math::module()),
-
-//         "csv" =>
-//             Some(csv::module()),
-
-//         "json" =>
-//             Some(json::module()),
-
-//         _ => None,
-//     }
-// }
-
-// fn builtins()
-//     -> HashMap<String, Value>
-// {
-//     let mut map = HashMap::new();
-
-//     //== Math (math.rs) ======================
-//     // DEPRECATED and use `math_module()` instead
-//     // This section is for backward compatibility only
-//     map.insert(
-//         "sqrt".into(),
-//         Value::Builtin(math::sqrt),
-//     );
-//     //========================================
-
-
-//     //== Linear Algebra (linalg.rs) ==========
-//     // DEPRECATED and use `linalg_module()` instead
-//     // This section is for backward compatibility only
-//     map.insert(
-//         "matrix".into(),
-//         Value::Builtin(linalg::matrix),
-//     );
-//     //========================================
-
-
-//     //== Descriptive Statistics (stats/descriptive.rs) ==========
-//     // DEPRECATED and use `stats_module()` instead
-//     // This section is for backward compatibility only
-    
-//     // EMPTY
-
-//     //========================================
-
-
-//     //== Inferential Statistics (stats/inferential.rs) ==========
-//     // DEPRECATED and use `stats_module()` instead
-//     // This section is for backward compatibility only
-    
-//     // EMPTY
-
-//     //========================================
-
-//     map
-// }
+        _ => None,
+    }
+}

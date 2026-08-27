@@ -70,6 +70,7 @@ pub struct Vm {
     module_loader: ModuleLoader,
     modules: HashMap<PathBuf, ModuleRef>,
     loading_modules: Vec<PathBuf>,
+    stdlib_modules: HashMap<String, ModuleRef>,
 }
 
 impl Vm {
@@ -88,6 +89,7 @@ impl Vm {
                 ),
             modules: HashMap::new(),
             loading_modules: Vec::new(),
+            stdlib_modules: HashMap::new(),
         }
     }
 
@@ -678,6 +680,57 @@ impl Vm {
                         Value::Unit;
                 }
 
+                OpCode::LoadBuiltin => {
+                    let value =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .constants
+                            .get(
+                                operand as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "builtin name constant out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let Value::Str(name) =
+                        value
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "LoadBuiltin requires Str constant",
+                                None,
+                            )
+                        );
+                    };
+
+                    let builtin =
+                        crate::stdlib::builtin::get(
+                            name.as_str()
+                        )
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "builtin '{}' is not registered",
+                                    name
+                                ),
+                                None,
+                            )
+                        })?;
+
+                    self.push(
+                        builtin
+                    );
+                }
+
                 OpCode::LoadUpvalue => {
                     let index =
                         operand as usize;
@@ -949,6 +1002,47 @@ impl Vm {
                                 class,
                                 &metadata.names,
                             )?;
+                        }
+
+                        Value::Builtin(
+                            builtin
+                        ) => {
+                            if metadata.names
+                                .iter()
+                                .any(Option::is_some)
+                            {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "named arguments are not supported for builtin functions",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let args =
+                                self.stack[
+                                    function_index + 1..
+                                ]
+                                .to_vec();
+
+                            self.stack.truncate(
+                                function_index
+                            );
+
+                            let result =
+                                builtin(args)
+                                    .map_err(|message| {
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            message,
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(
+                                result
+                            );
                         }
 
                         _ => {
@@ -4630,27 +4724,81 @@ impl Vm {
                 .source_path
                 .clone();
 
-        let canonical =
-            self.module_loader.resolve(
+        /*
+        * 1. User module
+        */
+        if let Some(canonical) =
+            self.module_loader.try_resolve(
                 path,
-                importing_file
-                    .as_deref(),
-            )?;
+                importing_file.as_deref(),
+            )?
+        {
+            return self.load_file_module(
+                canonical,
+                path,
+            );
+        }
 
-        if self.loading_modules
-            .iter()
-            .any(|current|
-                current == &canonical
+        /*
+        * 2. Standard library
+        *
+        * Only single-component names are
+        * stdlib modules for now.
+        */
+        if path.parts().len() == 1 {
+            let name =
+                &path.parts()[0];
+
+            if let Some(module) =
+                self.stdlib_modules
+                    .get(name)
+            {
+                return Ok(
+                    module.clone()
+                );
+            }
+
+            if let Some(module) =
+                crate::stdlib::load_module(
+                    name
+                )
+            {
+                self.stdlib_modules.insert(
+                    name.clone(),
+                    module.clone(),
+                );
+
+                return Ok(module);
+            }
+        }
+
+        Err(
+            Error::new(
+                ErrorKind::Import,
+                format!(
+                    "module '{}' not found",
+                    path
+                ),
+                None,
             )
+        )
+    }
+
+    fn load_file_module(
+        &mut self,
+        canonical: PathBuf,
+        module_path: &ModulePath,
+    ) -> Result<ModuleRef> {
+        if self.loading_modules
+            .contains(&canonical)
         {
             let mut chain =
                 self.loading_modules
                     .iter()
-                    .map(
-                        |path|
-                            path.display()
-                                .to_string()
-                    )
+                    .map(|path| {
+                        path.display()
+                            .to_string()
+                    })
                     .collect::<Vec<_>>();
 
             chain.push(
@@ -4671,9 +4819,6 @@ impl Vm {
             );
         }
 
-        /*
-        * Already executed.
-        */
         if let Some(module) =
             self.modules.get(&canonical)
         {
@@ -4686,15 +4831,11 @@ impl Vm {
             Rc::new(
                 RefCell::new(
                     Module::new(
-                        path.name()
+                        module_path.name()
                     )
                 )
             );
 
-        /*
-        * Register before execution.
-        * The loading stack still prevents cycles.
-        */
         self.modules.insert(
             canonical.clone(),
             module.clone(),
@@ -4708,7 +4849,8 @@ impl Vm {
             match self.module_loader
                 .load_chunk(&canonical)
             {
-                Ok(chunk) => chunk,
+                Ok(chunk) =>
+                    chunk,
 
                 Err(error) => {
                     self.loading_modules.pop();
@@ -4730,9 +4872,8 @@ impl Vm {
         self.loading_modules.pop();
 
         match result {
-            Ok(_) => {
-                Ok(module)
-            }
+            Ok(_) =>
+                Ok(module),
 
             Err(error) => {
                 self.modules.remove(

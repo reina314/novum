@@ -79,7 +79,8 @@ pub use value::{
     StrRef,
     Dict,
     List,
-    Value, 
+    Value,
+    BuiltinFn,
 };
 pub use path::{
     PathValue,
