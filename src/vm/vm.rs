@@ -1943,9 +1943,12 @@ impl Vm {
 
     fn execute_pipeline_function(
         &mut self,
-        function: &FunctionRef,
+        closure: &ClosureRef,
         argument: Value,
     ) -> Result<Value> {
+        let function =
+            &closure.function;
+
         let chunk =
             function.chunk.clone();
 
@@ -2021,6 +2024,71 @@ impl Vm {
                                     None,
                                 )
                             })?;
+
+                    stack.push(
+                        value
+                    );
+                }
+
+                OpCode::LoadUpvalue => {
+                    let index =
+                        instruction.operand
+                            as usize;
+
+                    let cell =
+                        closure
+                            .upvalues
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    format!(
+                                        "pipeline upvalue slot out of bounds: {}",
+                                        index
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    stack.push(
+                        cell.borrow().clone()
+                    );
+                }
+
+                OpCode::StoreUpvalue => {
+                    let index =
+                        instruction.operand
+                            as usize;
+
+                    let value =
+                        stack.pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    let cell =
+                        closure
+                            .upvalues
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    format!(
+                                        "pipeline upvalue slot out of bounds: {}",
+                                        index
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    *cell.borrow_mut() =
+                        value.clone();
 
                     stack.push(
                         value
@@ -2171,15 +2239,20 @@ impl Vm {
         &mut self,
         pipeline_index: usize,
     ) -> Result<()> {
+        /*
+        * Fetch the immutable pipeline description.
+        *
+        * The pipeline is stored in the current function's Chunk,
+        * so its lifetime is independent from the temporary runtime
+        * state created below.
+        */
         let pipeline =
             self.current_frame()
                 .closure
                 .function
                 .chunk
                 .pipelines
-                .get(
-                    pipeline_index
-                )
+                .get(pipeline_index)
                 .cloned()
                 .ok_or_else(|| {
                     Error::new(
@@ -2189,6 +2262,62 @@ impl Vm {
                     )
                 })?;
 
+        /*
+        * Materialize pipeline lambdas as closures exactly once.
+        *
+        * This is important for captured variables:
+        *
+        *     let offset = 10
+        *     (1..4)
+        *         .map(|x| x + offset)
+        *         .collect()
+        *
+        * The FunctionProto contains the upvalue specification,
+        * while Closure contains the actual captured cells.
+        */
+        let mut closures =
+            Vec::with_capacity(
+                pipeline.stages.len()
+            );
+
+        for stage in
+            &pipeline.stages
+        {
+            match stage {
+                PipelineStage::Map {
+                    function,
+                }
+                |
+                PipelineStage::Filter {
+                    function,
+                } => {
+                    let closure =
+                        self.create_closure(
+                            function.clone()
+                        )?;
+
+                    closures.push(
+                        Some(closure)
+                    );
+                }
+
+                PipelineStage::Skip { .. }
+                |
+                PipelineStage::Take { .. } => {
+                    closures.push(
+                        None
+                    );
+                }
+            }
+        }
+
+        /*
+        * Preallocate the resulting List.
+        *
+        * capacity_upper_bound() is conservative:
+        * filter can only reduce cardinality and take() can
+        * reduce it further.
+        */
         let list =
             List::with_capacity(
                 pipeline
@@ -2206,11 +2335,18 @@ impl Vm {
                     end,
                     inclusive,
                     &pipeline.stages,
+                    &closures,
                     &list,
                 )?;
             }
         }
 
+        /*
+        * The List itself is the result value.
+        *
+        * `List::clone()` is cheap because List is a shared
+        * handle around Rc<RefCell<Vec<Value>>>.
+        */
         self.push(
             Value::List(
                 list
@@ -2226,10 +2362,15 @@ impl Vm {
         end: i64,
         inclusive: bool,
         stages: &[PipelineStage],
+        closures: &[Option<ClosureRef>],
         output: &List,
     ) -> Result<()> {
         /*
-        * Normalize the inclusive range once.
+        * Normalize inclusive ranges once.
+        *
+        * [start, end]
+        * becomes
+        * [start, end + 1)
         */
         let end =
             if inclusive {
@@ -2245,26 +2386,28 @@ impl Vm {
                 end
             };
 
+        /*
+        * Empty range.
+        */
         if start >= end {
             return Ok(());
         }
 
         /*
-        * Each stateful stage gets its own runtime state.
+        * Stateful stages keep their runtime state here.
         *
-        * Example:
+        * Map / Filter:
+        *     None
         *
-        *     map
-        *     skip(2)
-        *     filter
-        *     take(5)
+        * Skip(n):
+        *     Skip(n)
         *
-        * becomes:
-        *
-        *     [None, Skip { .. }, None, Take { .. }]
+        * Take(n):
+        *     Take(n)
         */
         let mut states =
-            stages.iter()
+            stages
+                .iter()
                 .map(
                     |stage| {
                         match stage {
@@ -2272,19 +2415,23 @@ impl Vm {
                                 count,
                             } =>
                                 PipelineState::Skip(
-                                    *count,
+                                    *count
                                 ),
 
                             PipelineStage::Take {
                                 count,
                             } =>
                                 PipelineState::Take(
-                                    *count,
+                                    *count
                                 ),
 
-                            PipelineStage::Map { .. }
+                            PipelineStage::Map {
+                                ..
+                            }
                             |
-                            PipelineStage::Filter { .. } =>
+                            PipelineStage::Filter {
+                                ..
+                            } =>
                                 PipelineState::None,
                         }
                     }
@@ -2292,54 +2439,48 @@ impl Vm {
                 .collect::<Vec<_>>();
 
         /*
-        * Cache function references outside the hot loop.
+        * Validate that the compiler supplied exactly one
+        * closure entry for every stage.
         *
-        * FunctionRef is Rc<FunctionProto>, so this does not
-        * clone the underlying function. More importantly,
-        * we do not perform Rc cloning as part of stage setup
-        * for every iteration.
+        * This turns an internal compiler/runtime mismatch into
+        * an explicit VM error instead of an indexing panic.
         */
-        let functions =
-            stages.iter()
-                .map(
-                    |stage| {
-                        match stage {
-                            PipelineStage::Map {
-                                function,
-                            }
-                            |
-                            PipelineStage::Filter {
-                                function,
-                            } =>
-                                Some(function),
-
-                            PipelineStage::Skip { .. }
-                            |
-                            PipelineStage::Take { .. } =>
-                                None,
-                        }
-                    }
+        if closures.len() !=
+            stages.len()
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline closure metadata does not match pipeline stages",
+                    None,
                 )
-                .collect::<Vec<_>>();
+            );
+        }
 
         /*
-        * Main source loop.
+        * Main fused loop.
         *
-        * For every source value:
+        * No IteratorObj::Range is created here.
+        * No IteratorNext is required.
         *
-        *     Range value
-        *         ↓
-        *     Map / Filter / Skip / Take
-        *         ↓
-        *     output
+        * The range itself is the source iterator.
         */
         for current in start..end {
+            /*
+            * The current item is represented as a Value only once
+            * at the beginning of the iteration.
+            */
             let mut value =
-                Value::Int(current);
+                Value::Int(
+                    current
+                );
 
             let mut accepted =
                 true;
 
+            /*
+            * Execute every pipeline stage in source order.
+            */
             for (
                 index,
                 stage,
@@ -2347,45 +2488,59 @@ impl Vm {
             {
                 match stage {
                     /*
-                    * --------------------------------------------------
-                    * Map
-                    * --------------------------------------------------
+                    * --------------------------------------------
+                    * map
+                    * --------------------------------------------
                     */
-                    PipelineStage::Map { .. } => {
-                        let function =
-                            functions[index]
-                                .expect(
-                                    "missing map function"
-                                );
+                    PipelineStage::Map {
+                        ..
+                    } => {
+                        let closure =
+                            closures[index]
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "missing fused map closure",
+                                        None,
+                                    )
+                                })?;
 
                         value =
                             self.execute_pipeline_function(
-                                function,
+                                closure,
                                 value,
                             )?;
                     }
 
                     /*
-                    * --------------------------------------------------
-                    * Filter
-                    * --------------------------------------------------
+                    * --------------------------------------------
+                    * filter
+                    * --------------------------------------------
                     */
-                    PipelineStage::Filter { .. } => {
-                        let function =
-                            functions[index]
-                                .expect(
-                                    "missing filter function"
-                                );
+                    PipelineStage::Filter {
+                        ..
+                    } => {
+                        let closure =
+                            closures[index]
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "missing fused filter closure",
+                                        None,
+                                    )
+                                })?;
 
-                        let result =
+                        let predicate =
                             self.execute_pipeline_function(
-                                function,
+                                closure,
                                 value.clone(),
                             )?;
 
                         let Value::Bool(
                             keep
-                        ) = result
+                        ) = predicate
                         else {
                             return Err(
                                 Error::new(
@@ -2397,25 +2552,27 @@ impl Vm {
                         };
 
                         if !keep {
-                            accepted = false;
-
                             /*
-                            * The current item is discarded.
-                            * Stateful stages after this filter
-                            * must not consume this item.
+                            * The current source item is rejected.
+                            *
+                            * Crucially, stages following this filter
+                            * do not see the rejected item.
                             */
+                            accepted = false;
                             break;
                         }
                     }
 
                     /*
-                    * --------------------------------------------------
-                    * Skip
-                    * --------------------------------------------------
+                    * --------------------------------------------
+                    * skip
+                    * --------------------------------------------
                     */
-                    PipelineStage::Skip { .. } => {
+                    PipelineStage::Skip {
+                        ..
+                    } => {
                         let PipelineState::Skip(
-                            remaining,
+                            remaining
                         ) =
                             &mut states[index]
                         else {
@@ -2427,24 +2584,24 @@ impl Vm {
                         if *remaining > 0 {
                             *remaining -= 1;
 
-                            accepted = false;
-
                             /*
-                            * The item has been consumed by this
-                            * stage, so later stages must not see it.
+                            * Skip consumes the item.
                             */
+                            accepted = false;
                             break;
                         }
                     }
 
                     /*
-                    * --------------------------------------------------
-                    * Take
-                    * --------------------------------------------------
+                    * --------------------------------------------
+                    * take
+                    * --------------------------------------------
                     */
-                    PipelineStage::Take { .. } => {
+                    PipelineStage::Take {
+                        ..
+                    } => {
                         let PipelineState::Take(
-                            remaining,
+                            remaining
                         ) =
                             &mut states[index]
                         else {
@@ -2454,19 +2611,24 @@ impl Vm {
                         };
 
                         /*
-                        * `take(0)` means that this pipeline is
-                        * exhausted. Because Take is lazy, no later
-                        * item can ever be produced.
+                        * If this Take stage has already exhausted
+                        * its quota, the entire lazy pipeline is done.
                         */
                         if *remaining == 0 {
                             return Ok(());
                         }
 
+                        /*
+                        * This source item is consumed by Take.
+                        */
                         *remaining -= 1;
                     }
                 }
             }
 
+            /*
+            * Only accepted values reach collect().
+            */
             if accepted {
                 output.push(
                     value

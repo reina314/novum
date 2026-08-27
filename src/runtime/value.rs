@@ -22,7 +22,11 @@ use super::{
 use std::{
     fmt, 
     rc::Rc,
-    cell::RefCell, 
+    cell::{
+        Ref,
+        RefMut,
+        RefCell,
+    }, 
     collections::HashMap, 
 };
 
@@ -33,7 +37,8 @@ pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, String>;
 
 #[derive(Debug, Clone)]
 pub struct List {
-    elements: RefCell<Vec<Value>>,
+    elements:
+        Rc<RefCell<Vec<Value>>>,
 }
 
 impl List {
@@ -43,7 +48,11 @@ impl List {
     ) -> Self {
         Self {
             elements:
-                RefCell::new(elements),
+                Rc::new(
+                    RefCell::new(
+                        elements
+                    )
+                ),
         }
     }
 
@@ -53,9 +62,11 @@ impl List {
     ) -> Self {
         Self {
             elements:
-                RefCell::new(
-                    Vec::with_capacity(
-                        capacity
+                Rc::new(
+                    RefCell::new(
+                        Vec::with_capacity(
+                            capacity
+                        )
                     )
                 ),
         }
@@ -68,6 +79,15 @@ impl List {
         self.elements
             .borrow()
             .len()
+    }
+
+    #[inline]
+    pub fn is_empty(
+        &self,
+    ) -> bool {
+        self.elements
+            .borrow()
+            .is_empty()
     }
 
     #[inline]
@@ -88,10 +108,12 @@ impl List {
         value: Value,
     ) -> Result<(), String> {
         let mut elements =
-            self.elements.borrow_mut();
+            self.elements
+                .borrow_mut();
 
         let slot =
-            elements.get_mut(index)
+            elements
+                .get_mut(index)
                 .ok_or_else(|| {
                     format!(
                         "list index out of bounds: {}",
@@ -99,7 +121,8 @@ impl List {
                     )
                 })?;
 
-        *slot = value;
+        *slot =
+            value;
 
         Ok(())
     }
@@ -148,15 +171,17 @@ impl List {
     #[inline]
     pub fn as_vec(
         &self,
-    ) -> std::cell::Ref<'_, Vec<Value>> {
-        self.elements.borrow()
+    ) -> Ref<'_, Vec<Value>> {
+        self.elements
+            .borrow()
     }
 
     #[inline]
     pub fn as_vec_mut(
         &self,
-    ) -> std::cell::RefMut<'_, Vec<Value>> {
-        self.elements.borrow_mut()
+    ) -> RefMut<'_, Vec<Value>> {
+        self.elements
+            .borrow_mut()
     }
 
     pub fn repeat(
@@ -165,12 +190,15 @@ impl List {
     ) -> Result<Self, String> {
         if count == 0 {
             return Ok(
-                Self::new(Vec::new())
+                Self::new(
+                    Vec::new()
+                )
             );
         }
 
         let elements =
-            self.elements.borrow();
+            self.elements
+                .borrow();
 
         let capacity =
             elements
@@ -193,10 +221,11 @@ impl List {
         }
 
         Ok(
-            Self::new(result)
+            Self::new(
+                result
+            )
         )
     }
-
 }
 
 #[derive(Clone)]
