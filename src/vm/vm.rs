@@ -1560,6 +1560,28 @@ impl Vm {
                             self.push(value);
                         }
 
+                        (
+                            Value::Dict(dict),
+                            Value::Str(key),
+                        ) => {
+                            let value =
+                                dict.borrow()
+                                    .get(key.as_str())
+                                    .cloned()
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Index,
+                                            format!(
+                                                "dict key not found: '{}'",
+                                                key,
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(value);
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -1608,6 +1630,18 @@ impl Vm {
                                     None,
                                 )
                             })?;
+
+                            self.push(value);
+                        }
+
+                        (
+                            Value::Dict(dict),
+                            Value::Str(key),
+                        ) => {
+                            dict.borrow_mut().insert(
+                                key.as_str().to_owned(),
+                                value.clone(),
+                            );
 
                             self.push(value);
                         }
@@ -5800,6 +5834,63 @@ impl Vm {
                     name,
                     args,
                 )
+            }
+
+            Value::Module(module) => {
+                ensure_positional_args(
+                    names
+                )?;
+
+                let value =
+                    module
+                        .borrow()
+                        .get_field(name)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Name,
+                                format!(
+                                    "module '{}' has no field '{}'",
+                                    module.borrow().name(),
+                                    name,
+                                ),
+                                None,
+                            )
+                        })?;
+
+                match value {
+                    Value::Builtin(function) => {
+                        function(args)
+                            .map_err(|message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            })
+                    }
+
+                    Value::Closure(closure) => {
+                        self.call_closure_sync_named(
+                            closure,
+                            args,
+                            names,
+                        )
+                    }
+
+                    other => {
+                        Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                format!(
+                                    "module field '{}' is not callable (got {})",
+                                    name,
+                                    other.type_name(),
+                                ),
+                                None,
+                            )
+                        )
+                    }
+                }
             }
 
             Value::Object(

@@ -1876,4 +1876,23 @@ fn stdlib_fs_exists() {
     }
 }
 
+#[test]
+fn stdlib_process_cwd() {
+    match run(
+        r#"
+        import process as p
+        p.cwd()
+        "#
+    ) {
+        Ok(Value::Str(_)) => {}
+
+        other => {
+            panic!(
+                "expected Str, got {other:?}"
+            );
+        }
+    }
+}
+
+
 
