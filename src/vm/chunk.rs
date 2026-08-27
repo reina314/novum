@@ -1,37 +1,9 @@
 use crate::runtime::Value;
 use super::{
     OpCode,
+    Instruction,
     PipelineProgram,
 };
-
-#[derive(Debug, Clone)]
-pub struct Instruction {
-    pub opcode: OpCode,
-    pub operand: u32,
-}
-
-impl Instruction {
-    #[inline]
-    pub fn new(
-        opcode: OpCode,
-        operand: u32,
-    ) -> Self {
-        Self {
-            opcode,
-            operand,
-        }
-    }
-
-    #[inline]
-    pub fn simple(
-        opcode: OpCode,
-    ) -> Self {
-        Self {
-            opcode,
-            operand: 0,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Chunk {

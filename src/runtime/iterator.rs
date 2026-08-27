@@ -1,6 +1,5 @@
 use super::{
     List,
-    ListRef,
     Value,
     StrRef,
     VectorRef,
@@ -16,7 +15,7 @@ pub type IteratorRef = Rc<RefCell<IteratorObj>>;
 #[derive(Clone)]
 pub enum IteratorObj {
     List {
-        data: ListRef,
+        data: List,
         index: usize
     },
 
@@ -150,10 +149,8 @@ impl IteratorObj {
                         .collect::<Vec<_>>();
 
                 let list =
-                    Rc::new(
-                        List::new(
-                            items
-                        )
+                    List::new(
+                        items
                     );
 
                 Ok(
@@ -175,10 +172,8 @@ impl IteratorObj {
                         .to_vec();
 
                 let list =
-                    Rc::new(
-                        List::new(
-                            values
-                        )
+                    List::new(
+                        values
                     );
 
                 Ok(

@@ -6,7 +6,6 @@ pub mod vm;
 
 pub use chunk::{
     Chunk,
-    Instruction,
     CallSite,
 };
 
@@ -14,6 +13,7 @@ pub use pipeline::{
     PipelineProgram,
     PipelineSource,
     PipelineStage,
+    PipelineState,
 };
 
 pub use compiler::{
@@ -21,6 +21,7 @@ pub use compiler::{
 };
 
 pub use instruction::{
+    Instruction,
     OpCode,
 };
 

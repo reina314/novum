@@ -31,9 +31,7 @@ pub type Tuple = Rc<Vec<Value>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, String>;
 
-pub type ListRef = Rc<List>;
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct List {
     elements: RefCell<Vec<Value>>,
 }
@@ -209,7 +207,7 @@ pub enum Value {
     Str(StrRef),
 
     Tuple(Tuple),
-    List(ListRef),
+    List(List),
     Set(SetRef),
     Dict(Dict),
 

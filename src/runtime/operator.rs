@@ -596,11 +596,9 @@ fn mul(
 
             Ok(
                 Value::List(
-                    Rc::new(
-                        list.repeat(
-                            count as usize
-                        )?
-                    )
+                    list.repeat(
+                        count as usize
+                    )?
                 )
             )
         }
@@ -618,11 +616,9 @@ fn mul(
 
             Ok(
                 Value::List(
-                    Rc::new(
-                        list.repeat(
-                            count as usize
-                        )?
-                    )
+                    list.repeat(
+                        count as usize
+                    )?
                 )
             )
         }
