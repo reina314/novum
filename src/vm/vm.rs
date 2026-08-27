@@ -41,6 +41,7 @@ use super::{
     PipelineState,
     PipelineSource,
     PipelineStage,
+    PipelineExpr,
 };
 
 use std::{
@@ -2239,13 +2240,6 @@ impl Vm {
         &mut self,
         pipeline_index: usize,
     ) -> Result<()> {
-        /*
-        * Fetch the immutable pipeline description.
-        *
-        * The pipeline is stored in the current function's Chunk,
-        * so its lifetime is independent from the temporary runtime
-        * state created below.
-        */
         let pipeline =
             self.current_frame()
                 .closure
@@ -2262,66 +2256,15 @@ impl Vm {
                     )
                 })?;
 
-        /*
-        * Materialize pipeline lambdas as closures exactly once.
-        *
-        * This is important for captured variables:
-        *
-        *     let offset = 10
-        *     (1..4)
-        *         .map(|x| x + offset)
-        *         .collect()
-        *
-        * The FunctionProto contains the upvalue specification,
-        * while Closure contains the actual captured cells.
-        */
-        let mut closures =
-            Vec::with_capacity(
-                pipeline.stages.len()
-            );
-
-        for stage in
-            &pipeline.stages
-        {
-            match stage {
-                PipelineStage::Map {
-                    function,
-                }
-                |
-                PipelineStage::Filter {
-                    function,
-                } => {
-                    let closure =
-                        self.create_closure(
-                            function.clone()
-                        )?;
-
-                    closures.push(
-                        Some(closure)
-                    );
-                }
-
-                PipelineStage::Skip { .. }
-                |
-                PipelineStage::Take { .. } => {
-                    closures.push(
-                        None
-                    );
-                }
-            }
-        }
-
-        /*
-        * Preallocate the resulting List.
-        *
-        * capacity_upper_bound() is conservative:
-        * filter can only reduce cardinality and take() can
-        * reduce it further.
-        */
         let list =
             List::with_capacity(
                 pipeline
                     .capacity_upper_bound()?
+            );
+
+        let closures =
+            Vec::with_capacity(
+                pipeline.stages.len()
             );
 
         match pipeline.source {
@@ -2341,16 +2284,8 @@ impl Vm {
             }
         }
 
-        /*
-        * The List itself is the result value.
-        *
-        * `List::clone()` is cheap because List is a shared
-        * handle around Rc<RefCell<Vec<Value>>>.
-        */
         self.push(
-            Value::List(
-                list
-            )
+            Value::List(list)
         );
 
         Ok(())
@@ -2493,22 +2428,11 @@ impl Vm {
                     * --------------------------------------------
                     */
                     PipelineStage::Map {
-                        ..
+                        expr
                     } => {
-                        let closure =
-                            closures[index]
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "missing fused map closure",
-                                        None,
-                                    )
-                                })?;
-
                         value =
-                            self.execute_pipeline_function(
-                                closure,
+                            self.eval_pipeline_expr(
+                                expr,
                                 value,
                             )?;
                     }
@@ -2519,22 +2443,11 @@ impl Vm {
                     * --------------------------------------------
                     */
                     PipelineStage::Filter {
-                        ..
+                        expr
                     } => {
-                        let closure =
-                            closures[index]
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "missing fused filter closure",
-                                        None,
-                                    )
-                                })?;
-
                         let predicate =
-                            self.execute_pipeline_function(
-                                closure,
+                            self.eval_pipeline_expr(
+                                expr,
                                 value.clone(),
                             )?;
 
@@ -2552,12 +2465,6 @@ impl Vm {
                         };
 
                         if !keep {
-                            /*
-                            * The current source item is rejected.
-                            *
-                            * Crucially, stages following this filter
-                            * do not see the rejected item.
-                            */
                             accepted = false;
                             break;
                         }
@@ -3238,6 +3145,288 @@ impl Vm {
         );
 
         Ok(())
+    }
+
+    fn eval_pipeline_expr(
+        &self,
+        expr: &PipelineExpr,
+        input: Value,
+    ) -> Result<Value> {
+        match expr {
+            PipelineExpr::Input =>
+                Ok(input),
+
+            PipelineExpr::Int(value) =>
+                Ok(
+                    Value::Int(*value)
+                ),
+
+            PipelineExpr::Float(value) =>
+                Ok(
+                    Value::Float(*value)
+                ),
+
+            PipelineExpr::Bool(value) =>
+                Ok(
+                    Value::Bool(*value)
+                ),
+
+            PipelineExpr::Str(value) =>
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            value.clone()
+                        )
+                    )
+                ),
+
+            PipelineExpr::Capture(_) => {
+                /*
+                * Capture support requires resolving the captured
+                * variable from the executing Closure.
+                *
+                * This evaluator will therefore be upgraded to
+                * receive a capture environment.
+                */
+                Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "pipeline capture requires capture environment",
+                        None,
+                    )
+                )
+            }
+
+            PipelineExpr::Add(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Add,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Sub(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Sub,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Mul(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Mul,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Div(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Div,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Mod(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Mod,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Pow(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Pow,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Eq(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Eq,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Neq(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Neq,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Lt(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Lt,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Leq(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Leq,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Gt(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Gt,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Geq(
+                left,
+                right,
+            ) => {
+                self.eval_pipeline_binary(
+                    BinOp::Geq,
+                    left,
+                    right,
+                    input,
+                )
+            }
+
+            PipelineExpr::Neg(
+                expr
+            ) => {
+                let value =
+                    self.eval_pipeline_expr(
+                        expr,
+                        input,
+                    )?;
+
+                value
+                    .negate()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            PipelineExpr::Not(
+                expr
+            ) => {
+                let value =
+                    self.eval_pipeline_expr(
+                        expr,
+                        input,
+                    )?;
+
+                match value {
+                    Value::Bool(value) =>
+                        Ok(
+                            Value::Bool(!value)
+                        ),
+
+                    other =>
+                        Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                format!(
+                                    "expected Bool, got {}",
+                                    other.type_name()
+                                ),
+                                None,
+                            )
+                        ),
+                }
+            }
+        }
+    }
+
+    fn eval_pipeline_binary(
+        &self,
+        op: BinOp,
+        left: &PipelineExpr,
+        right: &PipelineExpr,
+        input: Value,
+    ) -> Result<Value> {
+        let lhs =
+            self.eval_pipeline_expr(
+                left,
+                input.clone(),
+            )?;
+
+        let rhs =
+            self.eval_pipeline_expr(
+                right,
+                input,
+            )?;
+
+        apply_binop(
+            op,
+            lhs,
+            rhs,
+        )
+        .map_err(
+            |message| {
+                Error::new(
+                    ErrorKind::Runtime,
+                    message,
+                    None,
+                )
+            }
+        )
     }
 
     #[inline]

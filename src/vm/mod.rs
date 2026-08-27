@@ -14,6 +14,7 @@ pub use pipeline::{
     PipelineSource,
     PipelineStage,
     PipelineState,
+    PipelineExpr,
 };
 
 pub use compiler::{

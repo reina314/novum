@@ -1,5 +1,4 @@
 use crate::{
-    runtime::FunctionRef,
     error::{
         Error,
         ErrorKind,
@@ -18,11 +17,11 @@ pub enum PipelineSource {
 #[derive(Clone, Debug)]
 pub enum PipelineStage {
     Map {
-        function: FunctionRef,
+        expr: PipelineExpr,
     },
 
     Filter {
-        function: FunctionRef,
+        expr: PipelineExpr,
     },
 
     Skip {
@@ -32,6 +31,33 @@ pub enum PipelineStage {
     Take {
         count: usize,
     },
+}
+
+#[derive(Clone, Debug)]
+pub enum PipelineExpr {
+    Input,
+
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+
+    Add(Box<Self>, Box<Self>),
+    Sub(Box<Self>, Box<Self>),
+    Mul(Box<Self>, Box<Self>),
+    Div(Box<Self>, Box<Self>),
+    Mod(Box<Self>, Box<Self>),
+    Pow(Box<Self>, Box<Self>),
+    Eq(Box<Self>, Box<Self>),
+    Neq(Box<Self>, Box<Self>),
+    Lt(Box<Self>, Box<Self>),
+    Leq(Box<Self>, Box<Self>),
+    Gt(Box<Self>, Box<Self>),
+    Geq(Box<Self>, Box<Self>),
+    Neg(Box<Self>),
+    Not(Box<Self>),
+    
+    Capture(u16),
 }
 
 #[derive(Clone, Debug)]

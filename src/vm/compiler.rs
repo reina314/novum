@@ -30,6 +30,7 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
+    PipelineExpr,
     PipelineStage,
     PipelineSource,
     PipelineProgram,
@@ -1044,6 +1045,233 @@ impl Compiler {
             | ExprKind::Import { .. }
             | ExprKind::Drop(_)
             | ExprKind::Block(_) => false,
+        }
+    }
+
+    fn lower_pipeline_expr(
+        &mut self,
+        expr: &Expr,
+        input_name: &str,
+    ) -> Result<PipelineExpr> {
+        match &expr.kind {
+            ExprKind::Int(value) =>
+                Ok(
+                    PipelineExpr::Int(
+                        *value
+                    )
+                ),
+
+            ExprKind::Float(value) =>
+                Ok(
+                    PipelineExpr::Float(
+                        *value
+                    )
+                ),
+
+            ExprKind::Bool(value) =>
+                Ok(
+                    PipelineExpr::Bool(
+                        *value
+                    )
+                ),
+
+            ExprKind::Str(value) =>
+                Ok(
+                    PipelineExpr::Str(
+                        value.clone()
+                    )
+                ),
+
+            ExprKind::Ident(name) => {
+                if name == input_name {
+                    return Ok(
+                        PipelineExpr::Input
+                    );
+                }
+
+                let slot = 
+                    self.resolve_upvalue(name)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "{} is undefined",
+                                name
+                            ),
+                            None,
+                        )
+                    })?;
+
+                Ok(
+                    PipelineExpr::Capture(
+                        slot
+                    )
+                )
+            }
+
+            ExprKind::Neg(expr) => {
+                Ok(
+                    PipelineExpr::Neg(
+                        Box::new(
+                            self.lower_pipeline_expr(
+                                expr,
+                                input_name,
+                            )?
+                        )
+                    )
+                )
+            }
+
+            ExprKind::Not(expr) => {
+                Ok(
+                    PipelineExpr::Not(
+                        Box::new(
+                            self.lower_pipeline_expr(
+                                expr,
+                                input_name,
+                            )?
+                        )
+                    )
+                )
+            }
+
+            ExprKind::Binary(
+                op,
+                left,
+                right,
+            ) => {
+                let left =
+                    Box::new(
+                        self.lower_pipeline_expr(
+                            left,
+                            input_name,
+                        )?
+                    );
+
+                let right =
+                    Box::new(
+                        self.lower_pipeline_expr(
+                            right,
+                            input_name,
+                        )?
+                    );
+
+                match op {
+                    BinOp::Add =>
+                        Ok(
+                            PipelineExpr::Add(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Sub =>
+                        Ok(
+                            PipelineExpr::Sub(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Mul =>
+                        Ok(
+                            PipelineExpr::Mul(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Div =>
+                        Ok(
+                            PipelineExpr::Div(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Mod =>
+                        Ok(
+                            PipelineExpr::Mod(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Pow =>
+                        Ok(
+                            PipelineExpr::Pow(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Eq =>
+                        Ok(
+                            PipelineExpr::Eq(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Neq =>
+                        Ok(
+                            PipelineExpr::Neq(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Lt =>
+                        Ok(
+                            PipelineExpr::Lt(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Leq =>
+                        Ok(
+                            PipelineExpr::Leq(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Gt =>
+                        Ok(
+                            PipelineExpr::Gt(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    BinOp::Geq =>
+                        Ok(
+                            PipelineExpr::Geq(
+                                left,
+                                right,
+                            )
+                        ),
+
+                    _ =>
+                        Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "operator is not supported in fused pipeline",
+                                None,
+                            )
+                        ),
+                }
+            }
+
+            _ =>
+                Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "expression is not supported in fused pipeline",
+                        None,
+                    )
+                ),
         }
     }
 
@@ -3304,63 +3532,31 @@ impl Compiler {
         for stage in stages {
             match stage {
                 PipelineStageAst::Map(
-                    expr
+                    lambda
                 ) => {
-                    let ExprKind::Lambda(
-                        params,
-                        body,
-                    ) =
-                        &expr.kind
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "map requires lambda",
-                                None,
-                            )
-                        );
-                    };
-
-                    let function =
-                        self.compile_lambda_proto(
-                            params,
-                            body,
+                    let expr =
+                        self.compile_pipeline_expr(
+                            lambda
                         )?;
 
                     compiled.push(
                         PipelineStage::Map {
-                            function,
+                            expr,
                         }
                     );
                 }
 
                 PipelineStageAst::Filter(
-                    expr
+                    lambda
                 ) => {
-                    let ExprKind::Lambda(
-                        params,
-                        body,
-                    ) =
-                        &expr.kind
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "filter requires lambda",
-                                None,
-                            )
-                        );
-                    };
-
-                    let function =
-                        self.compile_lambda_proto(
-                            params,
-                            body,
+                    let expr =
+                        self.compile_pipeline_expr(
+                            lambda
                         )?;
 
                     compiled.push(
                         PipelineStage::Filter {
-                            function,
+                            expr,
                         }
                     );
                 }
@@ -3392,6 +3588,54 @@ impl Compiler {
                 source,
                 stages: compiled,
             }
+        )
+    }
+
+    fn compile_pipeline_expr(
+        &mut self,
+        lambda: &Expr,
+    ) -> Result<PipelineExpr> {
+        let ExprKind::Lambda(
+            params,
+            body,
+        ) = &lambda.kind
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline stage requires a lambda",
+                    None,
+                )
+            );
+        };
+
+        if params.len() != 1 {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    "pipeline lambda must take exactly one argument",
+                    None,
+                )
+            );
+        }
+
+        let Pattern::Ident(
+            parameter
+        ) =
+            &params[0]
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline lambda parameter must be an identifier",
+                    None,
+                )
+            );
+        };
+
+        self.lower_pipeline_expr(
+            body,
+            parameter,
         )
     }
 
