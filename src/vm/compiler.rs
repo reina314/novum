@@ -1275,6 +1275,111 @@ impl Compiler {
         }
     }
 
+    fn lower_pipeline_lambda(
+        &mut self,
+        lambda: &Expr,
+    ) -> Result<(
+        PipelineExpr,
+        Vec<UpvalueSpec>,
+    )> {
+        let ExprKind::Lambda(
+            params,
+            body,
+        ) =
+            &lambda.kind
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline stage requires lambda",
+                    None,
+                )
+            );
+        };
+
+        if params.len() != 1 {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    "pipeline lambda must take exactly one argument",
+                    None,
+                )
+            );
+        }
+
+        let Pattern::Ident(
+            parameter
+        ) =
+            &params[0]
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline lambda parameter must be an identifier",
+                    None,
+                )
+            );
+        };
+
+        /*
+        * Create a compiler-only function scope.
+        *
+        * This scope is not emitted as a runtime function.
+        * It exists so normal lexical/upvalue resolution can
+        * be reused for the pipeline lambda.
+        */
+        let parent =
+            self.scope.clone();
+
+        let lambda_scope =
+            Scope::new(
+                Some(parent),
+                true,
+            );
+
+        /*
+        * The pipeline input is local slot 0 inside the
+        * synthetic lambda scope.
+        */
+        lambda_scope
+            .borrow_mut()
+            .locals
+            .insert(
+                parameter.clone(),
+                0,
+            );
+
+        let previous_scope =
+            std::mem::replace(
+                &mut self.scope,
+                lambda_scope.clone(),
+            );
+
+        let result =
+            self.lower_pipeline_expr(
+                body,
+                parameter,
+            );
+
+        /*
+        * Capture specification belongs to this
+        * synthetic lambda scope.
+        */
+        let captures =
+            lambda_scope
+                .borrow()
+                .upvalue_specs
+                .clone();
+
+        self.scope =
+            previous_scope;
+
+        Ok((
+            result?,
+            captures,
+        ))
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
@@ -3532,31 +3637,41 @@ impl Compiler {
         for stage in stages {
             match stage {
                 PipelineStageAst::Map(
-                    lambda
+                    expr
                 ) => {
-                    let expr =
-                        self.compile_pipeline_expr(
-                            lambda
+                    let (
+                        pipeline_expr,
+                        captures,
+                    ) =
+                        self.lower_pipeline_lambda(
+                            expr
                         )?;
 
                     compiled.push(
                         PipelineStage::Map {
-                            expr,
+                            expr:
+                                pipeline_expr,
+                            captures,
                         }
                     );
                 }
 
                 PipelineStageAst::Filter(
-                    lambda
+                    expr
                 ) => {
-                    let expr =
-                        self.compile_pipeline_expr(
-                            lambda
+                    let (
+                        pipeline_expr,
+                        captures,
+                    ) =
+                        self.lower_pipeline_lambda(
+                            expr
                         )?;
 
                     compiled.push(
                         PipelineStage::Filter {
-                            expr,
+                            expr:
+                                pipeline_expr,
+                            captures,
                         }
                     );
                 }
@@ -3588,54 +3703,6 @@ impl Compiler {
                 source,
                 stages: compiled,
             }
-        )
-    }
-
-    fn compile_pipeline_expr(
-        &mut self,
-        lambda: &Expr,
-    ) -> Result<PipelineExpr> {
-        let ExprKind::Lambda(
-            params,
-            body,
-        ) = &lambda.kind
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline stage requires a lambda",
-                    None,
-                )
-            );
-        };
-
-        if params.len() != 1 {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    "pipeline lambda must take exactly one argument",
-                    None,
-                )
-            );
-        }
-
-        let Pattern::Ident(
-            parameter
-        ) =
-            &params[0]
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline lambda parameter must be an identifier",
-                    None,
-                )
-            );
-        };
-
-        self.lower_pipeline_expr(
-            body,
-            parameter,
         )
     }
 

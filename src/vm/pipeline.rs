@@ -2,7 +2,10 @@ use crate::{
     error::{
         Error,
         ErrorKind,
-    }
+    },
+    runtime::{
+        UpvalueSpec,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -18,10 +21,12 @@ pub enum PipelineSource {
 pub enum PipelineStage {
     Map {
         expr: PipelineExpr,
+        captures: Vec<UpvalueSpec>,
     },
 
     Filter {
         expr: PipelineExpr,
+        captures: Vec<UpvalueSpec>,
     },
 
     Skip {
@@ -56,7 +61,7 @@ pub enum PipelineExpr {
     Geq(Box<Self>, Box<Self>),
     Neg(Box<Self>),
     Not(Box<Self>),
-    
+
     Capture(u16),
 }
 

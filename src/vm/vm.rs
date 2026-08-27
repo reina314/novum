@@ -1962,11 +1962,46 @@ impl Vm {
                     )
                 })?;
 
-        let captures =
-            self.current_frame()
-                .closure
-                .upvalues
-                .clone();
+        /*
+        * Materialize captures once per stage.
+        *
+        * This is outside the hot item loop.
+        */
+        let mut stage_captures =
+            Vec::with_capacity(
+                pipeline.stages.len()
+            );
+
+        for stage in
+            &pipeline.stages
+        {
+            let captures =
+                match stage {
+                    PipelineStage::Map {
+                        captures,
+                        ..
+                    }
+                    |
+                    PipelineStage::Filter {
+                        captures,
+                        ..
+                    } => {
+                        self.resolve_pipeline_captures(
+                            captures
+                        )?
+                    }
+
+                    PipelineStage::Skip { .. }
+                    |
+                    PipelineStage::Take { .. } => {
+                        Vec::new()
+                    }
+                };
+
+            stage_captures.push(
+                captures
+            );
+        }
 
         let list =
             List::with_capacity(
@@ -1985,7 +2020,7 @@ impl Vm {
                     end,
                     inclusive,
                     &pipeline.stages,
-                    &captures,
+                    &stage_captures,
                     &list,
                 )?;
             }
@@ -2004,9 +2039,21 @@ impl Vm {
         end: i64,
         inclusive: bool,
         stages: &[PipelineStage],
-        captures: &[CellRef],
+        stage_captures: &[Vec<CellRef>],
         output: &List,
     ) -> Result<()> {
+        if stage_captures.len() !=
+            stages.len()
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline capture metadata does not match pipeline stages",
+                    None,
+                )
+            );
+        }
+        
         /*
         * Normalize inclusive ranges once.
         *
@@ -2116,13 +2163,14 @@ impl Vm {
                     * --------------------------------------------
                     */
                     PipelineStage::Map {
-                        expr
+                        expr,
+                        ..
                     } => {
                         value =
                             self.eval_pipeline_expr(
                                 expr,
                                 value,
-                                captures,
+                                &stage_captures[index],
                             )?;
                     }
 
@@ -2132,13 +2180,14 @@ impl Vm {
                     * --------------------------------------------
                     */
                     PipelineStage::Filter {
-                        expr
+                        expr,
+                        ..
                     } => {
                         let predicate =
                             self.eval_pipeline_expr(
                                 expr,
                                 value.clone(),
-                                captures,
+                                &stage_captures[index],
                             )?;
 
                         let Value::Bool(
@@ -2234,6 +2283,100 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    fn resolve_pipeline_captures(
+        &self,
+        specs: &[UpvalueSpec],
+    ) -> Result<Vec<CellRef>> {
+        let frame =
+            self.current_frame();
+
+        let mut captures =
+            Vec::with_capacity(
+                specs.len()
+            );
+
+        for spec in specs {
+            match spec {
+                UpvalueSpec::Local(
+                    slot
+                ) => {
+                    if let Some(
+                        Some(cell)
+                    ) =
+                        frame.cells.get(
+                            *slot as usize
+                        )
+                    {
+                        captures.push(
+                            cell.clone()
+                        );
+                    } else {
+                        /*
+                        * Pipeline expressions currently only read
+                        * captures. Materialize an independent cell
+                        * when the source local has not already been
+                        * promoted to a cell.
+                        */
+                        let value =
+                            frame
+                                .locals
+                                .get(
+                                    *slot as usize
+                                )
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        format!(
+                                            "pipeline capture local slot out of bounds: {}",
+                                            slot
+                                        ),
+                                        None,
+                                    )
+                                })?;
+
+                        captures.push(
+                            Rc::new(
+                                RefCell::new(
+                                    value
+                                )
+                            )
+                        );
+                    }
+                }
+
+                UpvalueSpec::Parent(
+                    slot
+                ) => {
+                    let cell =
+                        frame
+                            .closure
+                            .upvalues
+                            .get(
+                                *slot as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    format!(
+                                        "pipeline parent upvalue slot out of bounds: {}",
+                                        slot
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    captures.push(
+                        cell
+                    );
+                }
+            }
+        }
+
+        Ok(captures)
     }
 
     fn bind_arguments(
