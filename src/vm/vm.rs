@@ -48,6 +48,7 @@ use super::{
     IntPipelineExpr,
     IntPipelinePredicate,
     IntPipelineStage,
+    LocalBinaryOp,
 };
 
 use std::{
@@ -533,6 +534,160 @@ impl Vm {
 
                     frame.locals[slot] =
                         Value::Unit;
+                }
+
+                OpCode::CompoundAssignLocal => {
+                    let site_index =
+                        operand as usize;
+
+                    let site =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .compound_assign_locals
+                            .get(site_index)
+                            .copied()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "compound assignment site out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let (
+                        lhs,
+                        rhs,
+                    ) = {
+                        let frame =
+                            self.current_frame();
+
+                        let lhs =
+                            frame
+                                .locals
+                                .get(
+                                    site.target_slot
+                                        as usize
+                                )
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "compound assignment target slot out of bounds",
+                                        None,
+                                    )
+                                })?;
+
+                        let rhs =
+                            frame
+                                .locals
+                                .get(
+                                    site.value_slot
+                                        as usize
+                                )
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "compound assignment value slot out of bounds",
+                                        None,
+                                    )
+                                })?;
+
+                        (
+                            lhs,
+                            rhs,
+                        )
+                    };
+
+                    let result =
+                        match site.op {
+                            LocalBinaryOp::Add =>
+                                apply_binop(
+                                    BinOp::Add,
+                                    lhs,
+                                    rhs,
+                                ),
+
+                            LocalBinaryOp::Sub =>
+                                apply_binop(
+                                    BinOp::Sub,
+                                    lhs,
+                                    rhs,
+                                ),
+
+                            LocalBinaryOp::Mul =>
+                                apply_binop(
+                                    BinOp::Mul,
+                                    lhs,
+                                    rhs,
+                                ),
+
+                            LocalBinaryOp::Div =>
+                                apply_binop(
+                                    BinOp::Div,
+                                    lhs,
+                                    rhs,
+                                ),
+
+                            LocalBinaryOp::Mod =>
+                                apply_binop(
+                                    BinOp::Mod,
+                                    lhs,
+                                    rhs,
+                                ),
+
+                            LocalBinaryOp::Pow =>
+                                apply_binop(
+                                    BinOp::Pow,
+                                    lhs,
+                                    rhs,
+                                ),
+                        }
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                    let frame =
+                        self.current_frame_mut();
+
+                    let slot =
+                        site.target_slot as usize;
+
+                    if frame.locals.len()
+                        <= slot
+                    {
+                        frame.locals.resize(
+                            slot + 1,
+                            Value::Unit,
+                        );
+                    }
+
+                    if frame.cells.len()
+                        <= slot
+                    {
+                        frame.cells.resize(
+                            slot + 1,
+                            None,
+                        );
+                    }
+
+                    frame.locals[slot] =
+                        result.clone();
+
+                    /*
+                    * Assignment expressions evaluate to their new value.
+                    */
+                    self.push(
+                        result
+                    );
                 }
 
                 OpCode::LoadUpvalue => {

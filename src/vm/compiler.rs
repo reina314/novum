@@ -31,6 +31,7 @@ use super::{
     Chunk,
     RangeLoop,
     OpCode,
+    LocalBinaryOp,
     PipelineExpr,
     PipelineStage,
     PipelineSource,
@@ -39,6 +40,7 @@ use super::{
     IntPipelineExpr,
     IntPipelinePredicate,
     IntPipelineStage,
+    CompoundAssignLocalSite,
 };
 
 use std::{
@@ -2522,6 +2524,63 @@ impl Compiler {
                 op,
                 value,
             } => {
+                if let ExprKind::Ident(
+                    name
+                ) = &target.kind
+                {
+                    if let Some(
+                        target_slot
+                    ) =
+                        self.resolve_local(name)
+                    {
+                        let value_slot =
+                            match &value.kind {
+                                ExprKind::Ident(
+                                    value_name
+                                ) =>
+                                    self.resolve_local(
+                                        value_name
+                                    ),
+
+                                _ =>
+                                    None,
+                            };
+
+                        if let Some(
+                            value_slot
+                        ) = value_slot
+                        {
+                            if let Some(
+                                local_op
+                            ) =
+                                LocalBinaryOp::from_binop(
+                                    *op
+                                )
+                            {
+                                let site =
+                                    self.chunk
+                                        .add_compound_assign_local(
+                                            CompoundAssignLocalSite {
+                                                target_slot,
+                                                value_slot,
+                                                op: local_op,
+                                            }
+                                        );
+
+                                self.chunk.emit_operand(
+                                    OpCode::CompoundAssignLocal,
+                                    site,
+                                );
+
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
+                /*
+                * Generic fallback.
+                */
                 let lvalue =
                     self.compile_lvalue(
                         target

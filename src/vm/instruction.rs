@@ -1,3 +1,5 @@
+use crate::syntax::BinOp;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Instruction {
     pub opcode: OpCode,
@@ -40,6 +42,7 @@ pub enum OpCode {
     LoadLocal,
     StoreLocal,
     ResetLocal,
+    CompoundAssignLocal,
 
     LoadUpvalue,
     StoreUpvalue,
@@ -105,4 +108,44 @@ pub enum OpCode {
     Return,
 
     Halt,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LocalBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+}
+
+impl LocalBinaryOp {
+    #[inline]
+    pub fn from_binop(
+        op: BinOp,
+    ) -> Option<Self> {
+        match op {
+            BinOp::Add =>
+                Some(Self::Add),
+
+            BinOp::Sub =>
+                Some(Self::Sub),
+
+            BinOp::Mul =>
+                Some(Self::Mul),
+
+            BinOp::Div =>
+                Some(Self::Div),
+
+            BinOp::Mod =>
+                Some(Self::Mod),
+
+            BinOp::Pow =>
+                Some(Self::Pow),
+
+            _ =>
+                None,
+        }
+    }
 }
