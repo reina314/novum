@@ -28,9 +28,7 @@ pub use compiler::{
 
 pub use instruction::{
     Instruction,
-    OpCode,
-    LocalBinaryOp,
-    
+    OpCode,    
 };
 
 pub use vm::{
