@@ -2133,6 +2133,144 @@ impl Vm {
         )
     }
 
+    fn call_closure_sync1(
+        &mut self,
+        closure: ClosureRef,
+        arg: Value,
+    ) -> Result<Value> {
+        let expected =
+            closure.function.arity as usize;
+
+        if expected != 1 {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "function expects {} arguments, got 1",
+                        expected
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let caller_depth =
+            self.frames.len();
+
+        let local_count =
+            closure
+                .function
+                .chunk
+                .local_count;
+
+        let mut locals =
+            Vec::with_capacity(
+                local_count
+            );
+
+        locals.push(
+            arg
+        );
+
+        if local_count > 1 {
+            locals.resize(
+                local_count,
+                Value::Unit,
+            );
+        }
+
+        let cells =
+            vec![
+                None;
+                local_count
+            ];
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals,
+                cells,
+            }
+        );
+
+        self.execute_until_depth(
+            caller_depth
+        )
+    }
+
+    /// For `reduce()` and `fold()`
+    fn call_closure_sync2(
+        &mut self,
+        closure: ClosureRef,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<Value> {
+        let expected =
+            closure.function.arity as usize;
+
+        if expected != 2 {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "function expects {} arguments, got 2",
+                        expected
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let caller_depth =
+            self.frames.len();
+
+        let local_count =
+            closure
+                .function
+                .chunk
+                .local_count;
+
+        let mut locals =
+            Vec::with_capacity(
+                local_count
+            );
+
+        locals.push(
+            arg0
+        );
+
+        locals.push(
+            arg1
+        );
+
+        if local_count > 2 {
+            locals.resize(
+                local_count,
+                Value::Unit,
+            );
+        }
+
+        let cells =
+            vec![
+                None;
+                local_count
+            ];
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals,
+                cells,
+            }
+        );
+
+        self.execute_until_depth(
+            caller_depth
+        )
+    }
+
     fn call_closure_sync_named(
         &mut self,
         closure: ClosureRef,
@@ -2637,9 +2775,9 @@ impl Vm {
 
                     IterResult::Item(value) => {
                         let result =
-                            self.call_closure_sync(
+                            self.call_closure_sync1(
                                 function,
-                                vec![value],
+                                value,
                             )?;
 
                         Ok(
@@ -2667,9 +2805,9 @@ impl Vm {
 
                         IterResult::Item(value) => {
                             let result =
-                                self.call_closure_sync(
+                                self.call_closure_sync1(
                                     predicate.clone(),
-                                    vec![value.clone()],
+                                    value.clone(),
                                 )?;
 
                             match result {
@@ -2917,12 +3055,10 @@ impl Vm {
             )? {
                 IterResult::Item(value) => {
                     accumulator =
-                        self.call_closure_sync(
+                        self.call_closure_sync2(
                             function.clone(),
-                            vec![
-                                accumulator,
-                                value,
-                            ],
+                            accumulator,
+                            value,
                         )?;
                 }
 
@@ -2946,12 +3082,10 @@ impl Vm {
             )? {
                 IterResult::Item(value) => {
                     accumulator =
-                        self.call_closure_sync(
+                        self.call_closure_sync2(
                             function.clone(),
-                            vec![
-                                accumulator,
-                                value,
-                            ],
+                            accumulator,
+                            value,
                         )?;
                 }
 
@@ -2974,9 +3108,9 @@ impl Vm {
             )? {
                 IterResult::Item(value) => {
                     let result =
-                        self.call_closure_sync(
+                        self.call_closure_sync1(
                             predicate.clone(),
-                            vec![value],
+                            value,
                         )?;
 
                     match result {
@@ -3020,9 +3154,9 @@ impl Vm {
             )? {
                 IterResult::Item(value) => {
                     let result =
-                        self.call_closure_sync(
+                        self.call_closure_sync1(
                             predicate.clone(),
-                            vec![value],
+                            value,
                         )?;
 
                     match result {
