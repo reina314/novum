@@ -214,29 +214,58 @@ impl IteratorObj {
     pub fn next(
         iterator: &IteratorRef,
     ) -> Result<IterResult, String> {
-        let variant =
-            iterator.borrow().clone();
+        let primitive =
+            {
+                let borrowed =
+                    iterator.borrow();
 
-        match variant {
+                matches!(
+                    &*borrowed,
+                    Self::List { .. }
+                    | Self::Str { .. }
+                    | Self::Vector { .. }
+                    | Self::Range { .. }
+                )
+            };
+
+        if primitive {
+            Self::next_primitive(
+                iterator
+            )
+        } else {
+            Self::next_composite(
+                iterator
+            )
+        }
+    }
+
+    fn next_primitive(
+        iterator: &IteratorRef,
+    ) -> Result<IterResult, String> {
+        let mut iterator =
+            iterator.borrow_mut();
+
+        match &mut *iterator {
+            /*
+            * ----------------------------------------------------
+            * List
+            * ----------------------------------------------------
+            */
             Self::List {
                 data,
                 index,
             } => {
                 let value =
-                    data.get(index);
+                    data.get(*index);
 
                 match value {
                     Some(value) => {
-                        if let Self::List {
-                            index,
-                            ..
-                        } = &mut *iterator.borrow_mut()
-                        {
-                            *index += 1;
-                        }
+                        *index += 1;
 
                         Ok(
-                            IterResult::Item(value)
+                            IterResult::Item(
+                                value
+                            )
                         )
                     }
 
@@ -247,12 +276,17 @@ impl IteratorObj {
                 }
             }
 
+            /*
+            * ----------------------------------------------------
+            * String
+            * ----------------------------------------------------
+            */
             Self::Str {
                 data,
                 byte_index,
             } => {
                 let slice =
-                    &data[byte_index..];
+                    &data[*byte_index..];
 
                 let Some(ch) =
                     slice.chars().next()
@@ -262,14 +296,8 @@ impl IteratorObj {
                     );
                 };
 
-                if let Self::Str {
-                    byte_index,
-                    ..
-                } = &mut *iterator.borrow_mut()
-                {
-                    *byte_index +=
-                        ch.len_utf8();
-                }
+                *byte_index +=
+                    ch.len_utf8();
 
                 Ok(
                     IterResult::Item(
@@ -282,54 +310,29 @@ impl IteratorObj {
                 )
             }
 
-            Self::Range {
-                current,
-                end,
-            } => {
-                if current >= end {
-                    return Ok(
-                        IterResult::End
-                    );
-                }
-
-                if let Self::Range {
-                    current,
-                    ..
-                } = &mut *iterator.borrow_mut()
-                {
-                    *current += 1;
-                }
-
-                Ok(
-                    IterResult::Item(
-                        Value::Int(current)
-                    )
-                )
-            }
-
+            /*
+            * ----------------------------------------------------
+            * Vector
+            * ----------------------------------------------------
+            */
             Self::Vector {
                 data,
                 index,
             } => {
                 let value =
                     data.borrow()
-                        .get(index)
-                        .map(|value| {
-                            Value::Float(value)
-                        });
+                        .get(*index);
 
                 match value {
                     Some(value) => {
-                        if let Self::Vector {
-                            index,
-                            ..
-                        } = &mut *iterator.borrow_mut()
-                        {
-                            *index += 1;
-                        }
+                        *index += 1;
 
                         Ok(
-                            IterResult::Item(value)
+                            IterResult::Item(
+                                Value::Float(
+                                    value
+                                )
+                            )
                         )
                     }
 
@@ -340,45 +343,211 @@ impl IteratorObj {
                 }
             }
 
-            Self::Map { .. } |
-            Self::Filter { .. } => {
-                Err(
-                    "Map/Filter iterators must be evaluated by the VM"
-                        .into()
+            /*
+            * ----------------------------------------------------
+            * Range
+            * ----------------------------------------------------
+            *
+            * This is the hot path for:
+            *
+            *     for i in 0..N { ... }
+            */
+            Self::Range {
+                current,
+                end,
+            } => {
+                if *current >= *end {
+                    return Ok(
+                        IterResult::End
+                    );
+                }
+
+                let value =
+                    *current;
+
+                *current += 1;
+
+                Ok(
+                    IterResult::Item(
+                        Value::Int(
+                            value
+                        )
+                    )
                 )
             }
 
-            Self::Enumerate {
+            _ => {
+                unreachable!(
+                    "next_primitive called for composite iterator"
+                )
+            }
+        }
+    }
+
+    fn next_composite(
+        iterator: &IteratorRef,
+    ) -> Result<IterResult, String> {
+        enum Composite {
+            Map {
+                function: ClosureRef,
+            },
+
+            Filter {
+                predicate: ClosureRef,
+            },
+
+            Enumerate {
+                source: IteratorRef,
+                index: usize,
+            },
+
+            Zip {
+                left: IteratorRef,
+                right: IteratorRef,
+            },
+
+            Take {
+                source: IteratorRef,
+                remaining: usize,
+            },
+
+            Skip {
+                source: IteratorRef,
+                remaining: usize,
+            },
+        }
+
+        let composite =
+            {
+                let borrowed =
+                    iterator.borrow();
+
+                match &*borrowed {
+                    Self::Map {
+                        function,
+                        ..
+                    } =>
+                        Composite::Map {
+                            function:
+                                function.clone(),
+                        },
+
+                    Self::Filter {
+                        predicate,
+                        ..
+                    } =>
+                        Composite::Filter {
+                            predicate:
+                                predicate.clone(),
+                        },
+
+                    Self::Enumerate {
+                        source,
+                        index,
+                    } =>
+                        Composite::Enumerate {
+                            source:
+                                source.clone(),
+                            index:
+                                *index,
+                        },
+
+                    Self::Zip {
+                        left,
+                        right,
+                    } =>
+                        Composite::Zip {
+                            left:
+                                left.clone(),
+                            right:
+                                right.clone(),
+                        },
+
+                    Self::Take {
+                        source,
+                        remaining,
+                    } =>
+                        Composite::Take {
+                            source:
+                                source.clone(),
+                            remaining:
+                                *remaining,
+                        },
+
+                    Self::Skip {
+                        source,
+                        remaining,
+                    } =>
+                        Composite::Skip {
+                            source:
+                                source.clone(),
+                            remaining:
+                                *remaining,
+                        },
+
+                    Self::List { .. }
+                    | Self::Str { .. }
+                    | Self::Vector { .. }
+                    | Self::Range { .. } =>
+                        unreachable!(
+                            "next_composite called for primitive iterator"
+                        ),
+                }
+            };
+
+        match composite {
+            /*
+            * Map / Filter remain VM-managed.
+            */
+            Composite::Map { .. }
+            |
+            Composite::Filter { .. } =>
+                Err(
+                    "Map/Filter iterators must be evaluated by the VM"
+                        .into()
+                ),
+
+            /*
+            * Enumerate
+            */
+            Composite::Enumerate {
                 source,
-                index: _,
+                index,
             } => {
-                match Self::next(&source)? {
-                    IterResult::Item(value) => {
-                        if let Self::Enumerate {
-                            index,
-                            ..
-                        } = &mut *iterator.borrow_mut()
+                match Self::next(
+                    &source
+                )? {
+                    IterResult::Item(
+                        value
+                    ) => {
                         {
-                            let current =
-                                *index;
+                            let mut state =
+                                iterator.borrow_mut();
+
+                            let Self::Enumerate {
+                                index,
+                                ..
+                            } =
+                                &mut *state
+                            else {
+                                unreachable!();
+                            };
 
                             *index += 1;
+                        }
 
-                            Ok(
-                                IterResult::Item(
-                                    Value::Tuple(
-                                        Rc::new(vec![
-                                            Value::Int(
-                                                current as i64
-                                            ),
-                                            value,
-                                        ])
-                                    )
+                        Ok(
+                            IterResult::Item(
+                                Value::Tuple(
+                                    Rc::new(vec![
+                                        Value::Int(
+                                            index as i64
+                                        ),
+                                        value,
+                                    ])
                                 )
                             )
-                        } else {
-                            unreachable!()
-                        }
+                        )
                     }
 
                     IterResult::End =>
@@ -388,21 +557,31 @@ impl IteratorObj {
                 }
             }
 
-            Self::Zip {
+            /*
+            * Zip
+            */
+            Composite::Zip {
                 left,
                 right,
             } => {
                 let lhs =
-                    Self::next(&left)?;
+                    Self::next(
+                        &left
+                    )?;
 
                 let rhs =
-                    Self::next(&right)?;
+                    Self::next(
+                        &right
+                    )?;
 
-                match (lhs, rhs) {
+                match (
+                    lhs,
+                    rhs,
+                ) {
                     (
                         IterResult::Item(lhs),
                         IterResult::Item(rhs),
-                    ) => {
+                    ) =>
                         Ok(
                             IterResult::Item(
                                 Value::Tuple(
@@ -412,8 +591,7 @@ impl IteratorObj {
                                     ])
                                 )
                             )
-                        )
-                    }
+                        ),
 
                     _ =>
                         Ok(
@@ -422,7 +600,10 @@ impl IteratorObj {
                 }
             }
 
-            Self::Take {
+            /*
+            * Take
+            */
+            Composite::Take {
                 source,
                 remaining,
             } => {
@@ -433,25 +614,36 @@ impl IteratorObj {
                 }
 
                 let result =
-                    Self::next(&source)?;
+                    Self::next(
+                        &source
+                    )?;
 
                 if matches!(
                     result,
                     IterResult::Item(_)
                 ) {
-                    if let Self::Take {
+                    let mut state =
+                        iterator.borrow_mut();
+
+                    let Self::Take {
                         remaining,
                         ..
-                    } = &mut *iterator.borrow_mut()
-                    {
-                        *remaining -= 1;
-                    }
+                    } =
+                        &mut *state
+                    else {
+                        unreachable!();
+                    };
+
+                    *remaining -= 1;
                 }
 
                 Ok(result)
             }
 
-            Self::Skip {
+            /*
+            * Skip
+            */
+            Composite::Skip {
                 source,
                 remaining,
             } => {
@@ -473,15 +665,26 @@ impl IteratorObj {
                     }
                 }
 
-                if let Self::Skip {
-                    remaining: slot,
-                    ..
-                } = &mut *iterator.borrow_mut()
                 {
-                    *slot = 0;
+                    let mut state =
+                        iterator.borrow_mut();
+
+                    let Self::Skip {
+                        remaining,
+                        ..
+                    } =
+                        &mut *state
+                    else {
+                        unreachable!();
+                    };
+
+                    *remaining =
+                        0;
                 }
 
-                Self::next(&source)
+                Self::next(
+                    &source
+                )
             }
         }
     }
