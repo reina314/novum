@@ -13,6 +13,7 @@ use crate::{
         ListItem,
         IndexExpr,
         CallArg,
+        Visibility,
     },
     runtime::{
         Value,
@@ -1867,6 +1868,13 @@ impl Compiler {
         }
     }
 
+    fn is_module_scope(&self) -> bool {
+        self.scope
+            .borrow()
+            .parent
+            .is_none()
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
@@ -2134,10 +2142,10 @@ impl Compiler {
             }
 
             ExprKind::StructDecl {
+                visibility,
                 name,
                 fields,
                 methods,
-                ..
             } => {
                 if !methods.is_empty() {
                     return Err(
@@ -2197,6 +2205,28 @@ impl Compiler {
                     slot as u32,
                 );
 
+                if *visibility ==
+                    Visibility::Public
+                {
+                    let name_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        name_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Export
+                    );
+                }
+
                 self.chunk.emit(
                     OpCode::Pop
                 );
@@ -2207,10 +2237,10 @@ impl Compiler {
             }
 
             ExprKind::ClassDecl {
+                visibility,
                 name,
                 fields,
                 methods,
-                ..
             } => {
                 let class_name_constant =
                     self.chunk.add_constant(
@@ -2369,11 +2399,32 @@ impl Compiler {
                     class_slot as u32,
                 );
 
+                if *visibility ==
+                    Visibility::Public
+                {
+                    let name_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    name.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        name_constant,
+                    );
+
+                    self.chunk.emit(
+                        OpCode::Export
+                    );
+                }
+
                 self.chunk.emit(
                     OpCode::Pop
                 );
 
-                // A declaration evaluates to Unit.
                 self.chunk.emit(
                     OpCode::Unit
                 );
@@ -2564,9 +2615,9 @@ impl Compiler {
             }
 
             ExprKind::Let {
+                visibility,
                 pattern,
                 value,
-                ..
             } => {
                 self.compile_expr(
                     value
@@ -2617,6 +2668,70 @@ impl Compiler {
                     success_jump,
                     end as u32,
                 );
+
+                match visibility {
+                    Visibility::Private => {}
+
+                    Visibility::Public => {
+                        if !self.is_module_scope() {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Name,
+                                    "pub declarations are only allowed at module scope",
+                                    None,
+                                )
+                            );
+                        }
+                        
+                        let Pattern::Ident(name) =
+                            pattern
+                        else {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pub let currently requires an identifier pattern",
+                                    None,
+                                )
+                            );
+                        };
+
+                        let slot =
+                            self.resolve_local(name)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Name,
+                                        format!(
+                                            "exported binding '{}' was not declared",
+                                            name
+                                        ),
+                                        None,
+                                    )
+                                })?;
+
+                        self.chunk.emit_operand(
+                            OpCode::LoadLocal,
+                            slot as u32,
+                        );
+
+                        let name_constant =
+                            self.chunk.add_constant(
+                                Value::Str(
+                                    Rc::new(
+                                        name.clone()
+                                    )
+                                )
+                            );
+
+                        self.chunk.emit_operand(
+                            OpCode::Constant,
+                            name_constant,
+                        );
+
+                        self.chunk.emit(
+                            OpCode::Export
+                        );
+                    }
+                }
 
                 self.chunk.emit(
                     OpCode::Unit

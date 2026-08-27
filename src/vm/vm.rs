@@ -27,6 +27,8 @@ use crate::{
         ClassRef,
         ObjectRef,
         FieldDefinition,
+        Module,
+        ModuleRef,
         apply_binop, 
     },
     syntax::BinOp,
@@ -120,6 +122,24 @@ impl Vm {
         &mut self,
         chunk: Rc<Chunk>,
     ) -> Result<Value> {
+        let module =
+            Rc::new(
+                RefCell::new(
+                    Module::new("<main>")
+                )
+            );
+
+        self.run_with_module(
+            chunk,
+            module,
+        )
+    }
+
+    pub fn run_with_module(
+        &mut self,
+        chunk: Rc<Chunk>,
+        module: ModuleRef,
+    ) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
 
@@ -148,6 +168,7 @@ impl Vm {
                 locals: Vec::new(),
                 cells: None,
                 range_cursors: Vec::new(),
+                module: Some(module),
             }
         );
 
@@ -216,6 +237,13 @@ impl Vm {
             );
         }
 
+        let module =
+            Rc::new(
+                RefCell::new(
+                    Module::new("<repl>")
+                )
+            );
+
         self.frames.push(
             CallFrame {
                 closure,
@@ -223,6 +251,7 @@ impl Vm {
                 locals,
                 cells: Some(cells),
                 range_cursors: Vec::new(),
+                module: Some(module),
             }
         );
 
@@ -1532,6 +1561,28 @@ impl Vm {
                             self.push(value);
                         }
 
+                        Value::Module(module) => {
+                            let value =
+                                module
+                                    .borrow()
+                                    .get_field(
+                                        field.as_str()
+                                    )
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Name,
+                                            format!(
+                                                "{} has no field '{}'",
+                                                module.borrow().name(),
+                                                field,
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(value);
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -2166,6 +2217,54 @@ impl Vm {
                             None,
                         )
                     );
+                }
+
+                OpCode::Export => {
+                    let name =
+                        self.pop()?;
+
+                    let Value::Str(name) =
+                        name
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "export name must be Str",
+                                None,
+                            )
+                        );
+                    };
+
+                    let value =
+                        self.stack
+                            .last()
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM stack underflow while exporting",
+                                    None,
+                                )
+                            })?;
+
+                    let module =
+                        self.current_frame()
+                            .module
+                            .clone()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "no active module",
+                                    None,
+                                )
+                            })?;
+
+                    module
+                        .borrow_mut()
+                        .set_exported(
+                            name.as_str(),
+                            value,
+                        );
                 }
 
                 OpCode::Return => {
@@ -3048,6 +3147,7 @@ impl Vm {
                         local_count
                     ].into(),
                 range_cursors: Vec::new(),
+                module: None,
             }
         );
 
@@ -3128,6 +3228,7 @@ impl Vm {
                 locals,
                 cells: Some(cells),
                 range_cursors: Vec::new(),
+                module: None,
             }
         );
 
@@ -3201,6 +3302,7 @@ impl Vm {
                 locals,
                 cells: Some(cells),
                 range_cursors: Vec::new(),
+                module: None,
             }
         );
 
@@ -3250,6 +3352,7 @@ impl Vm {
                         local_count
                     ].into(),
                 range_cursors: Vec::new(),
+                module: None,
             }
         );
 

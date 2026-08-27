@@ -104,5 +104,7 @@ pub enum OpCode {
     Call,
     Return,
 
+    Export,
+
     Halt,
 }

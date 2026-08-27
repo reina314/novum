@@ -3,7 +3,10 @@ use std::{
     rc::Rc,
 };
 
-use super::Value;
+use super::{
+    Value,
+    ModuleRef,
+};
 use crate::vm::{
     Chunk,
 };
@@ -39,6 +42,7 @@ pub struct CallFrame {
     pub locals: Vec<Value>,
     pub cells: Option<Vec<Option<CellRef>>>,
     pub range_cursors: Vec<Option<RangeCursor>>,
+    pub module: Option<ModuleRef>,
 }
 
 #[derive(Debug, Clone, Copy)]
