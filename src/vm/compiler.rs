@@ -3176,44 +3176,34 @@ impl Compiler {
             source,
             steps,
         )) =
-            self.extract_pipeline(
-                object
-            )?
+            self.extract_pipeline(object)?
         else {
             return Ok(false);
         };
 
         let mut plan =
             PipelinePlan {
-                steps: Vec::with_capacity(
-                    steps.len()
-                ),
+                steps:
+                    Vec::with_capacity(
+                        steps.len()
+                    ),
             };
 
-        /*
-        * Fused execution currently supports
-        * lambda-based map/filter stages only.
-        *
-        * Non-lambda stages fall back to the normal
-        * iterator implementation.
-        */
         for step in steps {
             match step {
-                PipelineStepAst::Map(
-                    expr
-                ) => {
+                PipelineStepAst::Map(expr) => {
                     let ExprKind::Lambda(
                         params,
                         body,
-                    ) = &expr.kind
+                    ) = expr.kind
                     else {
                         return Ok(false);
                     };
 
                     let function =
                         self.compile_lambda_proto(
-                            params,
-                            body,
+                            &params,
+                            &body,
                         )?;
 
                     let constant =
@@ -3231,21 +3221,19 @@ impl Compiler {
                     );
                 }
 
-                PipelineStepAst::Filter(
-                    expr
-                ) => {
+                PipelineStepAst::Filter(expr) => {
                     let ExprKind::Lambda(
                         params,
                         body,
-                    ) = &expr.kind
+                    ) = expr.kind
                     else {
                         return Ok(false);
                     };
 
                     let function =
                         self.compile_lambda_proto(
-                            params,
-                            body,
+                            &params,
+                            &body,
                         )?;
 
                     let constant =
@@ -3263,9 +3251,7 @@ impl Compiler {
                     );
                 }
 
-                PipelineStepAst::Skip(
-                    count
-                ) => {
+                PipelineStepAst::Skip(count) => {
                     plan.steps.push(
                         PipelineStep::Skip {
                             count,
@@ -3273,9 +3259,7 @@ impl Compiler {
                     );
                 }
 
-                PipelineStepAst::Take(
-                    count
-                ) => {
+                PipelineStepAst::Take(count) => {
                     plan.steps.push(
                         PipelineStep::Take {
                             count,
@@ -3285,9 +3269,20 @@ impl Compiler {
             }
         }
 
+        /*
+        * Compile the source expression first.
+        *
+        * The source may be a Range, List, String, Vector,
+        * or an already-created Iterator. `IteratorFrom`
+        * normalizes all of them into IteratorRef.
+        */
         self.compile_expr(
             &source
         )?;
+
+        self.chunk.emit(
+            OpCode::IteratorFrom
+        );
 
         let pipeline =
             self.chunk.add_pipeline(
