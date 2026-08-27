@@ -42,8 +42,6 @@ pub enum OpCode {
     IteratorFrom,
     IteratorNext,
 
-    FusedCollect,
-
     Add,
     Sub,
     Mul,
@@ -63,6 +61,7 @@ pub enum OpCode {
     Not,
 
     Jump,
+    JumpIfTrue,
     JumpIfFalse,
 
     InvokeMethod,

@@ -39,7 +39,6 @@ use super::{
     Chunk,
     OpCode,
     Instruction,
-    PipelineStep,
 };
 
 use std::{
@@ -47,19 +46,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
-
-#[derive(Clone, Copy)]
-enum PipelineRuntimeState {
-    None,
-
-    Skip {
-        remaining: usize,
-    },
-
-    Take {
-        remaining: usize,
-    },
-}
 
 pub struct Vm {
     stack: Vec<Value>,
@@ -393,6 +379,16 @@ impl Vm {
                 OpCode::Jump => {
                     self.current_frame_mut().ip =
                         operand as usize;
+                }
+
+                OpCode::JumpIfTrue => {
+                    let condition =
+                        self.pop_bool()?;
+
+                    if condition {
+                        self.current_frame_mut().ip =
+                            operand as usize;
+                    }
                 }
 
                 OpCode::JumpIfFalse => {
@@ -1746,12 +1742,6 @@ impl Vm {
                     }
                 }
 
-                OpCode::FusedCollect => {
-                    self.execute_fused_collect(
-                        operand as usize
-                    )?;
-                }
-
                 OpCode::MatchTuple => {
                     let value =
                         self.pop()?;
@@ -1943,289 +1933,6 @@ impl Vm {
                 }
             }
         }
-    }
-
-    fn execute_fused_collect(
-        &mut self,
-        pipeline_index: usize,
-    ) -> Result<()> {
-        let plan =
-            self.current_frame()
-                .closure
-                .function
-                .chunk
-                .pipelines
-                .get(pipeline_index)
-                .cloned()
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "pipeline index out of bounds",
-                        None,
-                    )
-                })?;
-
-        /*
-        * The source iterator is the only value
-        * placed on the data stack by the compiler.
-        */
-        let source =
-            self.pop()?;
-
-        let Value::Iterator(
-            source
-        ) = source
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Type,
-                    format!(
-                        "fused collect expects Iterator, got {}",
-                        source.type_name()
-                    ),
-                    None,
-                )
-            );
-        };
-
-        /*
-        * Create each lambda closure once per
-        * pipeline execution rather than once per item.
-        */
-        let mut closures =
-            Vec::with_capacity(
-                plan.steps.len()
-            );
-
-        let mut states =
-            Vec::with_capacity(
-                plan.steps.len()
-            );
-
-        for step in
-            &plan.steps
-        {
-            match step {
-                PipelineStep::Map {
-                    function_constant,
-                }
-                |
-                PipelineStep::Filter {
-                    function_constant,
-                } => {
-                    let value =
-                        self.current_frame()
-                            .closure
-                            .function
-                            .chunk
-                            .constants
-                            .get(
-                                *function_constant
-                                    as usize
-                            )
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "fused closure constant out of bounds",
-                                    None,
-                                )
-                            })?;
-
-                    let Value::FunctionProto(
-                        function
-                    ) = value
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "fused pipeline function constant must be FunctionProto",
-                                None,
-                            )
-                        );
-                    };
-
-                    let closure =
-                        self.create_closure(
-                            function
-                        )?;
-
-                    closures.push(
-                        Some(closure)
-                    );
-
-                    states.push(
-                        PipelineRuntimeState::None
-                    );
-                }
-
-                PipelineStep::Skip {
-                    count
-                } => {
-                    closures.push(
-                        None
-                    );
-
-                    states.push(
-                        PipelineRuntimeState::Skip {
-                            remaining:
-                                *count,
-                        }
-                    );
-                }
-
-                PipelineStep::Take {
-                    count
-                } => {
-                    closures.push(
-                        None
-                    );
-
-                    states.push(
-                        PipelineRuntimeState::Take {
-                            remaining:
-                                *count,
-                        }
-                    );
-                }
-            }
-        }
-
-        let result =
-            Rc::new(
-                List::with_capacity(
-                    1024
-                )
-            );
-
-        'items: loop {
-            let item =
-                self.iterator_next(
-                    source.clone()
-                )?;
-
-            let mut value =
-                match item {
-                    IterResult::End =>
-                        break,
-
-                    IterResult::Item(value) =>
-                        value,
-                };
-
-            for (
-                index,
-                step,
-            ) in plan.steps.iter().enumerate()
-            {
-                match step {
-                    PipelineStep::Map { .. } => {
-                        let closure =
-                            closures[index]
-                                .as_ref()
-                                .expect(
-                                    "map closure missing"
-                                )
-                                .clone();
-
-                        value =
-                            self.call_closure_sync1(
-                                closure,
-                                value,
-                            )?;
-                    }
-
-                    PipelineStep::Filter { .. } => {
-                        let closure =
-                            closures[index]
-                                .as_ref()
-                                .expect(
-                                    "filter closure missing"
-                                )
-                                .clone();
-
-                        let predicate =
-                            self.call_closure_sync1(
-                                closure,
-                                value.clone(),
-                            )?;
-
-                        match predicate {
-                            Value::Bool(true) => {}
-
-                            Value::Bool(false) => {
-                                continue 'items;
-                            }
-
-                            other => {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Type,
-                                        format!(
-                                            "filter predicate must return Bool, got {}",
-                                            other.type_name()
-                                        ),
-                                        None,
-                                    )
-                                );
-                            }
-                        }
-                    }
-
-                    PipelineStep::Skip {
-                        ..
-                    } => {
-                        let state =
-                            &mut states[index];
-
-                        let PipelineRuntimeState::Skip {
-                            remaining
-                        } = state
-                        else {
-                            unreachable!();
-                        };
-
-                        if *remaining > 0 {
-                            *remaining -= 1;
-
-                            continue 'items;
-                        }
-                    }
-
-                    PipelineStep::Take {
-                        ..
-                    } => {
-                        let state =
-                            &mut states[index];
-
-                        let PipelineRuntimeState::Take {
-                            remaining
-                        } = state
-                        else {
-                            unreachable!();
-                        };
-
-                        if *remaining == 0 {
-                            break 'items;
-                        }
-
-                        *remaining -= 1;
-                    }
-                }
-            }
-
-            result.push(
-                value
-            );
-        }
-
-        self.push(
-            Value::List(
-                result
-            )
-        );
-
-        Ok(())
     }
 
     fn bind_arguments(

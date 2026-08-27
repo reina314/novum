@@ -622,6 +622,43 @@ fn vm_combined_pipeline() {
 }
 
 #[test]
+fn vm_fused_closure_capture() {
+    assert_list(
+        r#"
+        let offset = 10
+
+        (1..4)
+            .map(|x| x + offset)
+            .collect()
+        "#,
+        &[
+            11,
+            12,
+            13,
+        ],
+    );
+}
+
+#[test]
+fn vm_pipeline_falls_back_for_nested_closure() {
+    assert_list(
+        r#"
+        (1..4)
+            .map(|x| {
+                let f = |y| y + x
+                f(10)
+            })
+            .collect()
+        "#,
+        &[
+            11,
+            12,
+            13,
+        ],
+    );
+}
+
+#[test]
 fn vm_fused_take_before_filter() {
     assert_list(
         r#"
