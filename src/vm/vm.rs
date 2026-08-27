@@ -40,11 +40,14 @@ use super::{
     OpCode,
     Instruction,
     PipelineState,
-    PipelineSource,
     PipelineStage,
     PipelineExpr,
+    PipelinePlan,
+    PipelineSource,
+    PipelineProgram,
     IntPipelineExpr,
     IntPipelinePredicate,
+    IntPipelineStage,
 };
 
 use std::{
@@ -2195,52 +2198,16 @@ impl Vm {
                     )
                 })?;
 
-        /*
-        * Materialize captures once per stage.
-        *
-        * This is outside the hot item loop.
-        */
-        let mut stage_captures =
-            Vec::with_capacity(
-                pipeline.stages.len()
-            );
-
-        for stage in
-            &pipeline.stages
-        {
-            let captures =
-                match stage {
-                    PipelineStage::Map {
-                        captures,
-                        ..
-                    }
-                    |
-                    PipelineStage::Filter {
-                        captures,
-                        ..
-                    } => {
-                        self.resolve_pipeline_captures(
-                            captures
-                        )?
-                    }
-
-                    PipelineStage::Skip { .. }
-                    |
-                    PipelineStage::Take { .. } => {
-                        Vec::new()
-                    }
-                };
-
-            stage_captures.push(
-                captures
-            );
-        }
-
         let list =
             List::with_capacity(
                 pipeline
                     .capacity_upper_bound()?
             );
+
+        let stage_captures =
+            self.resolve_pipeline_plan_captures(
+                &pipeline.stages
+            )?;
 
         match pipeline.source {
             PipelineSource::Range {
@@ -2248,19 +2215,36 @@ impl Vm {
                 end,
                 inclusive,
             } => {
-                self.execute_fused_range_pipeline(
-                    start,
-                    end,
-                    inclusive,
-                    &pipeline.stages,
-                    &stage_captures,
-                    &list,
-                )?;
+                match &pipeline.plan {
+                    PipelinePlan::IntRange {
+                        stages,
+                    } => {
+                        self.execute_int_range_pipeline(
+                            &pipeline,
+                            stages,
+                            &stage_captures,
+                            &list,
+                        )?;
+                    }
+
+                    PipelinePlan::Generic => {
+                        self.execute_fused_range_pipeline(
+                            start,
+                            end,
+                            inclusive,
+                            &pipeline.stages,
+                            &stage_captures,
+                            &list,
+                        )?;
+                    }
+                }
             }
         }
 
         self.push(
-            Value::List(list)
+            Value::List(
+                list
+            )
         );
 
         Ok(())
@@ -2518,6 +2502,196 @@ impl Vm {
         Ok(())
     }
 
+    fn execute_int_range_pipeline(
+        &mut self,
+        pipeline: &PipelineProgram,
+        stages: &[IntPipelineStage],
+        stage_captures: &[Vec<CellRef>],
+        output: &List,
+    ) -> Result<()> {
+        let PipelineSource::Range {
+            start,
+            end,
+            inclusive,
+        } = pipeline.source
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "integer pipeline requires Range source",
+                    None,
+                )
+            );
+        };
+
+        if stage_captures.len() !=
+            stages.len()
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline capture metadata does not match pipeline stages",
+                    None,
+                )
+            );
+        }
+
+        let end =
+            if inclusive {
+                end.checked_add(1)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Overflow,
+                            "inclusive range endpoint overflow",
+                            None,
+                        )
+                    })?
+            } else {
+                end
+            };
+
+        if start >= end {
+            return Ok(());
+        }
+
+        /*
+        * Stateful stages are kept separately from the immutable
+        * stage description. Stage order itself is never changed.
+        */
+        let mut skip_remaining =
+            vec![0usize; stages.len()];
+
+        let mut take_remaining:
+            Vec<Option<usize>> =
+            vec![None; stages.len()];
+
+        for (
+            index,
+            stage,
+        ) in stages.iter().enumerate()
+        {
+            match stage {
+                IntPipelineStage::Skip(
+                    count
+                ) => {
+                    skip_remaining[index] =
+                        *count;
+                }
+
+                IntPipelineStage::Take(
+                    count
+                ) => {
+                    take_remaining[index] =
+                        Some(*count);
+                }
+
+                IntPipelineStage::Map(_)
+                |
+                IntPipelineStage::Filter(_) => {}
+            }
+        }
+
+        /*
+        * Fused integer range loop.
+        *
+        * `value` remains an i64 for the entire pipeline.
+        * A Value::Int is created only when an item is finally
+        * emitted into the output List.
+        */
+        for current in start..end {
+            let mut value =
+                current;
+
+            let mut accepted =
+                true;
+
+            for (
+                index,
+                stage,
+            ) in stages.iter().enumerate()
+            {
+                match stage {
+                    IntPipelineStage::Map(
+                        expr
+                    ) => {
+                        value =
+                            self.eval_int_pipeline_expr(
+                                expr,
+                                value,
+                                &stage_captures[index],
+                            )?;
+                    }
+
+                    IntPipelineStage::Filter(
+                        predicate
+                    ) => {
+                        let keep =
+                            self.eval_int_pipeline_predicate(
+                                predicate,
+                                value,
+                                &stage_captures[index],
+                            )?;
+
+                        if !keep {
+                            accepted =
+                                false;
+
+                            break;
+                        }
+                    }
+
+                    IntPipelineStage::Skip(
+                        _
+                    ) => {
+                        if skip_remaining[index] > 0 {
+                            skip_remaining[index] -= 1;
+
+                            accepted =
+                                false;
+
+                            break;
+                        }
+                    }
+
+                    IntPipelineStage::Take(
+                        _
+                    ) => {
+                        let remaining =
+                            take_remaining[index]
+                                .as_mut()
+                                .expect(
+                                    "missing Take runtime state"
+                                );
+
+                        /*
+                        * Take is exhausted: the entire lazy pipeline
+                        * is exhausted, regardless of stages following
+                        * this Take.
+                        */
+                        if *remaining == 0 {
+                            return Ok(());
+                        }
+
+                        /*
+                        * This value passed through the Take stage.
+                        */
+                        *remaining -= 1;
+                    }
+                }
+            }
+
+            if accepted {
+                output.push(
+                    Value::Int(
+                        value
+                    )
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn resolve_pipeline_captures(
         &self,
         specs: &[UpvalueSpec],
@@ -2610,6 +2784,46 @@ impl Vm {
         }
 
         Ok(captures)
+    }
+
+    fn resolve_pipeline_plan_captures(
+        &self,
+        stages: &[PipelineStage],
+    ) -> Result<Vec<Vec<CellRef>>> {
+        let mut result =
+            Vec::with_capacity(
+                stages.len()
+            );
+
+        for stage in stages {
+            match stage {
+                PipelineStage::Map {
+                    captures,
+                    ..
+                }
+                |
+                PipelineStage::Filter {
+                    captures,
+                    ..
+                } => {
+                    result.push(
+                        self.resolve_pipeline_captures(
+                            captures
+                        )?
+                    );
+                }
+
+                PipelineStage::Skip { .. }
+                |
+                PipelineStage::Take { .. } => {
+                    result.push(
+                        Vec::new()
+                    );
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     fn bind_arguments(
@@ -3538,7 +3752,9 @@ impl Vm {
             IntPipelineExpr::Capture(index) => {
                 let cell =
                     captures
-                        .get(*index as usize)
+                        .get(
+                            *index as usize
+                        )
                         .cloned()
                         .ok_or_else(|| {
                             Error::new(
@@ -3563,7 +3779,7 @@ impl Vm {
                             Error::new(
                                 ErrorKind::Type,
                                 format!(
-                                    "integer pipeline capture expected Int, got {}",
+                                    "integer pipeline capture must be Int, got {}",
                                     other.type_name()
                                 ),
                                 None,
@@ -3575,18 +3791,23 @@ impl Vm {
             IntPipelineExpr::Add(
                 left,
                 right,
-            ) =>
-                self.eval_int_pipeline_expr(
-                    left,
-                    input,
-                    captures,
-                )?
-                .checked_add(
+            ) => {
+                let lhs =
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?;
+
+                let rhs =
                     self.eval_int_pipeline_expr(
                         right,
                         input,
                         captures,
-                    )?
+                    )?;
+
+                lhs.checked_add(
+                    rhs
                 )
                 .ok_or_else(|| {
                     Error::new(
@@ -3594,23 +3815,29 @@ impl Vm {
                         "integer addition overflow",
                         None,
                     )
-                }),
+                })
+            }
 
             IntPipelineExpr::Sub(
                 left,
                 right,
-            ) =>
-                self.eval_int_pipeline_expr(
-                    left,
-                    input,
-                    captures,
-                )?
-                .checked_sub(
+            ) => {
+                let lhs =
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?;
+
+                let rhs =
                     self.eval_int_pipeline_expr(
                         right,
                         input,
                         captures,
-                    )?
+                    )?;
+
+                lhs.checked_sub(
+                    rhs
                 )
                 .ok_or_else(|| {
                     Error::new(
@@ -3618,23 +3845,29 @@ impl Vm {
                         "integer subtraction overflow",
                         None,
                     )
-                }),
+                })
+            }
 
             IntPipelineExpr::Mul(
                 left,
                 right,
-            ) =>
-                self.eval_int_pipeline_expr(
-                    left,
-                    input,
-                    captures,
-                )?
-                .checked_mul(
+            ) => {
+                let lhs =
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?;
+
+                let rhs =
                     self.eval_int_pipeline_expr(
                         right,
                         input,
                         captures,
-                    )?
+                    )?;
+
+                lhs.checked_mul(
+                    rhs
                 )
                 .ok_or_else(|| {
                     Error::new(
@@ -3642,7 +3875,8 @@ impl Vm {
                         "integer multiplication overflow",
                         None,
                     )
-                }),
+                })
+            }
 
             IntPipelineExpr::Div(
                 left,
@@ -3707,21 +3941,19 @@ impl Vm {
             IntPipelineExpr::Neg(
                 expr
             ) => {
-                let value =
-                    self.eval_int_pipeline_expr(
-                        expr,
-                        input,
-                        captures,
-                    )?;
-
-                value.checked_neg()
-                    .ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::Overflow,
-                            "integer negation overflow",
-                            None,
-                        )
-                    })
+                self.eval_int_pipeline_expr(
+                    expr,
+                    input,
+                    captures,
+                )?
+                .checked_neg()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "integer negation overflow",
+                        None,
+                    )
+                })
             }
         }
     }

@@ -4264,7 +4264,7 @@ impl Compiler {
                         return Err(
                             Error::new(
                                 ErrorKind::Runtime,
-                                "fused range requires constant integer start",
+                                "fused pipeline requires integer range start",
                                 None,
                             )
                         );
@@ -4276,7 +4276,7 @@ impl Compiler {
                         return Err(
                             Error::new(
                                 ErrorKind::Runtime,
-                                "fused range requires constant integer end",
+                                "fused pipeline requires integer range end",
                                 None,
                             )
                         );
@@ -4293,7 +4293,7 @@ impl Compiler {
                     return Err(
                         Error::new(
                             ErrorKind::Runtime,
-                            "source is not supported by fused pipeline",
+                            "unsupported fused pipeline source",
                             None,
                         )
                     );
@@ -4308,40 +4308,38 @@ impl Compiler {
         for stage in stages {
             match stage {
                 PipelineStageAst::Map(
-                    expr
+                    lambda
                 ) => {
                     let (
-                        pipeline_expr,
+                        expr,
                         captures,
                     ) =
                         self.lower_pipeline_lambda(
-                            expr
+                            lambda
                         )?;
 
                     compiled.push(
                         PipelineStage::Map {
-                            expr:
-                                pipeline_expr,
+                            expr,
                             captures,
                         }
                     );
                 }
 
                 PipelineStageAst::Filter(
-                    expr
+                    lambda
                 ) => {
                     let (
-                        pipeline_expr,
+                        expr,
                         captures,
                     ) =
                         self.lower_pipeline_lambda(
-                            expr
+                            lambda
                         )?;
 
                     compiled.push(
                         PipelineStage::Filter {
-                            expr:
-                                pipeline_expr,
+                            expr,
                             captures,
                         }
                     );

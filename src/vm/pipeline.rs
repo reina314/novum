@@ -2,10 +2,9 @@ use crate::{
     error::{
         Error,
         ErrorKind,
+        Result,
     },
-    runtime::{
-        UpvalueSpec,
-    },
+    runtime::UpvalueSpec,
 };
 
 #[derive(Clone, Debug)]
@@ -15,6 +14,86 @@ pub enum PipelineSource {
         end: i64,
         inclusive: bool,
     },
+}
+
+#[derive(Clone, Debug)]
+pub enum PipelineExpr {
+    Input,
+
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+
+    Add(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Sub(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Mul(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Div(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Mod(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Pow(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Eq(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Neq(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Lt(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Leq(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Gt(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Geq(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Neg(
+        Box<Self>,
+    ),
+
+    Not(
+        Box<Self>,
+    ),
+
+    Capture(u16),
 }
 
 #[derive(Clone, Debug)]
@@ -38,52 +117,11 @@ pub enum PipelineStage {
     },
 }
 
-#[derive(Clone, Debug)]
-pub enum PipelineExpr {
-    Input,
-
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Str(String),
-
-    Add(Box<Self>, Box<Self>),
-    Sub(Box<Self>, Box<Self>),
-    Mul(Box<Self>, Box<Self>),
-    Div(Box<Self>, Box<Self>),
-    Mod(Box<Self>, Box<Self>),
-    Pow(Box<Self>, Box<Self>),
-    Eq(Box<Self>, Box<Self>),
-    Neq(Box<Self>, Box<Self>),
-    Lt(Box<Self>, Box<Self>),
-    Leq(Box<Self>, Box<Self>),
-    Gt(Box<Self>, Box<Self>),
-    Geq(Box<Self>, Box<Self>),
-    Neg(Box<Self>),
-    Not(Box<Self>),
-
-    Capture(u16),
-}
-
-#[derive(Clone, Debug)]
-pub enum PipelinePlan {
-    Generic,
-
-    IntRange {
-        stages: Vec<IntPipelineStage>,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub enum IntPipelineStage {
-    Map(IntPipelineExpr),
-
-    Filter(IntPipelinePredicate),
-
-    Skip(usize),
-
-    Take(usize),
-}
+/*
+ * ============================================================
+ * Specialized integer pipeline IR
+ * ============================================================
+ */
 
 #[derive(Clone, Debug)]
 pub enum IntPipelineExpr {
@@ -157,16 +195,64 @@ pub enum IntPipelinePredicate {
 }
 
 #[derive(Clone, Debug)]
+pub enum IntPipelineStage {
+    Map(
+        IntPipelineExpr,
+    ),
+
+    Filter(
+        IntPipelinePredicate,
+    ),
+
+    Skip(
+        usize,
+    ),
+
+    Take(
+        usize,
+    ),
+}
+
+/*
+ * ============================================================
+ * Pipeline execution plan
+ * ============================================================
+ */
+
+#[derive(Clone, Debug)]
+pub enum PipelinePlan {
+    Generic,
+
+    IntRange {
+        stages:
+            Vec<IntPipelineStage>,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub struct PipelineProgram {
-    pub source: PipelineSource,
-    pub stages: Vec<PipelineStage>,
-    pub plan: PipelinePlan
+    pub source:
+        PipelineSource,
+
+    /*
+     * Canonical semantic representation.
+     */
+    pub stages:
+        Vec<PipelineStage>,
+
+    /*
+     * Specialized execution plan.
+     *
+     * `Generic` remains the semantic fallback.
+     */
+    pub plan:
+        PipelinePlan,
 }
 
 impl PipelineProgram {
     pub fn capacity_upper_bound(
         &self,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize> {
         let PipelineSource::Range {
             start,
             end,
@@ -215,6 +301,9 @@ impl PipelineProgram {
                 )
             })?;
 
+        /*
+         * `take()` is an upper bound on output cardinality.
+         */
         for stage in
             &self.stages
         {
@@ -239,4 +328,3 @@ pub enum PipelineState {
     Skip(usize),
     Take(usize),
 }
-
