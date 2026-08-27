@@ -21,6 +21,7 @@ use crate::{
         UpvalueSpec,
         FunctionProto,
         FunctionRef,
+        ModulePath,
     },
     stdlib::{
         encode_class_counts,
@@ -3431,6 +3432,86 @@ impl Compiler {
                 }
 
                 self.exit_scope();
+            }
+
+            ExprKind::Import {
+                path,
+                alias,
+            } => {
+                if path.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Import,
+                            "empty module path",
+                            None,
+                        )
+                    );
+                }
+
+                /*
+                * Phase 3:
+                *
+                * import foo
+                * import foo as bar
+                * import a.b.c as x
+                *
+                * Nested import without alias is deferred.
+                */
+                if alias.is_none()
+                    && path.len() != 1
+                {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Import,
+                            "nested imports without alias are not supported yet",
+                            None,
+                        )
+                    );
+                }
+
+                let binding_name =
+                    match alias {
+                        Some(alias) => {
+                            alias.clone()
+                        }
+
+                        None => {
+                            path[0].clone()
+                        }
+                    };
+
+                let slot =
+                    self.declare_local(
+                        binding_name
+                    )?;
+
+                let module_path =
+                    ModulePath::new(
+                        path.clone()
+                    );
+
+                let module_ref =
+                    self.chunk.add_module_ref(
+                        module_path
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadModule,
+                    module_ref,
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                self.chunk.emit(
+                    OpCode::Unit
+                );
             }
 
             _ => {

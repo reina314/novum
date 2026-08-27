@@ -1,4 +1,9 @@
-use crate::runtime::Value;
+use crate::{
+    runtime::{
+        Value,
+        ModulePath,
+    },
+};
 use super::{
     OpCode,
     Instruction,
@@ -13,6 +18,7 @@ pub struct Chunk {
     pub call_sites: Vec<CallSite>,
     pub pipelines: Vec<PipelineProgram>,
     pub range_loops: Vec<RangeLoop>,
+    pub module_refs: Vec<ModuleRefSpec>,
 }
 
 impl Chunk {
@@ -71,6 +77,23 @@ impl Chunk {
 
         self.range_loops.push(
             range
+        );
+
+        index as u32
+    }
+
+    #[inline]
+    pub fn add_module_ref(
+        &mut self,
+        path: ModulePath,
+    ) -> u32 {
+        let index =
+            self.module_refs.len();
+
+        self.module_refs.push(
+            ModuleRefSpec {
+                path,
+            }
         );
 
         index as u32
@@ -143,8 +166,16 @@ impl Default for Chunk {
 
             range_loops:
                 Vec::new(),
+
+            module_refs:
+                Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleRefSpec {
+    pub path: ModulePath,
 }
 
 #[derive(Clone, Debug)]

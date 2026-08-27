@@ -29,6 +29,7 @@ use crate::{
         FieldDefinition,
         Module,
         ModuleRef,
+        ModulePath,
         apply_binop, 
     },
     syntax::BinOp,
@@ -50,12 +51,15 @@ use super::{
     IntPipelineExpr,
     IntPipelinePredicate,
     IntPipelineStage,
+    ModuleLoader,
 };
 
 use std::{
-    rc::Rc,
-    cell::RefCell,
-    collections::HashMap,
+    cell::RefCell, collections::HashMap, 
+    path::{
+        Path,
+        PathBuf
+    }, rc::Rc,
 };
 
 pub struct Vm {
@@ -63,6 +67,9 @@ pub struct Vm {
     frames: Vec<CallFrame>,
     repl_locals: Vec<Value>,
     repl_cells: Vec<Option<CellRef>>,
+    module_loader: ModuleLoader,
+    modules: HashMap<PathBuf, ModuleRef>,
+    loading_modules: Vec<PathBuf>,
 }
 
 impl Vm {
@@ -72,6 +79,15 @@ impl Vm {
             frames: Vec::with_capacity(32),
             repl_locals: Vec::with_capacity(64),
             repl_cells: Vec::with_capacity(64),
+            module_loader:
+                ModuleLoader::new(
+                    std::env::current_dir()
+                        .expect(
+                            "failed to get current directory"
+                        )
+                ),
+            modules: HashMap::new(),
+            loading_modules: Vec::new(),
         }
     }
 
@@ -129,9 +145,10 @@ impl Vm {
                 )
             );
 
-        self.run_with_module(
+        self.run_with_module_and_path(
             chunk,
             module,
+            None,
         )
     }
 
@@ -139,6 +156,19 @@ impl Vm {
         &mut self,
         chunk: Rc<Chunk>,
         module: ModuleRef,
+    ) -> Result<Value> {
+        self.run_with_module_and_path(
+            chunk,
+            module,
+            None,
+        )
+    }
+
+    pub fn run_with_module_and_path(
+        &mut self,
+        chunk: Rc<Chunk>,
+        module: ModuleRef,
+        source_path: Option<&Path>,
     ) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
@@ -168,7 +198,12 @@ impl Vm {
                 locals: Vec::new(),
                 cells: None,
                 range_cursors: Vec::new(),
+
                 module: Some(module),
+
+                source_path:
+                    source_path
+                        .map(Path::to_path_buf),
             }
         );
 
@@ -252,6 +287,7 @@ impl Vm {
                 cells: Some(cells),
                 range_cursors: Vec::new(),
                 module: Some(module),
+                source_path: None,
             }
         );
 
@@ -2219,6 +2255,37 @@ impl Vm {
                     );
                 }
 
+                OpCode::LoadModule => {
+                    let module_path =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .module_refs
+                            .get(
+                                operand as usize
+                            )
+                            .map(|reference|
+                                reference.path.clone()
+                            )
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Import,
+                                    "module reference index out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let module =
+                        self.load_module(
+                            &module_path
+                        )?;
+
+                    self.push(
+                        Value::Module(module)
+                    );
+                }
+
                 OpCode::Export => {
                     let name =
                         self.pop()?;
@@ -3136,6 +3203,16 @@ impl Vm {
             Value::Unit,
         );
 
+        let caller_module =
+            self.current_frame()
+                .module
+                .clone();
+
+        let caller_source_path =
+            self.current_frame()
+                .source_path
+                .clone();
+
         self.frames.push(
             CallFrame {
                 closure,
@@ -3146,8 +3223,14 @@ impl Vm {
                         None;
                         local_count
                     ].into(),
-                range_cursors: Vec::new(),
-                module: None,
+                range_cursors:
+                    Vec::new(),
+
+                module:
+                    caller_module,
+
+                source_path:
+                    caller_source_path,
             }
         );
 
@@ -3193,6 +3276,16 @@ impl Vm {
         let caller_depth =
             self.frames.len();
 
+        let module =
+            self.current_frame()
+                .module
+                .clone();
+
+        let source_path =
+            self.current_frame()
+                .source_path
+                .clone();
+
         let local_count =
             closure
                 .function
@@ -3204,9 +3297,7 @@ impl Vm {
                 local_count
             );
 
-        locals.push(
-            arg
-        );
+        locals.push(arg);
 
         if local_count > 1 {
             locals.resize(
@@ -3228,7 +3319,9 @@ impl Vm {
                 locals,
                 cells: Some(cells),
                 range_cursors: Vec::new(),
-                module: None,
+
+                module,
+                source_path,
             }
         );
 
@@ -3295,6 +3388,16 @@ impl Vm {
                 local_count
             ];
 
+        let module =
+            self.current_frame()
+                .module
+                .clone();
+
+        let source_path =
+            self.current_frame()
+                .source_path
+                .clone();
+
         self.frames.push(
             CallFrame {
                 closure,
@@ -3302,7 +3405,9 @@ impl Vm {
                 locals,
                 cells: Some(cells),
                 range_cursors: Vec::new(),
-                module: None,
+
+                module,
+                source_path,
             }
         );
 
@@ -3341,6 +3446,16 @@ impl Vm {
             Value::Unit,
         );
 
+        let module =
+            self.current_frame()
+                .module
+                .clone();
+
+        let source_path =
+            self.current_frame()
+                .source_path
+                .clone();
+
         self.frames.push(
             CallFrame {
                 closure,
@@ -3352,7 +3467,9 @@ impl Vm {
                         local_count
                     ].into(),
                 range_cursors: Vec::new(),
-                module: None,
+
+                module,
+                source_path,
             }
         );
 
@@ -4436,6 +4553,129 @@ impl Vm {
                 }
             )
         )
+    }
+
+    fn load_module(
+        &mut self,
+        path: &ModulePath,
+    ) -> Result<ModuleRef> {
+        let importing_file =
+            self.current_frame()
+                .source_path
+                .clone();
+
+        let canonical =
+            self.module_loader.resolve(
+                path,
+                importing_file
+                    .as_deref(),
+            )?;
+
+        if self.loading_modules
+            .iter()
+            .any(|current|
+                current == &canonical
+            )
+        {
+            let mut chain =
+                self.loading_modules
+                    .iter()
+                    .map(
+                        |path|
+                            path.display()
+                                .to_string()
+                    )
+                    .collect::<Vec<_>>();
+
+            chain.push(
+                canonical
+                    .display()
+                    .to_string()
+            );
+
+            return Err(
+                Error::new(
+                    ErrorKind::Import,
+                    format!(
+                        "cyclic module import: {}",
+                        chain.join(" -> ")
+                    ),
+                    None,
+                )
+            );
+        }
+
+        /*
+        * Already executed.
+        */
+        if let Some(module) =
+            self.modules.get(&canonical)
+        {
+            return Ok(
+                module.clone()
+            );
+        }
+
+        let module =
+            Rc::new(
+                RefCell::new(
+                    Module::new(
+                        path.name()
+                    )
+                )
+            );
+
+        /*
+        * Register before execution.
+        * The loading stack still prevents cycles.
+        */
+        self.modules.insert(
+            canonical.clone(),
+            module.clone(),
+        );
+
+        self.loading_modules.push(
+            canonical.clone()
+        );
+
+        let chunk =
+            match self.module_loader
+                .load_chunk(&canonical)
+            {
+                Ok(chunk) => chunk,
+
+                Err(error) => {
+                    self.loading_modules.pop();
+                    self.modules.remove(
+                        &canonical
+                    );
+
+                    return Err(error);
+                }
+            };
+
+        let result =
+            self.run_with_module_and_path(
+                chunk,
+                module.clone(),
+                Some(&canonical),
+            );
+
+        self.loading_modules.pop();
+
+        match result {
+            Ok(_) => {
+                Ok(module)
+            }
+
+            Err(error) => {
+                self.modules.remove(
+                    &canonical
+                );
+
+                Err(error)
+            }
+        }
     }
 
     // ============================

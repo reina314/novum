@@ -2,12 +2,14 @@ pub mod chunk;
 pub mod pipeline;
 pub mod compiler;
 pub mod instruction;
+pub mod module_loader;
 pub mod vm;
 
 pub use chunk::{
     Chunk,
     CallSite,
     RangeLoop,
+    ModuleRefSpec,
 };
 
 pub use pipeline::{
@@ -29,6 +31,10 @@ pub use compiler::{
 pub use instruction::{
     Instruction,
     OpCode,    
+};
+
+pub use module_loader::{
+    ModuleLoader,
 };
 
 pub use vm::{

@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     rc::Rc,
+    path::PathBuf,
 };
 
 use super::{
@@ -43,6 +44,7 @@ pub struct CallFrame {
     pub cells: Option<Vec<Option<CellRef>>>,
     pub range_cursors: Vec<Option<RangeCursor>>,
     pub module: Option<ModuleRef>,
+    pub source_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy)]

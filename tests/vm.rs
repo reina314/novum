@@ -4,13 +4,19 @@ use novum::{
     Lexer,
     Parser,
     runtime::Value,
+    error::{
+        Error,
+        ErrorKind,
+    },
 };
 use novum::vm::{
     Compiler,
     Vm,
 };
 
-fn run(source: &str) -> Value {
+fn run(
+    source: &str,
+) -> Result<Value, Error> {
     let tokens =
         Lexer::new(source)
             .lex()
@@ -46,18 +52,28 @@ fn run(source: &str) -> Value {
     vm.run(
         Rc::new(chunk)
     )
-    .unwrap_or_else(|error| {
-        panic!(
-            "VM error:\n{error:?}\nsource:\n{source}"
-        );
-    })
+}
+
+fn unwrap_value(
+    source: &str,
+) -> Value {
+    match run(source) {
+        Ok(value) =>
+            value,
+
+        Err(error) => {
+            panic!(
+                "unexpected runtime error:\n{error:?}\nsource:\n{source}"
+            );
+        }
+    }
 }
 
 fn assert_int(
     source: &str,
     expected: i64,
 ) {
-    match run(source) {
+    match unwrap_value(source) {
         Value::Int(actual) => {
             assert_eq!(
                 actual,
@@ -78,7 +94,7 @@ fn assert_float(
     source: &str,
     expected: f64,
 ) {
-    match run(source) {
+    match unwrap_value(source) {
         Value::Float(actual) => {
             assert!(
                 (actual - expected).abs()
@@ -99,7 +115,7 @@ fn assert_bool(
     source: &str,
     expected: bool,
 ) {
-    match run(source) {
+    match unwrap_value(source) {
         Value::Bool(actual) => {
             assert_eq!(
                 actual,
@@ -120,7 +136,7 @@ fn assert_string(
     source: &str,
     expected: &str,
 ) {
-    match run(source) {
+    match unwrap_value(source) {
         Value::Str(actual) => {
             assert_eq!(
                 actual.as_str(),
@@ -141,7 +157,7 @@ fn assert_list(
     source: &str,
     expected: &[i64],
 ) {
-    match run(source) {
+    match unwrap_value(source) {
         Value::List(list) => {
             assert_eq!(
                 list.len(),
@@ -149,8 +165,10 @@ fn assert_list(
                 "\nsource:\n{source}"
             );
 
-            for (index, expected_value) in
-                expected.iter().enumerate()
+            for (
+                index,
+                expected_value,
+            ) in expected.iter().enumerate()
             {
                 let actual =
                     list.get(index)
@@ -181,6 +199,27 @@ fn assert_list(
         actual => {
             panic!(
                 "expected List, got {actual:?}\nsource:\n{source}"
+            );
+        }
+    }
+}
+
+fn assert_error_kind(
+    source: &str,
+    expected: ErrorKind,
+) {
+    match run(source) {
+        Ok(value) => {
+            panic!(
+                "expected {expected:?} error, got {value:?}\nsource:\n{source}"
+            );
+        }
+
+        Err(error) => {
+            assert_eq!(
+                error.kind,
+                expected,
+                "expected error kind {expected:?}, got {error:?}\nsource:\n{source}"
             );
         }
     }
@@ -354,151 +393,125 @@ fn vm_range() {
 
 #[test]
 fn vm_range_for_empty() {
-    let result =
-        run(
-            r#"
-            for i in 10..10 {
-                123
-            }
-            "#
-        );
+    let source =
+        r#"
+        for i in 10..10 {
+            123
+        }
+        "#;
 
     assert_eq!(
-        result,
+        unwrap_value(source),
         Value::Unit
     );
 }
 
 #[test]
 fn vm_range_for_inclusive() {
-    let result =
-        run(
-            r#"
-            let sum = 0
+    assert_int(
+        r#"
+        let sum = 0
 
-            for i in 0..=100 {
-                sum += i
-            }
+        for i in 0..=100 {
+            sum += i
+        }
 
-            sum
-            "#
-        );
-
-    assert_eq!(
-        result,
-        Value::Int(5050)
-    );
+        sum
+        "#,
+        5050
+    )
 }
 
 #[test]
 fn vm_range_for_break() {
-    let result =
-        run(
-            r#"
-            let sum = 0
+    assert_int(
+        r#"
+        let sum = 0
 
-            for i in 0..100 {
-                if i == 10 {
-                    break
-                }
-
-                sum += i
+        for i in 0..100 {
+            if i == 10 {
+                break
             }
 
-            sum
-            "#
-        );
+            sum += i
+        }
 
-    assert_eq!(
-        result,
-        Value::Int(45)
+        sum
+        "#, 
+        45
     );
 }
 
 #[test]
 fn vm_range_for_continue() {
-    let result =
-        run(
-            r#"
-            let sum = 0
+    assert_int(
+        r#"
+        let sum = 0
 
-            for i in 0..10 {
-                if i % 2 == 0 {
-                    continue
-                }
-
-                sum += i
+        for i in 0..10 {
+            if i % 2 == 0 {
+                continue
             }
 
-            sum
-            "#
-        );
+            sum += i
+        }
 
-    assert_eq!(
-        result,
-        Value::Int(25)
+        sum
+        "#,
+        25,
     );
 }
 
 #[test]
 fn vm_nested_range_for() {
-    let result =
-        run(
-            r#"
-            let sum = 0
+    assert_int(
+        r#"
+        let sum = 0
 
-            for i in 0..10 {
-                for j in 0..10 {
-                    sum += i * j
-                }
+        for i in 0..10 {
+            for j in 0..10 {
+                sum += i * j
             }
+        }
 
-            sum
-            "#
-        );
-
-    assert_eq!(
-        result,
-        Value::Int(2025)
+        sum
+        "#,
+        2025
     );
 }
 
 #[test]
 fn vm_range_for_dynamic_bounds() {
-    assert_eq!(
-        run(
-            r#"
-            let a = 2
-            let b = 5
-            let sum = 0
+    assert_int(
+        r#"
+        let a = 2
+        let b = 5
+        let sum = 0
 
-            for i in a..b {
-                sum += i
-            }
+        for i in a..b {
+            sum += i
+        }
 
-            sum
-            "#
-        ),
-        Value::Int(9)
-    );
+        sum
+        "#,
+        9
+    )
 }
 
 #[test]
 fn vm_range_for_negative() {
-    assert_eq!(
-        run(
-            r#"
-            let sum = 0
+    assert_int(
+        r#"
+        let sum = 0
 
-            for i in -3..2 {
-                sum += i
-            }
+        for i in -3..2 {
+            sum += i
+        }
 
-            sum
-            "#
-        ),
-        Value::Int(-5)
-    );
+        sum
+        "#,
+        -5
+    )
 }
 
 
@@ -1704,4 +1717,111 @@ fn vm_mixed_method_arguments() {
         20,
     );
 }
+
+// ============================================================
+// Import
+// ============================================================
+
+#[test]
+fn vm_import_unknown_module_is_error() {
+    assert_error_kind(
+        "import does_not_exist",
+        ErrorKind::Import,
+    );
+}
+
+#[test]
+fn vm_cyclic_import_is_error() {
+    assert_error_kind(
+        "import tests.modules.c",
+        ErrorKind::Import,
+    );
+}
+
+#[test]
+fn vm_import_user_module_alias() {
+    assert_int(
+        r#"
+        import tests.modules.counter as mod
+
+        mod.value
+        "#,
+        1
+    );
+}
+
+#[test]
+fn vm_import_without_alias_keeps_namespace() {
+    assert_int(
+        r#"
+        import tests.modules.counter
+
+        tests.modules.counter.value
+        "#,
+        1,
+    );
+}
+
+#[test]
+fn vm_public_let_is_exported() {
+    // fixture:
+    //
+    // pub let answer = 42
+    //
+    assert_int(
+        r#"
+        import tests.modules.visibility
+        tests.modules.visibility.answer
+        "#,
+        42
+    );
+}
+
+#[test]
+fn vm_private_let_is_hidden() {
+    assert_error_kind(
+        r#"
+        import tests.modules.visibility
+        tests.modules.visibility.secret
+        "#,
+        ErrorKind::Runtime
+    );
+}
+
+#[test]
+fn vm_public_lambda_is_exported() {
+    assert_int(
+        r#"
+        import tests.modules.visibility
+        tests.modules.visibility.add(2, 3)
+        "#,
+        5
+    );
+}
+
+#[test]
+fn vm_private_lambda_is_hidden() {
+    assert_error_kind(
+        r#"
+        import tests.modules.visibility
+        tests.modules.visibility.helper(10)
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn vm_pub_local_is_error() {
+    assert_error_kind(
+        r#"
+        {
+            pub let x = 10
+            x
+        }
+        "#,
+        ErrorKind::Name,
+    );
+}
+
+
 

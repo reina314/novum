@@ -104,6 +104,8 @@ pub enum OpCode {
     Call,
     Return,
 
+    LoadModule,
+
     Export,
 
     Halt,

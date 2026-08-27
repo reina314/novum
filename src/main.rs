@@ -27,9 +27,12 @@ use nu_ansi_term::{Color, Style};
 use std::{
     borrow::Cow,
     rc::Rc,
+    cell::RefCell,
     env,
     fs,
-    path::PathBuf,
+    path::{
+        PathBuf,
+    },
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -234,6 +237,21 @@ fn run_file(
             }
         };
 
+    let source_path =
+        match fs::canonicalize(&path) {
+            Ok(path) => path,
+
+            Err(error) => {
+                eprintln!(
+                    "failed to resolve '{}': {}",
+                    path,
+                    error
+                );
+
+                std::process::exit(1);
+            }
+        };
+
     let tokens =
         match Lexer::new(&source).lex() {
             Ok(tokens) =>
@@ -293,23 +311,31 @@ fn run_file(
             }
         };
 
+    let module =
+        Rc::new(
+            RefCell::new(
+                novum::runtime::Module::new(
+                    "<main>"
+                )
+            )
+        );
+
     let mut vm =
         Vm::new();
 
-    match vm.run(chunk) {
+    match vm.run_with_module_and_path(
+        chunk,
+        module,
+        Some(&source_path),
+    ) {
         Ok(Value::Unit) => {}
 
         Ok(value) => {
-            println!(
-                "{value}"
-            );
+            println!("{value}");
         }
 
         Err(error) => {
-            error.display(
-                &source
-            );
-
+            error.display(&source);
             std::process::exit(1);
         }
     }
