@@ -8,7 +8,6 @@ pub use chunk::{
     Chunk,
     CallSite,
     RangeLoop,
-    CompoundAssignLocalSite,
 };
 
 pub use pipeline::{
@@ -31,6 +30,7 @@ pub use instruction::{
     Instruction,
     OpCode,
     LocalBinaryOp,
+    
 };
 
 pub use vm::{

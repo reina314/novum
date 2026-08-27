@@ -2,7 +2,6 @@ use crate::runtime::Value;
 use super::{
     OpCode,
     Instruction,
-    LocalBinaryOp,
     PipelineProgram,
 };
 
@@ -14,7 +13,6 @@ pub struct Chunk {
     pub call_sites: Vec<CallSite>,
     pub pipelines: Vec<PipelineProgram>,
     pub range_loops: Vec<RangeLoop>,
-    pub compound_assign_locals: Vec<CompoundAssignLocalSite>,
 }
 
 impl Chunk {
@@ -73,21 +71,6 @@ impl Chunk {
 
         self.range_loops.push(
             range
-        );
-
-        index as u32
-    }
-
-    #[inline]
-    pub fn add_compound_assign_local(
-        &mut self,
-        site: CompoundAssignLocalSite,
-    ) -> u32 {
-        let index =
-            self.compound_assign_locals.len();
-
-        self.compound_assign_locals.push(
-            site
         );
 
         index as u32
@@ -160,9 +143,6 @@ impl Default for Chunk {
 
             range_loops:
                 Vec::new(),
-
-            compound_assign_locals:
-                Vec::new(),
         }
     }
 }
@@ -178,11 +158,4 @@ pub struct RangeLoop {
     pub value_slot: u16,
     pub inclusive: bool,
     pub exit_ip: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CompoundAssignLocalSite {
-    pub target_slot: u16,
-    pub value_slot: u16,
-    pub op: LocalBinaryOp,
 }

@@ -40,7 +40,6 @@ use super::{
     IntPipelineExpr,
     IntPipelinePredicate,
     IntPipelineStage,
-    CompoundAssignLocalSite,
 };
 
 use std::{
@@ -2557,19 +2556,16 @@ impl Compiler {
                                     *op
                                 )
                             {
-                                let site =
-                                    self.chunk
-                                        .add_compound_assign_local(
-                                            CompoundAssignLocalSite {
-                                                target_slot,
-                                                value_slot,
-                                                op: local_op,
-                                            }
-                                        );
+                                let operand =
+                                    LocalBinaryOp::encode_compound_assign(
+                                        target_slot,
+                                        value_slot,
+                                        local_op,
+                                    );
 
                                 self.chunk.emit_operand(
                                     OpCode::CompoundAssignLocal,
-                                    site,
+                                    operand,
                                 );
 
                                 return Ok(());

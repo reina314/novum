@@ -537,24 +537,23 @@ impl Vm {
                 }
 
                 OpCode::CompoundAssignLocal => {
-                    let site_index =
-                        operand as usize;
-
-                    let site =
-                        self.current_frame()
-                            .closure
-                            .function
-                            .chunk
-                            .compound_assign_locals
-                            .get(site_index)
-                            .copied()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "compound assignment site out of bounds",
-                                    None,
-                                )
-                            })?;
+                    let Some((
+                        target_slot,
+                        value_slot,
+                        op,
+                    )) =
+                        LocalBinaryOp::decode_compound_assign(
+                            operand
+                        )
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "invalid CompoundAssignLocal operand",
+                                None,
+                            )
+                        );
+                    };
 
                     let (
                         lhs,
@@ -567,8 +566,7 @@ impl Vm {
                             frame
                                 .locals
                                 .get(
-                                    site.target_slot
-                                        as usize
+                                    target_slot as usize
                                 )
                                 .cloned()
                                 .ok_or_else(|| {
@@ -583,8 +581,7 @@ impl Vm {
                             frame
                                 .locals
                                 .get(
-                                    site.value_slot
-                                        as usize
+                                    value_slot as usize
                                 )
                                 .cloned()
                                 .ok_or_else(|| {
@@ -602,7 +599,7 @@ impl Vm {
                     };
 
                     let result =
-                        match site.op {
+                        match op {
                             LocalBinaryOp::Add =>
                                 apply_binop(
                                     BinOp::Add,
@@ -659,32 +656,32 @@ impl Vm {
                         self.current_frame_mut();
 
                     let slot =
-                        site.target_slot as usize;
+                        target_slot as usize;
 
-                    if frame.locals.len()
-                        <= slot
-                    {
+                    if frame.locals.len() <= slot {
                         frame.locals.resize(
                             slot + 1,
                             Value::Unit,
                         );
                     }
 
-                    if frame.cells.len()
-                        <= slot
-                    {
+                    if frame.cells.len() <= slot {
                         frame.cells.resize(
                             slot + 1,
                             None,
                         );
                     }
 
+                    if let Some(cell) =
+                        frame.cells[slot].clone()
+                    {
+                        *cell.borrow_mut() =
+                            result.clone();
+                    }
+
                     frame.locals[slot] =
                         result.clone();
 
-                    /*
-                    * Assignment expressions evaluate to their new value.
-                    */
                     self.push(
                         result
                     );
