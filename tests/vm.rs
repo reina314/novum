@@ -19,32 +19,17 @@ fn run(
 ) -> Result<Value, Error> {
     let tokens =
         Lexer::new(source)
-            .lex()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "lexer error:\n{error:?}\nsource:\n{source}"
-                );
-            });
+            .lex()?;
 
     let mut parser =
         Parser::new(tokens);
 
     let program =
-        parser.parse()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "parser error:\n{error:?}\nsource:\n{source}"
-                );
-            });
+        parser.parse()?;
 
     let chunk =
         Compiler::new()
-            .compile(&program)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "compiler error:\n{error:?}\nsource:\n{source}"
-                );
-            });
+            .compile(&program)?;
 
     let mut vm =
         Vm::new();

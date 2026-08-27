@@ -318,6 +318,54 @@ impl Vm {
         self.execute_until_depth(0)
     }
 
+    fn execute_module(
+        &mut self,
+        chunk: Rc<Chunk>,
+        module: ModuleRef,
+        source_path: PathBuf,
+    ) -> Result<Value> {
+        let caller_depth =
+            self.frames.len();
+
+        let function =
+            Rc::new(
+                FunctionProto {
+                    arity: 0,
+                    parameters: Vec::new(),
+                    chunk: chunk.clone(),
+                    upvalue_specs: Vec::new(),
+                }
+            );
+
+        let closure =
+            Rc::new(
+                Closure {
+                    function,
+                    upvalues: Vec::new(),
+                }
+            );
+
+        self.frames.push(
+            CallFrame {
+                closure,
+                ip: 0,
+                locals: Vec::new(),
+                cells: None,
+                range_cursors: Vec::new(),
+
+                module:
+                    Some(module),
+
+                source_path:
+                    Some(source_path),
+            }
+        );
+
+        self.execute_until_depth(
+            caller_depth
+        )
+    }
+
     fn execute_until_depth(
         &mut self,
         target_depth: usize,
@@ -2357,7 +2405,25 @@ impl Vm {
                 }
 
                 OpCode::Halt => {
-                    return self.pop();
+                    let result =
+                        self.pop()?;
+
+                    self.frames.pop()
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "VM frame underflow",
+                                None,
+                            )
+                        })?;
+
+                    if self.frames.len() ==
+                        target_depth
+                    {
+                        return Ok(result);
+                    }
+
+                    self.push(result);
                 }
 
                 _ => {
@@ -4655,10 +4721,10 @@ impl Vm {
             };
 
         let result =
-            self.run_with_module_and_path(
+            self.execute_module(
                 chunk,
                 module.clone(),
-                Some(&canonical),
+                canonical.clone(),
             );
 
         self.loading_modules.pop();
