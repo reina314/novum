@@ -488,6 +488,13 @@ impl Vm {
                     let frame =
                         self.current_frame_mut();
 
+                    /*
+                    * ResetLocal is used for compiler-managed temporary
+                    * and iteration-local bindings. The slot may exist in
+                    * `locals` while `cells` has not been materialized yet.
+                    *
+                    * Keep both arrays structurally aligned.
+                    */
                     if slot >= frame.locals.len() {
                         return Err(
                             Error::new(
@@ -501,9 +508,18 @@ impl Vm {
                         );
                     }
 
-                    // A captured iteration binding keeps its cell alive
-                    // outside the iteration. The next iteration receives
-                    // a fresh cell.
+                    if frame.cells.len() <= slot {
+                        frame.cells.resize(
+                            slot + 1,
+                            None,
+                        );
+                    }
+
+                    /*
+                    * A captured iteration binding keeps its cell alive
+                    * outside the iteration. Clearing this slot ensures
+                    * the next iteration can receive a fresh cell.
+                    */
                     frame.cells[slot] =
                         None;
 
