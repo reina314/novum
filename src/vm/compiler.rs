@@ -2839,7 +2839,31 @@ impl Compiler {
             ) => {
                 /*
                 * --------------------------------------------------------
-                * Begin loop
+                * Result slot
+                * --------------------------------------------------------
+                *
+                * A while-expression evaluates to Unit if the loop
+                * executes zero times, otherwise to the last body value.
+                */
+                let result_slot =
+                    self.allocate_temp_local();
+
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                /*
+                * --------------------------------------------------------
+                * Loop context
                 * --------------------------------------------------------
                 */
                 let loop_index =
@@ -2854,7 +2878,7 @@ impl Compiler {
                     self.chunk.code.len();
 
                 /*
-                * `continue` in a while-loop goes back to the condition.
+                * `continue` jumps directly to the condition.
                 */
                 self.set_continue_target(
                     loop_index,
@@ -2877,11 +2901,9 @@ impl Compiler {
                     );
 
                 /*
-                * JumpIfFalse consumes the Bool.
+                * JumpIfFalse already consumes the Bool.
+                * DO NOT emit Pop here.
                 */
-                self.chunk.emit(
-                    OpCode::Pop
-                );
 
                 /*
                 * --------------------------------------------------------
@@ -2895,8 +2917,37 @@ impl Compiler {
                 )?;
 
                 /*
-                * The while-expression does not expose the body's
-                * individual value.
+                * Preserve the value produced by this iteration
+                * as the result of the entire while-expression.
+                *
+                * Stack:
+                *
+                *     [body_value]
+                *
+                * Dup:
+                *
+                *     [body_value, body_value]
+                *
+                * StoreLocal consumes one:
+                *
+                *     [body_value]
+                */
+                self.chunk.emit(
+                    OpCode::Dup
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::StoreLocal,
+                    result_slot as u32,
+                );
+
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
+                /*
+                * Discard the remaining body value before the next
+                * iteration.
                 */
                 self.chunk.emit(
                     OpCode::Pop
@@ -2904,11 +2955,16 @@ impl Compiler {
 
                 /*
                 * --------------------------------------------------------
-                * Cleanup
+                * End body scope
                 * --------------------------------------------------------
                 */
                 self.exit_scope();
 
+                /*
+                * --------------------------------------------------------
+                * Cleanup
+                * --------------------------------------------------------
+                */
                 let cleanup_target =
                     self.chunk.code.len();
 
@@ -2945,12 +3001,9 @@ impl Compiler {
                 );
 
                 /*
-                * JumpIfFalse leaves the false condition value on the
-                * stack, so remove it.
+                * JumpIfFalse already consumed the false condition.
+                * DO NOT emit Pop here.
                 */
-                self.chunk.emit(
-                    OpCode::Pop
-                );
 
                 self.finish_loop(
                     loop_index,
@@ -2958,10 +3011,13 @@ impl Compiler {
                 );
 
                 /*
-                * A while-expression evaluates to Unit.
+                * --------------------------------------------------------
+                * Final result
+                * --------------------------------------------------------
                 */
-                self.chunk.emit(
-                    OpCode::Unit
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    result_slot as u32,
                 );
             }
 
@@ -3365,13 +3421,6 @@ impl Compiler {
                 OpCode::JumpIfFalse,
                 0,
             );
-
-        /*
-        * Remove the Bool(true).
-        */
-        self.chunk.emit(
-            OpCode::Pop
-        );
 
         /*
         * --------------------------------------------------------
