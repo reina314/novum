@@ -32,7 +32,6 @@ use super::{
     OpCode,
     PipelinePlan,
     PipelineStep,
-    PipelineStepKind,
 };
 
 use std::{
@@ -807,7 +806,7 @@ impl Compiler {
         expr: &Expr,
     ) -> Result<
         Option<(
-            &Expr,
+            Expr,
             Vec<PipelineStepAst>,
         )>
     > {
@@ -837,63 +836,107 @@ impl Compiler {
             };
 
             match name.as_str() {
-                "map"
-                | "filter" => {
-                    if args.len() != 1 {
+                "map" => {
+                    if args.len() != 1
+                        || args[0].name.is_some()
+                    {
                         return Ok(None);
                     }
 
                     steps.push(
-                        if name == "map" {
-                            PipelineStepAst::Map(
-                                args[0].value.as_ref().clone()
-                            )
-                        } else {
-                            PipelineStepAst::Filter(
-                                args[0].value.as_ref().clone()
-                            )
-                        }
+                        PipelineStepAst::Map(
+                            args[0]
+                                .value
+                                .as_ref()
+                                .clone()
+                        )
                     );
 
                     current =
                         object;
                 }
 
-                "skip"
-                | "take" => {
-                    if args.len() != 1 {
+                "filter" => {
+                    if args.len() != 1
+                        || args[0].name.is_some()
+                    {
+                        return Ok(None);
+                    }
+
+                    steps.push(
+                        PipelineStepAst::Filter(
+                            args[0]
+                                .value
+                                .as_ref()
+                                .clone()
+                        )
+                    );
+
+                    current =
+                        object;
+                }
+
+                "skip" => {
+                    if args.len() != 1
+                        || args[0].name.is_some()
+                    {
                         return Ok(None);
                     }
 
                     let ExprKind::Int(
                         count
                     ) =
-                        args[0].value.kind
+                        &args[0].value.kind
                     else {
                         return Ok(None);
                     };
 
-                    if count < 0 {
+                    if *count < 0 {
                         return Ok(None);
                     }
 
                     steps.push(
-                        if name == "skip" {
-                            PipelineStepAst::Skip(
-                                count as usize
-                            )
-                        } else {
-                            PipelineStepAst::Take(
-                                count as usize
-                            )
-                        }
+                        PipelineStepAst::Skip(
+                            *count as usize
+                        )
                     );
 
                     current =
                         object;
                 }
 
-                _ => break,
+                "take" => {
+                    if args.len() != 1
+                        || args[0].name.is_some()
+                    {
+                        return Ok(None);
+                    }
+
+                    let ExprKind::Int(
+                        count
+                    ) =
+                        &args[0].value.kind
+                    else {
+                        return Ok(None);
+                    };
+
+                    if *count < 0 {
+                        return Ok(None);
+                    }
+
+                    steps.push(
+                        PipelineStepAst::Take(
+                            *count as usize
+                        )
+                    );
+
+                    current =
+                        object;
+                }
+
+                _ => {
+                    break;
+                }
             }
         }
 
@@ -906,7 +949,7 @@ impl Compiler {
         Ok(
             Some(
                 (
-                    current,
+                    current.clone(),
                     steps,
                 )
             )
@@ -3140,84 +3183,111 @@ impl Compiler {
             return Ok(false);
         };
 
-        self.compile_expr(
-            source
-        )?;
-
         let mut plan =
             PipelinePlan {
-                steps: Vec::new(),
+                steps: Vec::with_capacity(
+                    steps.len()
+                ),
             };
 
+        /*
+        * Fused execution currently supports
+        * lambda-based map/filter stages only.
+        *
+        * Non-lambda stages fall back to the normal
+        * iterator implementation.
+        */
         for step in steps {
             match step {
-                PipelineStepAst::Map(expr) => {
-                    self.compile_expr(
-                        &expr
-                    )?;
+                PipelineStepAst::Map(
+                    expr
+                ) => {
+                    let ExprKind::Lambda(
+                        params,
+                        body,
+                    ) = &expr.kind
+                    else {
+                        return Ok(false);
+                    };
 
-                    plan.steps.push(
-                        PipelineStep {
-                            kind:
-                                PipelineStepKind::Map,
-                            argument:
-                                0,
-                        }
-                    );
-                }
+                    let function =
+                        self.compile_lambda_proto(
+                            params,
+                            body,
+                        )?;
 
-                PipelineStepAst::Filter(expr) => {
-                    self.compile_expr(
-                        &expr
-                    )?;
-
-                    plan.steps.push(
-                        PipelineStep {
-                            kind:
-                                PipelineStepKind::Filter,
-                            argument:
-                                0,
-                        }
-                    );
-                }
-
-                PipelineStepAst::Skip(count) => {
                     let constant =
                         self.chunk.add_constant(
-                            Value::Int(
-                                count as i64
+                            Value::FunctionProto(
+                                function
                             )
                         );
 
                     plan.steps.push(
-                        PipelineStep {
-                            kind:
-                                PipelineStepKind::Skip,
-                            argument:
-                                constant as usize,
+                        PipelineStep::Map {
+                            function_constant:
+                                constant,
                         }
                     );
                 }
 
-                PipelineStepAst::Take(count) => {
+                PipelineStepAst::Filter(
+                    expr
+                ) => {
+                    let ExprKind::Lambda(
+                        params,
+                        body,
+                    ) = &expr.kind
+                    else {
+                        return Ok(false);
+                    };
+
+                    let function =
+                        self.compile_lambda_proto(
+                            params,
+                            body,
+                        )?;
+
                     let constant =
                         self.chunk.add_constant(
-                            Value::Int(
-                                count as i64
+                            Value::FunctionProto(
+                                function
                             )
                         );
 
                     plan.steps.push(
-                        PipelineStep {
-                            kind:
-                                PipelineStepKind::Take,
-                            argument:
-                                constant as usize,
+                        PipelineStep::Filter {
+                            function_constant:
+                                constant,
+                        }
+                    );
+                }
+
+                PipelineStepAst::Skip(
+                    count
+                ) => {
+                    plan.steps.push(
+                        PipelineStep::Skip {
+                            count,
+                        }
+                    );
+                }
+
+                PipelineStepAst::Take(
+                    count
+                ) => {
+                    plan.steps.push(
+                        PipelineStep::Take {
+                            count,
                         }
                     );
                 }
             }
         }
+
+        self.compile_expr(
+            &source
+        )?;
 
         let pipeline =
             self.chunk.add_pipeline(

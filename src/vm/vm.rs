@@ -39,7 +39,7 @@ use super::{
     Chunk,
     OpCode,
     Instruction,
-    PipelineStepKind,
+    PipelineStep,
 };
 
 use std::{
@@ -47,6 +47,19 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
+
+#[derive(Clone, Copy)]
+enum PipelineRuntimeState {
+    None,
+
+    Skip {
+        remaining: usize,
+    },
+
+    Take {
+        remaining: usize,
+    },
+}
 
 pub struct Vm {
     stack: Vec<Value>,
@@ -1952,60 +1965,131 @@ impl Vm {
                     )
                 })?;
 
-        let closure_count =
-            plan.closure_count;
+        /*
+        * The source iterator is the only value
+        * placed on the data stack by the compiler.
+        */
+        let source =
+            self.pop()?;
 
-        if self.stack.len() <
-            closure_count + 1
-        {
+        let Value::Iterator(
+            source
+        ) = source
+        else {
             return Err(
                 Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline stack underflow",
+                    ErrorKind::Type,
+                    format!(
+                        "fused collect expects Iterator, got {}",
+                        source.type_name()
+                    ),
                     None,
                 )
             );
-        }
+        };
 
-        let closure_start =
-            self.stack.len()
-                - closure_count;
+        /*
+        * Create each lambda closure once per
+        * pipeline execution rather than once per item.
+        */
+        let mut closures =
+            Vec::with_capacity(
+                plan.steps.len()
+            );
 
-        let source_index =
-            closure_start - 1;
+        let mut states =
+            Vec::with_capacity(
+                plan.steps.len()
+            );
 
-        let source =
-            match self.stack[
-                source_index
-            ].clone() {
-                Value::Iterator(
-                    iterator
-                ) =>
-                    iterator,
+        for step in
+            &plan.steps
+        {
+            match step {
+                PipelineStep::Map {
+                    function_constant,
+                }
+                |
+                PipelineStep::Filter {
+                    function_constant,
+                } => {
+                    let value =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .constants
+                            .get(
+                                *function_constant
+                                    as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "fused closure constant out of bounds",
+                                    None,
+                                )
+                            })?;
 
-                value => {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Type,
-                            format!(
-                                "fused collect expects Iterator, got {}",
-                                value.type_name()
-                            ),
-                            None,
-                        )
+                    let Value::FunctionProto(
+                        function
+                    ) = value
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "fused pipeline function constant must be FunctionProto",
+                                None,
+                            )
+                        );
+                    };
+
+                    let closure =
+                        self.create_closure(
+                            function
+                        )?;
+
+                    closures.push(
+                        Some(closure)
+                    );
+
+                    states.push(
+                        PipelineRuntimeState::None
                     );
                 }
-            };
 
-        let closures =
-            self.stack[
-                closure_start..
-            ]
-            .to_vec();
+                PipelineStep::Skip {
+                    count
+                } => {
+                    closures.push(
+                        None
+                    );
 
-        self.stack.truncate(
-            source_index
-        );
+                    states.push(
+                        PipelineRuntimeState::Skip {
+                            remaining:
+                                *count,
+                        }
+                    );
+                }
+
+                PipelineStep::Take {
+                    count
+                } => {
+                    closures.push(
+                        None
+                    );
+
+                    states.push(
+                        PipelineRuntimeState::Take {
+                            remaining:
+                                *count,
+                        }
+                    );
+                }
+            }
+        }
 
         let result =
             Rc::new(
@@ -2014,13 +2098,7 @@ impl Vm {
                 )
             );
 
-        let mut skipped =
-            0usize;
-
-        let mut taken =
-            None::<usize>;
-
-        loop {
+        'items: loop {
             let item =
                 self.iterator_next(
                     source.clone()
@@ -2035,35 +2113,20 @@ impl Vm {
                         value,
                 };
 
-            let mut accepted =
-                true;
-
-            for step in
-                &plan.steps
+            for (
+                index,
+                step,
+            ) in plan.steps.iter().enumerate()
             {
-                match step.kind {
-                    PipelineStepKind::Map => {
+                match step {
+                    PipelineStep::Map { .. } => {
                         let closure =
-                            match closures
-                                .get(step.value)
-                            {
-                                Some(
-                                    Value::Closure(
-                                        closure
-                                    )
-                                ) =>
-                                    closure.clone(),
-
-                                _ => {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "invalid fused map closure",
-                                            None,
-                                        )
-                                    );
-                                }
-                            };
+                            closures[index]
+                                .as_ref()
+                                .expect(
+                                    "map closure missing"
+                                )
+                                .clone();
 
                         value =
                             self.call_closure_sync1(
@@ -2072,28 +2135,14 @@ impl Vm {
                             )?;
                     }
 
-                    PipelineStepKind::Filter => {
+                    PipelineStep::Filter { .. } => {
                         let closure =
-                            match closures
-                                .get(step.value)
-                            {
-                                Some(
-                                    Value::Closure(
-                                        closure
-                                    )
-                                ) =>
-                                    closure.clone(),
-
-                                _ => {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "invalid fused filter closure",
-                                            None,
-                                        )
-                                    );
-                                }
-                            };
+                            closures[index]
+                                .as_ref()
+                                .expect(
+                                    "filter closure missing"
+                                )
+                                .clone();
 
                         let predicate =
                             self.call_closure_sync1(
@@ -2105,8 +2154,7 @@ impl Vm {
                             Value::Bool(true) => {}
 
                             Value::Bool(false) => {
-                                accepted = false;
-                                break;
+                                continue 'items;
                             }
 
                             other => {
@@ -2124,47 +2172,46 @@ impl Vm {
                         }
                     }
 
-                    PipelineStepKind::Skip => {
-                        if skipped <
-                            step.value
-                        {
-                            skipped += 1;
-                            accepted = false;
-                            break;
+                    PipelineStep::Skip {
+                        ..
+                    } => {
+                        let state =
+                            &mut states[index];
+
+                        let PipelineRuntimeState::Skip {
+                            remaining
+                        } = state
+                        else {
+                            unreachable!();
+                        };
+
+                        if *remaining > 0 {
+                            *remaining -= 1;
+
+                            continue 'items;
                         }
                     }
 
-                    PipelineStepKind::Take => {
-                        if taken.is_none() {
-                            taken =
-                                Some(
-                                    step.value
-                                );
+                    PipelineStep::Take {
+                        ..
+                    } => {
+                        let state =
+                            &mut states[index];
+
+                        let PipelineRuntimeState::Take {
+                            remaining
+                        } = state
+                        else {
+                            unreachable!();
+                        };
+
+                        if *remaining == 0 {
+                            break 'items;
                         }
 
-                        if taken ==
-                            Some(0)
-                        {
-                            accepted = false;
-                            break;
-                        }
+                        *remaining -= 1;
                     }
                 }
-            }
-
-            if !accepted {
-                continue;
-            }
-
-            if let Some(
-                remaining
-            ) = &mut taken
-            {
-                if *remaining == 0 {
-                    break;
-                }
-
-                *remaining -= 1;
             }
 
             result.push(

@@ -1,19 +1,23 @@
 #[derive(Clone, Copy, Debug)]
-pub enum PipelineStepKind {
-    Map,
-    Filter,
-    Skip,
-    Take,
-}
+pub enum PipelineStep {
+    Map {
+        function_constant: u32,
+    },
 
-#[derive(Clone, Copy, Debug)]
-pub struct PipelineStep {
-    pub kind: PipelineStepKind,
-    pub value: usize,
+    Filter {
+        function_constant: u32,
+    },
+
+    Skip {
+        count: usize,
+    },
+
+    Take {
+        count: usize,
+    },
 }
 
 #[derive(Clone, Debug)]
 pub struct PipelinePlan {
     pub steps: Vec<PipelineStep>,
-    pub closure_count: usize,
 }

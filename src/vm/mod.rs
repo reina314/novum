@@ -7,7 +7,6 @@ pub mod vm;
 pub use pipeline::{
     PipelinePlan,
     PipelineStep,
-    PipelineStepKind,
 };
 
 pub use chunk::{

@@ -621,6 +621,23 @@ fn vm_combined_pipeline() {
     );
 }
 
+#[test]
+fn vm_fused_take_before_filter() {
+    assert_list(
+        r#"
+        (0..10)
+            .take(5)
+            .filter(|x| x % 2 == 0)
+            .collect()
+        "#,
+        &[
+            0,
+            2,
+            4,
+        ],
+    );
+}
+
 // ============================================================
 // Pattern / destructuring
 // ============================================================
@@ -834,10 +851,6 @@ fn vm_match_with_commas() {
     );
 }
 
-// ============================================================
-// Match arm scope
-// ============================================================
-
 #[test]
 fn vm_match_arm_bindings_are_local() {
     assert_int(
@@ -865,10 +878,6 @@ fn vm_match_arm_bindings_are_local() {
     );
 }
 
-// ============================================================
-// Pattern + closure
-// ============================================================
-
 #[test]
 fn vm_pattern_binding_used_by_closure() {
     assert_int(
@@ -882,10 +891,6 @@ fn vm_pattern_binding_used_by_closure() {
         30,
     );
 }
-
-// ============================================================
-// Pattern + mutation
-// ============================================================
 
 #[test]
 fn vm_pattern_binding_can_be_reassigned() {
