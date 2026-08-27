@@ -62,11 +62,19 @@ use std::{
     }, rc::Rc,
 };
 
+struct ExecutionResult {
+    value: Value,
+    frame: CallFrame,
+}
+
 pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
+
     repl_locals: Vec<Value>,
     repl_cells: Vec<Option<CellRef>>,
+    repl_module: ModuleRef,
+
     module_loader: ModuleLoader,
     modules: HashMap<PathBuf, ModuleRef>,
     loading_modules: Vec<PathBuf>,
@@ -80,6 +88,12 @@ impl Vm {
             frames: Vec::with_capacity(32),
             repl_locals: Vec::with_capacity(64),
             repl_cells: Vec::with_capacity(64),
+            repl_module:
+                Rc::new(
+                    RefCell::new(
+                        Module::new("<repl>")
+                    )
+                ),
             module_loader:
                 ModuleLoader::new(
                     std::env::current_dir()
@@ -274,12 +288,7 @@ impl Vm {
             );
         }
 
-        let module =
-            Rc::new(
-                RefCell::new(
-                    Module::new("<repl>")
-                )
-            );
+        let module = self.repl_module.clone();
 
         self.frames.push(
             CallFrame {
@@ -293,31 +302,35 @@ impl Vm {
             }
         );
 
-        let result =
-            self.execute();
-
-        match self.frames.pop() {
-            Some(frame) => {
+        match self.execute_until_depth(0) {
+            Ok(
+                ExecutionResult {
+                    value,
+                    frame,
+                }
+            ) => {
                 self.repl_locals =
                     frame.locals;
 
                 self.repl_cells =
-                    frame.cells.unwrap_or_default();
+                    frame.cells
+                        .unwrap_or_default();
+
+                Ok(value)
             }
 
-            None => {
-                self.repl_locals.clear();
-                self.repl_cells.clear();
-            }
+            Err(error) =>
+                Err(error),
         }
-
-        result
     }
 
     fn execute(
         &mut self,
     ) -> Result<Value> {
-        self.execute_until_depth(0)
+        Ok(
+            self.execute_until_depth(0)?
+                .value
+        )
     }
 
     fn execute_module(
@@ -363,15 +376,18 @@ impl Vm {
             }
         );
 
-        self.execute_until_depth(
-            caller_depth
+        Ok(
+            self.execute_until_depth(
+                caller_depth
+            )?
+            .value
         )
     }
 
     fn execute_until_depth(
         &mut self,
         target_depth: usize,
-    ) -> Result<Value> {
+    ) -> Result<ExecutionResult> {
         loop {
             let instruction =
             self.fetch_instruction()?;
@@ -2514,19 +2530,26 @@ impl Vm {
                     let result =
                         self.pop()?;
 
-                    self.frames.pop()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM frame underflow",
-                                None,
-                            )
-                        })?;
+                    let frame =
+                        self.frames
+                            .pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM frame underflow",
+                                    None,
+                                )
+                            })?;
 
                     if self.frames.len() ==
                         target_depth
                     {
-                        return Ok(result);
+                        return Ok(
+                            ExecutionResult {
+                                value: result,
+                                frame,
+                            }
+                        );
                     }
 
                     self.push(result);
@@ -2536,19 +2559,26 @@ impl Vm {
                     let result =
                         self.pop()?;
 
-                    self.frames.pop()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "VM frame underflow",
-                                None,
-                            )
-                        })?;
+                    let frame =
+                        self.frames
+                            .pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "VM frame underflow",
+                                    None,
+                                )
+                            })?;
 
                     if self.frames.len() ==
                         target_depth
                     {
-                        return Ok(result);
+                        return Ok(
+                            ExecutionResult {
+                                value: result,
+                                frame,
+                            }
+                        );
                     }
 
                     self.push(result);
@@ -3519,8 +3549,11 @@ impl Vm {
             }
         );
 
-        self.execute_until_depth(
-            caller_depth
+        Ok(
+            self.execute_until_depth(
+                caller_depth
+            )?
+            .value
         )
     }
 
@@ -3605,8 +3638,11 @@ impl Vm {
             }
         );
 
-        self.execute_until_depth(
-            caller_depth
+        Ok(
+            self.execute_until_depth(
+                caller_depth
+            )?
+            .value
         )
     }
 
@@ -3667,8 +3703,11 @@ impl Vm {
             }
         );
 
-        self.execute_until_depth(
-            caller_depth
+        Ok(
+            self.execute_until_depth(
+                caller_depth
+            )?
+            .value
         )
     }
 
