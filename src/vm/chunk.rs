@@ -12,6 +12,7 @@ pub struct Chunk {
     pub local_count: usize,
     pub call_sites: Vec<CallSite>,
     pub pipelines: Vec<PipelineProgram>,
+    pub range_loops: Vec<RangeLoop>,
 }
 
 impl Chunk {
@@ -56,6 +57,20 @@ impl Chunk {
 
         self.pipelines.push(
             pipeline
+        );
+
+        index as u32
+    }
+
+    pub fn add_range_loop(
+        &mut self,
+        range: RangeLoop,
+    ) -> u32 {
+        let index =
+            self.range_loops.len();
+
+        self.range_loops.push(
+            range
         );
 
         index as u32
@@ -125,6 +140,9 @@ impl Default for Chunk {
 
             pipelines:
                 Vec::new(),
+
+            range_loops:
+                Vec::new(),
         }
     }
 }
@@ -133,4 +151,13 @@ impl Default for Chunk {
 pub struct CallSite {
     pub names: Vec<Option<String>>,
     pub method: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RangeLoop {
+    pub current_slot: u16,
+    pub end_slot: u16,
+    pub value_slot: u16,
+    pub inclusive: bool,
+    pub exit_ip: u32,
 }

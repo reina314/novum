@@ -72,6 +72,8 @@ pub enum OpCode {
     IteratorFrom,
     IteratorNext,
 
+    RangeNext,
+
     FusedPipeline,
 
     Add,

@@ -7,6 +7,7 @@ pub mod vm;
 pub use chunk::{
     Chunk,
     CallSite,
+    RangeLoop,
 };
 
 pub use pipeline::{

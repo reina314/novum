@@ -1743,6 +1743,165 @@ impl Vm {
                     }
                 }
 
+                OpCode::RangeNext => {
+                    let range_index =
+                        operand as usize;
+
+                    let range =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .range_loops
+                            .get(range_index)
+                            .copied()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "range loop index out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let (
+                        current,
+                        end,
+                    ) = {
+                        let frame =
+                            self.current_frame();
+
+                        let current =
+                            frame
+                                .locals
+                                .get(
+                                    range.current_slot
+                                        as usize
+                                )
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "range current slot out of bounds",
+                                        None,
+                                    )
+                                })?;
+
+                        let end =
+                            frame
+                                .locals
+                                .get(
+                                    range.end_slot
+                                        as usize
+                                )
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        "range end slot out of bounds",
+                                        None,
+                                    )
+                                })?;
+
+                        let Value::Int(
+                            current
+                        ) = current
+                        else {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "range current must be Int",
+                                    None,
+                                )
+                            );
+                        };
+
+                        let Value::Int(
+                            end
+                        ) = end
+                        else {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "range end must be Int",
+                                    None,
+                                )
+                            );
+                        };
+
+                        (
+                            current,
+                            end,
+                        )
+                    };
+
+                    let finished =
+                        if range.inclusive {
+                            current > end
+                        } else {
+                            current >= end
+                        };
+
+                    if finished {
+                        /*
+                        * Do NOT return from execute_until_depth().
+                        *
+                        * Just redirect execution to the instruction after
+                        * the loop. The outer VM dispatch loop continues.
+                        */
+                        self.current_frame_mut().ip =
+                            range.exit_ip as usize;
+                    } else {
+                        let next =
+                            current.checked_add(1)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Overflow,
+                                        "range increment overflow",
+                                        None,
+                                    )
+                                })?;
+
+                        let frame =
+                            self.current_frame_mut();
+
+                        let value_slot =
+                            range.value_slot
+                                as usize;
+
+                        let current_slot =
+                            range.current_slot
+                                as usize;
+
+                        if frame.locals.len() <=
+                            value_slot
+                        {
+                            frame.locals.resize(
+                                value_slot + 1,
+                                Value::Unit,
+                            );
+                        }
+
+                        if frame.locals.len() <=
+                            current_slot
+                        {
+                            frame.locals.resize(
+                                current_slot + 1,
+                                Value::Unit,
+                            );
+                        }
+
+                        frame.locals[value_slot] =
+                            Value::Int(
+                                current
+                            );
+
+                        frame.locals[current_slot] =
+                            Value::Int(
+                                next
+                            );
+                    }
+                }
+
                 OpCode::FusedPipeline => {
                     self.execute_fused_pipeline(
                         operand as usize

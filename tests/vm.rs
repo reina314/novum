@@ -352,6 +352,117 @@ fn vm_range() {
     );
 }
 
+#[test]
+fn vm_range_for_empty() {
+    let result =
+        run(
+            r#"
+            for i in 10..10 {
+                123
+            }
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Unit
+    );
+}
+
+#[test]
+fn vm_range_for_inclusive() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for i in 0..=100 {
+                sum += i
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(5050)
+    );
+}
+
+#[test]
+fn vm_range_for_break() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for i in 0..100 {
+                if i == 10 {
+                    break
+                }
+
+                sum += i
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(45)
+    );
+}
+
+#[test]
+fn vm_range_for_continue() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for i in 0..10 {
+                if i % 2 == 0 {
+                    continue
+                }
+
+                sum += i
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(25)
+    );
+}
+
+#[test]
+fn vm_nested_range_for() {
+    let result =
+        run(
+            r#"
+            let sum = 0
+
+            for i in 0..10 {
+                for j in 0..10 {
+                    sum += i * j
+                }
+            }
+
+            sum
+            "#
+        );
+
+    assert_eq!(
+        result,
+        Value::Int(2025)
+    );
+}
+
 // ============================================================
 // If / while / for
 // ============================================================
