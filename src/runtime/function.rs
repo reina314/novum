@@ -37,7 +37,7 @@ pub struct CallFrame {
     pub closure: ClosureRef,
     pub ip: usize,
     pub locals: Vec<Value>,
-    pub cells: Vec<Option<CellRef>>,
+    pub cells: Option<Vec<Option<CellRef>>>,
     pub range_cursors: Vec<Option<RangeCursor>>,
 }
 

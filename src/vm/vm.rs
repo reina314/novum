@@ -146,7 +146,7 @@ impl Vm {
                 closure,
                 ip: 0,
                 locals: Vec::new(),
-                cells: Vec::new(),
+                cells: None,
                 range_cursors: Vec::new(),
             }
         );
@@ -221,7 +221,7 @@ impl Vm {
                 closure,
                 ip: 0,
                 locals,
-                cells,
+                cells: Some(cells),
                 range_cursors: Vec::new(),
             }
         );
@@ -235,7 +235,7 @@ impl Vm {
                     frame.locals;
 
                 self.repl_cells =
-                    frame.cells;
+                    frame.cells.unwrap_or_default();
             }
 
             None => {
@@ -416,33 +416,59 @@ impl Vm {
                     let slot =
                         operand as usize;
 
-                    let frame =
-                        self.current_frame();
-
                     let value =
-                        if let Some(
-                            Some(cell)
-                        ) = frame.cells.get(slot)
                         {
-                            cell.borrow().clone()
-                        } else {
-                            frame
-                                .locals
-                                .get(slot)
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        format!(
-                                            "local slot out of bounds: {}",
-                                            slot
-                                        ),
-                                        None,
-                                    )
-                                })?
+                            let frame =
+                                self.current_frame();
+
+                            match &frame.cells {
+                                Some(cells) => {
+                                    if let Some(
+                                        Some(cell)
+                                    ) =
+                                        cells.get(slot)
+                                    {
+                                        cell.borrow().clone()
+                                    } else {
+                                        frame
+                                            .locals
+                                            .get(slot)
+                                            .cloned()
+                                            .ok_or_else(|| {
+                                                Error::new(
+                                                    ErrorKind::Runtime,
+                                                    format!(
+                                                        "local slot out of bounds: {}",
+                                                        slot
+                                                    ),
+                                                    None,
+                                                )
+                                            })?
+                                    }
+                                }
+
+                                None => {
+                                    frame
+                                        .locals
+                                        .get(slot)
+                                        .cloned()
+                                        .ok_or_else(|| {
+                                            Error::new(
+                                                ErrorKind::Runtime,
+                                                format!(
+                                                    "local slot out of bounds: {}",
+                                                    slot
+                                                ),
+                                                None,
+                                            )
+                                        })?
+                                }
+                            }
                         };
 
-                    self.push(value);
+                    self.push(
+                        value
+                    );
                 }
 
                 OpCode::StoreLocal => {
@@ -464,25 +490,33 @@ impl Vm {
                     let frame =
                         self.current_frame_mut();
 
-                    if slot >= frame.locals.len() {
+                    if slot >=
+                        frame.locals.len()
+                    {
                         frame.locals.resize(
                             slot + 1,
                             Value::Unit,
                         );
                     }
 
-                    if frame.cells.len() <= slot {
-                        frame.cells.resize(
-                            slot + 1,
-                            None,
-                        );
-                    }
-
-                    if let Some(cell) =
-                        frame.cells[slot].clone()
+                    if let Some(
+                        cells
+                    ) =
+                        frame.cells.as_mut()
                     {
-                        *cell.borrow_mut() =
-                            value.clone();
+                        if cells.len() <= slot {
+                            cells.resize(
+                                slot + 1,
+                                None,
+                            );
+                        }
+
+                        if let Some(cell) =
+                            cells[slot].clone()
+                        {
+                            *cell.borrow_mut() =
+                                value.clone();
+                        }
                     }
 
                     frame.locals[slot] =
@@ -496,14 +530,9 @@ impl Vm {
                     let frame =
                         self.current_frame_mut();
 
-                    /*
-                    * ResetLocal is used for compiler-managed temporary
-                    * and iteration-local bindings. The slot may exist in
-                    * `locals` while `cells` has not been materialized yet.
-                    *
-                    * Keep both arrays structurally aligned.
-                    */
-                    if slot >= frame.locals.len() {
+                    if slot >=
+                        frame.locals.len()
+                    {
                         return Err(
                             Error::new(
                                 ErrorKind::Runtime,
@@ -516,20 +545,21 @@ impl Vm {
                         );
                     }
 
-                    if frame.cells.len() <= slot {
-                        frame.cells.resize(
-                            slot + 1,
-                            None,
-                        );
-                    }
+                    if let Some(
+                        cells
+                    ) =
+                        frame.cells.as_mut()
+                    {
+                        if cells.len() <= slot {
+                            cells.resize(
+                                slot + 1,
+                                None,
+                            );
+                        }
 
-                    /*
-                    * A captured iteration binding keeps its cell alive
-                    * outside the iteration. Clearing this slot ensures
-                    * the next iteration can receive a fresh cell.
-                    */
-                    frame.cells[slot] =
-                        None;
+                        cells[slot] =
+                            None;
+                    }
 
                     frame.locals[slot] =
                         Value::Unit;
@@ -1961,13 +1991,15 @@ impl Vm {
                             );
                         }
 
-                        if frame.cells.len()
-                            <= value_slot
+                        if let Some(cells) =
+                            frame.cells.as_mut()
                         {
-                            frame.cells.resize(
-                                value_slot + 1,
-                                None,
-                            );
+                            if cells.len() <= value_slot {
+                                cells.resize(
+                                    value_slot + 1,
+                                    None,
+                                );
+                            }
                         }
 
                         frame.locals[
@@ -2710,48 +2742,50 @@ impl Vm {
                     slot
                 ) => {
                     if let Some(
-                        Some(cell)
+                        cells
                     ) =
-                        frame.cells.get(
-                            *slot as usize
-                        )
+                        frame.cells.as_ref()
                     {
-                        captures.push(
-                            cell.clone()
-                        );
-                    } else {
-                        /*
-                        * Pipeline expressions currently only read
-                        * captures. Materialize an independent cell
-                        * when the source local has not already been
-                        * promoted to a cell.
-                        */
-                        let value =
-                            frame
-                                .locals
-                                .get(
-                                    *slot as usize
-                                )
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        format!(
-                                            "pipeline capture local slot out of bounds: {}",
-                                            slot
-                                        ),
-                                        None,
-                                    )
-                                })?;
-
-                        captures.push(
-                            Rc::new(
-                                RefCell::new(
-                                    value
-                                )
+                        if let Some(
+                            Some(cell)
+                        ) =
+                            cells.get(
+                                *slot as usize
                             )
-                        );
+                        {
+                            captures.push(
+                                cell.clone()
+                            );
+
+                            continue;
+                        }
                     }
+
+                    let value =
+                        frame
+                            .locals
+                            .get(
+                                *slot as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    format!(
+                                        "pipeline capture local slot out of bounds: {}",
+                                        slot
+                                    ),
+                                    None,
+                                )
+                            })?;
+
+                    captures.push(
+                        Rc::new(
+                            RefCell::new(
+                                value
+                            )
+                        )
+                    );
                 }
 
                 UpvalueSpec::Parent(
@@ -3012,7 +3046,7 @@ impl Vm {
                     vec![
                         None;
                         local_count
-                    ],
+                    ].into(),
                 range_cursors: Vec::new(),
             }
         );
@@ -3092,7 +3126,7 @@ impl Vm {
                 closure,
                 ip: 0,
                 locals,
-                cells,
+                cells: Some(cells),
                 range_cursors: Vec::new(),
             }
         );
@@ -3165,7 +3199,7 @@ impl Vm {
                 closure,
                 ip: 0,
                 locals,
-                cells,
+                cells: Some(cells),
                 range_cursors: Vec::new(),
             }
         );
@@ -3214,7 +3248,7 @@ impl Vm {
                     vec![
                         None;
                         local_count
-                    ],
+                    ].into(),
                 range_cursors: Vec::new(),
             }
         );
@@ -4187,7 +4221,7 @@ impl Vm {
                 Error::new(
                     ErrorKind::Runtime,
                     format!(
-                        "capture local slot out of bounds: {}",
+                        "local slot out of bounds: {}",
                         slot
                     ),
                     None,
@@ -4195,15 +4229,35 @@ impl Vm {
             );
         }
 
-        if frame.cells.len() <= slot {
-            frame.cells.resize(
+        if frame.cells.is_none() {
+            let local_count =
+                frame.locals.len();
+
+            frame.cells =
+                Some(
+                    vec![
+                        None;
+                        local_count
+                    ]
+                );
+        }
+
+        let cells =
+            frame.cells
+                .as_mut()
+                .expect(
+                    "cells must be initialized"
+                );
+
+        if cells.len() <= slot {
+            cells.resize(
                 slot + 1,
                 None,
             );
         }
 
         if let Some(cell) =
-            frame.cells[slot].clone()
+            cells[slot].clone()
         {
             return Ok(cell);
         }
@@ -4216,7 +4270,7 @@ impl Vm {
                 )
             );
 
-        frame.cells[slot] =
+        cells[slot] =
             Some(
                 cell.clone()
             );
