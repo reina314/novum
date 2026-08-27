@@ -66,9 +66,101 @@ pub enum PipelineExpr {
 }
 
 #[derive(Clone, Debug)]
+pub enum PipelinePlan {
+    Generic,
+
+    IntRange {
+        stages: Vec<IntPipelineStage>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum IntPipelineStage {
+    Map(IntPipelineExpr),
+
+    Filter(IntPipelinePredicate),
+
+    Skip(usize),
+
+    Take(usize),
+}
+
+#[derive(Clone, Debug)]
+pub enum IntPipelineExpr {
+    Input,
+
+    Const(i64),
+
+    Capture(u16),
+
+    Add(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Sub(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Mul(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Div(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Mod(
+        Box<Self>,
+        Box<Self>,
+    ),
+
+    Neg(
+        Box<Self>,
+    ),
+}
+
+#[derive(Clone, Debug)]
+pub enum IntPipelinePredicate {
+    Eq(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+
+    Neq(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+
+    Lt(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+
+    Leq(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+
+    Gt(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+
+    Geq(
+        Box<IntPipelineExpr>,
+        Box<IntPipelineExpr>,
+    ),
+}
+
+#[derive(Clone, Debug)]
 pub struct PipelineProgram {
     pub source: PipelineSource,
     pub stages: Vec<PipelineStage>,
+    pub plan: PipelinePlan
 }
 
 impl PipelineProgram {

@@ -35,6 +35,10 @@ use super::{
     PipelineStage,
     PipelineSource,
     PipelineProgram,
+    PipelinePlan,
+    IntPipelineExpr,
+    IntPipelinePredicate,
+    IntPipelineStage,
 };
 
 use std::{
@@ -1379,6 +1383,339 @@ impl Compiler {
             result?,
             captures,
         ))
+    }
+
+    fn lower_int_pipeline_expr(
+        expr: &PipelineExpr,
+    ) -> Option<IntPipelineExpr> {
+        match expr {
+            PipelineExpr::Input =>
+                Some(
+                    IntPipelineExpr::Input
+                ),
+
+            PipelineExpr::Int(value) =>
+                Some(
+                    IntPipelineExpr::Const(
+                        *value
+                    )
+                ),
+
+            PipelineExpr::Capture(slot) =>
+                Some(
+                    IntPipelineExpr::Capture(
+                        *slot
+                    )
+                ),
+
+            PipelineExpr::Add(
+                left,
+                right,
+            ) => Some(
+                IntPipelineExpr::Add(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            left
+                        )?
+                    ),
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            right
+                        )?
+                    ),
+                )
+            ),
+
+            PipelineExpr::Sub(
+                left,
+                right,
+            ) => Some(
+                IntPipelineExpr::Sub(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            left
+                        )?
+                    ),
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            right
+                        )?
+                    ),
+                )
+            ),
+
+            PipelineExpr::Mul(
+                left,
+                right,
+            ) => Some(
+                IntPipelineExpr::Mul(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            left
+                        )?
+                    ),
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            right
+                        )?
+                    ),
+                )
+            ),
+
+            PipelineExpr::Div(
+                left,
+                right,
+            ) => Some(
+                IntPipelineExpr::Div(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            left
+                        )?
+                    ),
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            right
+                        )?
+                    ),
+                )
+            ),
+
+            PipelineExpr::Mod(
+                left,
+                right,
+            ) => Some(
+                IntPipelineExpr::Mod(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            left
+                        )?
+                    ),
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            right
+                        )?
+                    ),
+                )
+            ),
+
+            PipelineExpr::Neg(
+                expr
+            ) => Some(
+                IntPipelineExpr::Neg(
+                    Box::new(
+                        Self::lower_int_pipeline_expr(
+                            expr
+                        )?
+                    )
+                )
+            ),
+
+            _ =>
+                None,
+        }
+    }
+
+    fn lower_int_predicate(
+        expr: &PipelineExpr,
+    ) -> Option<IntPipelinePredicate> {
+        match expr {
+            PipelineExpr::Eq(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Eq(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            PipelineExpr::Neq(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Neq(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            PipelineExpr::Lt(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Lt(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            PipelineExpr::Leq(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Leq(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            PipelineExpr::Gt(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Gt(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            PipelineExpr::Geq(
+                left,
+                right,
+            ) =>
+                Some(
+                    IntPipelinePredicate::Geq(
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                left
+                            )?
+                        ),
+                        Box::new(
+                            Self::lower_int_pipeline_expr(
+                                right
+                            )?
+                        ),
+                    )
+                ),
+
+            _ =>
+                None,
+        }
+    }
+
+    fn lower_int_pipeline_plan(
+        &self,
+        stages: &[PipelineStage],
+    ) -> PipelinePlan {
+        let mut result =
+            Vec::with_capacity(
+                stages.len()
+            );
+
+        for stage in stages {
+            match stage {
+                PipelineStage::Map {
+                    expr,
+                    ..
+                } => {
+                    let Some(
+                        expr
+                    ) =
+                        Self::lower_int_pipeline_expr(
+                            expr
+                        )
+                    else {
+                        return PipelinePlan::Generic;
+                    };
+
+                    result.push(
+                        IntPipelineStage::Map(
+                            expr
+                        )
+                    );
+                }
+
+                PipelineStage::Filter {
+                    expr,
+                    ..
+                } => {
+                    let Some(
+                        predicate
+                    ) =
+                        Self::lower_int_predicate(
+                            expr
+                        )
+                    else {
+                        return PipelinePlan::Generic;
+                    };
+
+                    result.push(
+                        IntPipelineStage::Filter(
+                            predicate
+                        )
+                    );
+                }
+
+                PipelineStage::Skip {
+                    count
+                } => {
+                    result.push(
+                        IntPipelineStage::Skip(
+                            *count
+                        )
+                    );
+                }
+
+                PipelineStage::Take {
+                    count
+                } => {
+                    result.push(
+                        IntPipelineStage::Take(
+                            *count
+                        )
+                    );
+                }
+            }
+        }
+
+        PipelinePlan::IntRange {
+            stages: result
+        }
     }
 
     fn range_for_parts(
@@ -4032,10 +4369,16 @@ impl Compiler {
             }
         }
 
+        let plan =
+            self.lower_int_pipeline_plan(
+                &compiled
+            );
+
         Ok(
             PipelineProgram {
                 source,
                 stages: compiled,
+                plan,
             }
         )
     }

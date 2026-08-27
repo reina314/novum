@@ -43,6 +43,8 @@ use super::{
     PipelineSource,
     PipelineStage,
     PipelineExpr,
+    IntPipelineExpr,
+    IntPipelinePredicate,
 };
 
 use std::{
@@ -3518,6 +3520,327 @@ impl Vm {
                 )
             }
         )
+    }
+
+    fn eval_int_pipeline_expr(
+        &self,
+        expr: &IntPipelineExpr,
+        input: i64,
+        captures: &[CellRef],
+    ) -> Result<i64> {
+        match expr {
+            IntPipelineExpr::Input =>
+                Ok(input),
+
+            IntPipelineExpr::Const(value) =>
+                Ok(*value),
+
+            IntPipelineExpr::Capture(index) => {
+                let cell =
+                    captures
+                        .get(*index as usize)
+                        .cloned()
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "pipeline capture slot out of bounds: {}",
+                                    index
+                                ),
+                                None,
+                            )
+                        })?;
+
+                let value =
+                    cell.borrow().clone();
+
+                match value {
+                    Value::Int(value) =>
+                        Ok(value),
+
+                    other =>
+                        Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                format!(
+                                    "integer pipeline capture expected Int, got {}",
+                                    other.type_name()
+                                ),
+                                None,
+                            )
+                        ),
+                }
+            }
+
+            IntPipelineExpr::Add(
+                left,
+                right,
+            ) =>
+                self.eval_int_pipeline_expr(
+                    left,
+                    input,
+                    captures,
+                )?
+                .checked_add(
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "integer addition overflow",
+                        None,
+                    )
+                }),
+
+            IntPipelineExpr::Sub(
+                left,
+                right,
+            ) =>
+                self.eval_int_pipeline_expr(
+                    left,
+                    input,
+                    captures,
+                )?
+                .checked_sub(
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "integer subtraction overflow",
+                        None,
+                    )
+                }),
+
+            IntPipelineExpr::Mul(
+                left,
+                right,
+            ) =>
+                self.eval_int_pipeline_expr(
+                    left,
+                    input,
+                    captures,
+                )?
+                .checked_mul(
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "integer multiplication overflow",
+                        None,
+                    )
+                }),
+
+            IntPipelineExpr::Div(
+                left,
+                right,
+            ) => {
+                let lhs =
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?;
+
+                let rhs =
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?;
+
+                lhs.checked_div(
+                    rhs
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "integer division failed",
+                        None,
+                    )
+                })
+            }
+
+            IntPipelineExpr::Mod(
+                left,
+                right,
+            ) => {
+                let lhs =
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?;
+
+                let rhs =
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?;
+
+                lhs.checked_rem(
+                    rhs
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "integer remainder failed",
+                        None,
+                    )
+                })
+            }
+
+            IntPipelineExpr::Neg(
+                expr
+            ) => {
+                let value =
+                    self.eval_int_pipeline_expr(
+                        expr,
+                        input,
+                        captures,
+                    )?;
+
+                value.checked_neg()
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Overflow,
+                            "integer negation overflow",
+                            None,
+                        )
+                    })
+            }
+        }
+    }
+
+    fn eval_int_pipeline_predicate(
+        &self,
+        predicate: &IntPipelinePredicate,
+        input: i64,
+        captures: &[CellRef],
+    ) -> Result<bool> {
+        match predicate {
+            IntPipelinePredicate::Eq(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    ==
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+
+            IntPipelinePredicate::Neq(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    !=
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+
+            IntPipelinePredicate::Lt(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    <
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+
+            IntPipelinePredicate::Leq(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    <=
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+
+            IntPipelinePredicate::Gt(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    >
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+
+            IntPipelinePredicate::Geq(
+                left,
+                right,
+            ) =>
+                Ok(
+                    self.eval_int_pipeline_expr(
+                        left,
+                        input,
+                        captures,
+                    )?
+                    >=
+                    self.eval_int_pipeline_expr(
+                        right,
+                        input,
+                        captures,
+                    )?
+                ),
+        }
     }
 
     #[inline]

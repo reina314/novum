@@ -16,6 +16,10 @@ pub use pipeline::{
     PipelineStage,
     PipelineState,
     PipelineExpr,
+    PipelinePlan,
+    IntPipelineExpr,
+    IntPipelinePredicate,
+    IntPipelineStage,
 };
 
 pub use compiler::{
