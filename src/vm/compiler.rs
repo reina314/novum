@@ -30,6 +30,9 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
+    PipelineStage,
+    PipelineSource,
+    PipelineProgram,
 };
 
 use std::{
@@ -39,7 +42,7 @@ use std::{
 };
 
 
-enum PipelineStage {
+enum PipelineStageAst {
     Map(Expr),
     Filter(Expr),
     Skip(usize),
@@ -4203,91 +4206,161 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_pipeline_lambda(
+    fn compile_pipeline_program(
         &mut self,
-        lambda: &Expr,
-        item_slot: u16,
-    ) -> Result<()> {
-        let ExprKind::Lambda(
-            params,
-            body,
-        ) =
-            &lambda.kind
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline stage requires a lambda",
-                    None,
-                )
-            );
-        };
+        source: &Expr,
+        stages: &[PipelineStageAst],
+    ) -> Result<PipelineProgram> {
+        let source =
+            match &source.kind {
+                ExprKind::Range {
+                    start:
+                        Some(start),
+                    end:
+                        Some(end),
+                    inclusive,
+                } => {
+                    let ExprKind::Int(start) =
+                        &start.kind
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "fused range requires constant integer start",
+                                None,
+                            )
+                        );
+                    };
 
-        if params.len() != 1 {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    "fused map/filter lambda must take exactly one argument",
-                    None,
-                )
+                    let ExprKind::Int(end) =
+                        &end.kind
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "fused range requires constant integer end",
+                                None,
+                            )
+                        );
+                    };
+
+                    PipelineSource::Range {
+                        start: *start,
+                        end: *end,
+                        inclusive:
+                            *inclusive,
+                    }
+                }
+
+                _ => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "pipeline source is not yet supported by fused VM",
+                            None,
+                        )
+                    );
+                }
+            };
+
+        let mut compiled =
+            Vec::with_capacity(
+                stages.len()
             );
+
+        for stage in stages {
+            match stage {
+                PipelineStageAst::Map(
+                    expr
+                ) => {
+                    let ExprKind::Lambda(
+                        params,
+                        body,
+                    ) =
+                        &expr.kind
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "map requires lambda",
+                                None,
+                            )
+                        );
+                    };
+
+                    let function =
+                        self.compile_lambda_proto(
+                            params,
+                            body,
+                        )?;
+
+                    compiled.push(
+                        PipelineStage::Map {
+                            function,
+                        }
+                    );
+                }
+
+                PipelineStageAst::Filter(
+                    expr
+                ) => {
+                    let ExprKind::Lambda(
+                        params,
+                        body,
+                    ) =
+                        &expr.kind
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "filter requires lambda",
+                                None,
+                            )
+                        );
+                    };
+
+                    let function =
+                        self.compile_lambda_proto(
+                            params,
+                            body,
+                        )?;
+
+                    compiled.push(
+                        PipelineStage::Filter {
+                            function,
+                        }
+                    );
+                }
+
+                PipelineStageAst::Skip(
+                    count
+                ) => {
+                    compiled.push(
+                        PipelineStage::Skip {
+                            count: *count,
+                        }
+                    );
+                }
+
+                PipelineStageAst::Take(
+                    count
+                ) => {
+                    compiled.push(
+                        PipelineStage::Take {
+                            count: *count,
+                        }
+                    );
+                }
+            }
         }
 
-        let Pattern::Ident(
-            name
-        ) =
-            &params[0]
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "fused map/filter parameter must be an identifier",
-                    None,
-                )
-            );
-        };
-
-        if !Self::is_fusable_pipeline_expr(
-            body
-        ) {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline lambda contains unsupported control flow for fusion",
-                    None,
-                )
-            );
-        }
-
-        let parent =
-            self.scope.clone();
-
-        let inline_scope =
-            Scope::new(
-                Some(parent.clone()),
-                false,
-            );
-
-        inline_scope
-            .borrow_mut()
-            .locals
-            .insert(
-                name.clone(),
-                item_slot,
-            );
-
-        self.scope =
-            inline_scope;
-
-        let result =
-            self.compile_expr(
-                body
-            );
-
-        self.scope =
-            parent;
-
-        result
+        Ok(
+            PipelineProgram {
+                source,
+                stages:
+                    compiled,
+            }
+        )
     }
 
     fn try_compile_fused_collect(
@@ -4302,7 +4375,8 @@ impl Compiler {
         let ExprKind::Field {
             object,
             name,
-        } = &callee.kind
+        } =
+            &callee.kind
         else {
             return Ok(false);
         };
@@ -4315,48 +4389,28 @@ impl Compiler {
             source,
             stages,
         )) =
-            self.extract_pipeline(object)?
+            self.extract_pipeline(
+                object
+            )?
         else {
             return Ok(false);
         };
 
-        /*
-        * Check the lambda BODY, not ExprKind::Lambda itself.
-        */
-        for stage in &stages {
-            match stage {
-                PipelineStage::Map(
-                    lambda
-                )
-                |
-                PipelineStage::Filter(
-                    lambda
-                ) => {
-                    let ExprKind::Lambda(
-                        _,
-                        body,
-                    ) = &lambda.kind
-                    else {
-                        return Ok(false);
-                    };
+        let pipeline =
+            self.compile_pipeline_program(
+                &source,
+                &stages,
+            )?;
 
-                    if !Self::is_fusable_pipeline_expr(
-                        body
-                    ) {
-                        return Ok(false);
-                    }
-                }
+        let pipeline_index =
+            self.chunk.add_pipeline(
+                pipeline
+            );
 
-                PipelineStage::Skip(_)
-                |
-                PipelineStage::Take(_) => {}
-            }
-        }
-
-        self.compile_fused_pipeline(
-            &source,
-            &stages,
-        )?;
+        self.chunk.emit_operand(
+            OpCode::FusedPipeline,
+            pipeline_index,
+        );
 
         Ok(true)
     }

@@ -39,6 +39,8 @@ use super::{
     Chunk,
     OpCode,
     Instruction,
+    PipelineSource,
+    PipelineStage,
 };
 
 use std::{
@@ -1742,6 +1744,12 @@ impl Vm {
                     }
                 }
 
+                OpCode::FusedPipeline => {
+                    self.execute_fused_pipeline(
+                        operand as usize
+                    )?;
+                }
+
                 OpCode::MatchTuple => {
                     let value =
                         self.pop()?;
@@ -1933,6 +1941,467 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn execute_pipeline_function(
+        &mut self,
+        function: FunctionRef,
+        argument: Value,
+    ) -> Result<Value> {
+        let chunk =
+            function.chunk.clone();
+
+        let mut stack =
+            Vec::with_capacity(8);
+
+        let mut locals =
+            Vec::with_capacity(
+                chunk.local_count
+            );
+
+        locals.push(
+            argument
+        );
+
+        locals.resize(
+            chunk.local_count,
+            Value::Unit,
+        );
+
+        let mut ip =
+            0usize;
+
+        loop {
+            let instruction =
+                chunk.code
+                    .get(ip)
+                    .copied()
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "pipeline function instruction out of bounds",
+                            None,
+                        )
+                    })?;
+
+            ip += 1;
+
+            match instruction.opcode {
+                OpCode::Constant => {
+                    let value =
+                        chunk.constants
+                            .get(
+                                instruction.operand
+                                    as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline function constant out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    stack.push(
+                        value
+                    );
+                }
+
+                OpCode::LoadLocal => {
+                    let value =
+                        locals
+                            .get(
+                                instruction.operand
+                                    as usize
+                            )
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline local out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    stack.push(
+                        value
+                    );
+                }
+
+                OpCode::Add
+                | OpCode::Sub
+                | OpCode::Mul
+                | OpCode::Div
+                | OpCode::Mod
+                | OpCode::Pow
+                | OpCode::Eq
+                | OpCode::Neq
+                | OpCode::Lt
+                | OpCode::Leq
+                | OpCode::Gt
+                | OpCode::Geq => {
+                    let rhs =
+                        stack.pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    let lhs =
+                        stack.pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    let op =
+                        Self::opcode_to_binop(
+                            instruction.opcode
+                        )
+                        .expect(
+                            "pipeline binary opcode"
+                        );
+
+                    let result =
+                        apply_binop(
+                            op,
+                            lhs,
+                            rhs,
+                        )
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                    stack.push(
+                        result
+                    );
+                }
+
+                OpCode::Neg => {
+                    let value =
+                        stack.pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    stack.push(
+                        value
+                            .negate()
+                            .map_err(
+                                |message| {
+                                    Error::new(
+                                        ErrorKind::Runtime,
+                                        message,
+                                        None,
+                                    )
+                                }
+                            )?
+                    );
+                }
+
+                OpCode::Not => {
+                    let value =
+                        stack.pop()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "pipeline stack underflow",
+                                    None,
+                                )
+                            })?;
+
+                    let Value::Bool(
+                        value
+                    ) = value
+                    else {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Type,
+                                "expected Bool",
+                                None,
+                            )
+                        );
+                    };
+
+                    stack.push(
+                        Value::Bool(!value)
+                    );
+                }
+
+                OpCode::Return => {
+                    return stack.pop()
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "pipeline function returned without value",
+                                None,
+                            )
+                        });
+                }
+
+                _ => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "unsupported operation in fused pipeline function",
+                            None,
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    fn execute_fused_pipeline(
+        &mut self,
+        pipeline_index: usize,
+    ) -> Result<()> {
+        let pipeline =
+            self.current_frame()
+                .closure
+                .function
+                .chunk
+                .pipelines
+                .get(
+                    pipeline_index
+                )
+                .cloned()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "pipeline index out of bounds",
+                        None,
+                    )
+                })?;
+
+        let list =
+            List::with_capacity(
+                self.pipeline_capacity(
+                    &pipeline
+                )?
+            );
+
+        match pipeline.source {
+            PipelineSource::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.execute_fused_range_pipeline(
+                    start,
+                    end,
+                    inclusive,
+                    &pipeline.stages,
+                    list.clone(),
+                )?;
+            }
+
+            PipelineSource::Expression => {
+                return Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "fused expression source is not implemented",
+                        None,
+                    )
+                );
+            }
+        }
+
+        self.push(
+            Value::List(
+                list
+            )
+        );
+
+        Ok(())
+    }
+
+    fn execute_fused_range_pipeline(
+        &mut self,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        stages: &[PipelineStage],
+        output: ListRef,
+    ) -> Result<()> {
+        let end =
+            if inclusive {
+                end.checked_add(1)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Overflow,
+                            "inclusive range endpoint overflow",
+                            None,
+                        )
+                    })?
+            } else {
+                end
+            };
+
+        if start >= end {
+            return Ok(());
+        }
+
+        let mut skip_remaining =
+            Vec::with_capacity(
+                stages.len()
+            );
+
+        let mut take_remaining =
+            Vec::with_capacity(
+                stages.len()
+            );
+
+        for stage in stages {
+            match stage {
+                PipelineStage::Skip {
+                    count
+                } => {
+                    skip_remaining.push(
+                        Some(*count)
+                    );
+
+                    take_remaining.push(
+                        None
+                    );
+                }
+
+                PipelineStage::Take {
+                    count
+                } => {
+                    skip_remaining.push(
+                        None
+                    );
+
+                    take_remaining.push(
+                        Some(*count)
+                    );
+                }
+
+                _ => {
+                    skip_remaining.push(
+                        None
+                    );
+
+                    take_remaining.push(
+                        None
+                    );
+                }
+            }
+        }
+
+        for current in start..end {
+            let mut value =
+                Value::Int(current);
+
+            let mut accepted =
+                true;
+
+            for (
+                index,
+                stage,
+            ) in stages.iter().enumerate()
+            {
+                match stage {
+                    PipelineStage::Map {
+                        function
+                    } => {
+                        value =
+                            self.execute_pipeline_function(
+                                function.clone(),
+                                value,
+                            )?;
+                    }
+
+                    PipelineStage::Filter {
+                        function
+                    } => {
+                        let result =
+                            self.execute_pipeline_function(
+                                function.clone(),
+                                value.clone(),
+                            )?;
+
+                        let Value::Bool(
+                            keep
+                        ) = result
+                        else {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    "filter predicate must return Bool",
+                                    None,
+                                )
+                            );
+                        };
+
+                        if !keep {
+                            accepted = false;
+                            break;
+                        }
+                    }
+
+                    PipelineStage::Skip {
+                        ..
+                    } => {
+                        let remaining =
+                            skip_remaining[index]
+                                .as_mut()
+                                .expect(
+                                    "skip state missing"
+                                );
+
+                        if *remaining > 0 {
+                            *remaining -= 1;
+                            accepted = false;
+                            break;
+                        }
+                    }
+
+                    PipelineStage::Take {
+                        ..
+                    } => {
+                        let remaining =
+                            take_remaining[index]
+                                .as_mut()
+                                .expect(
+                                    "take state missing"
+                                );
+
+                        if *remaining == 0 {
+                            return Ok(());
+                        }
+
+                        *remaining -= 1;
+                    }
+                }
+            }
+
+            if accepted {
+                output.push(
+                    value
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn bind_arguments(

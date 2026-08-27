@@ -1,6 +1,7 @@
 use crate::runtime::Value;
 use super::{
     OpCode,
+    PipelineProgram,
 };
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     pub local_count: usize,
     pub call_sites: Vec<CallSite>,
+    pub pipelines: Vec<PipelineProgram>,
 }
 
 impl Chunk {
@@ -68,6 +70,20 @@ impl Chunk {
                 names,
                 method,
             }
+        );
+
+        index as u32
+    }
+
+    pub fn add_pipeline(
+        &mut self,
+        pipeline: PipelineProgram,
+    ) -> u32 {
+        let index =
+            self.pipelines.len();
+
+        self.pipelines.push(
+            pipeline
         );
 
         index as u32
@@ -123,10 +139,20 @@ impl Chunk {
 impl Default for Chunk {
     fn default() -> Self {
         Self {
-            code: Vec::new(),
-            constants: Vec::new(),
-            local_count: 0,
-            call_sites: Vec::new(),
+            code:
+                Vec::new(),
+
+            constants:
+                Vec::new(),
+
+            local_count:
+                0,
+
+            call_sites:
+                Vec::new(),
+
+            pipelines:
+                Vec::new(),
         }
     }
 }
