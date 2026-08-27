@@ -1942,300 +1942,6 @@ impl Vm {
         }
     }
 
-    fn execute_pipeline_function(
-        &mut self,
-        closure: &ClosureRef,
-        argument: Value,
-    ) -> Result<Value> {
-        let function =
-            &closure.function;
-
-        let chunk =
-            function.chunk.clone();
-
-        let mut stack =
-            Vec::with_capacity(8);
-
-        let mut locals =
-            Vec::with_capacity(
-                chunk.local_count
-            );
-
-        locals.push(
-            argument
-        );
-
-        locals.resize(
-            chunk.local_count,
-            Value::Unit,
-        );
-
-        let mut ip =
-            0usize;
-
-        loop {
-            let instruction =
-                chunk.code
-                    .get(ip)
-                    .copied()
-                    .ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "pipeline function instruction out of bounds",
-                            None,
-                        )
-                    })?;
-
-            ip += 1;
-
-            match instruction.opcode {
-                OpCode::Constant => {
-                    let value =
-                        chunk.constants
-                            .get(
-                                instruction.operand
-                                    as usize
-                            )
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline function constant out of bounds",
-                                    None,
-                                )
-                            })?;
-
-                    stack.push(
-                        value
-                    );
-                }
-
-                OpCode::LoadLocal => {
-                    let value =
-                        locals
-                            .get(
-                                instruction.operand
-                                    as usize
-                            )
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline local out of bounds",
-                                    None,
-                                )
-                            })?;
-
-                    stack.push(
-                        value
-                    );
-                }
-
-                OpCode::LoadUpvalue => {
-                    let index =
-                        instruction.operand
-                            as usize;
-
-                    let cell =
-                        closure
-                            .upvalues
-                            .get(index)
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    format!(
-                                        "pipeline upvalue slot out of bounds: {}",
-                                        index
-                                    ),
-                                    None,
-                                )
-                            })?;
-
-                    stack.push(
-                        cell.borrow().clone()
-                    );
-                }
-
-                OpCode::StoreUpvalue => {
-                    let index =
-                        instruction.operand
-                            as usize;
-
-                    let value =
-                        stack.pop()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline stack underflow",
-                                    None,
-                                )
-                            })?;
-
-                    let cell =
-                        closure
-                            .upvalues
-                            .get(index)
-                            .cloned()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    format!(
-                                        "pipeline upvalue slot out of bounds: {}",
-                                        index
-                                    ),
-                                    None,
-                                )
-                            })?;
-
-                    *cell.borrow_mut() =
-                        value.clone();
-
-                    stack.push(
-                        value
-                    );
-                }
-
-                OpCode::Add
-                | OpCode::Sub
-                | OpCode::Mul
-                | OpCode::Div
-                | OpCode::Mod
-                | OpCode::Pow
-                | OpCode::Eq
-                | OpCode::Neq
-                | OpCode::Lt
-                | OpCode::Leq
-                | OpCode::Gt
-                | OpCode::Geq => {
-                    let rhs =
-                        stack.pop()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline stack underflow",
-                                    None,
-                                )
-                            })?;
-
-                    let lhs =
-                        stack.pop()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline stack underflow",
-                                    None,
-                                )
-                            })?;
-
-                    let op =
-                        Self::opcode_to_binop(
-                            instruction.opcode
-                        )
-                        .expect(
-                            "pipeline binary opcode"
-                        );
-
-                    let result =
-                        apply_binop(
-                            op,
-                            lhs,
-                            rhs,
-                        )
-                        .map_err(
-                            |message| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                )
-                            }
-                        )?;
-
-                    stack.push(
-                        result
-                    );
-                }
-
-                OpCode::Neg => {
-                    let value =
-                        stack.pop()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline stack underflow",
-                                    None,
-                                )
-                            })?;
-
-                    stack.push(
-                        value
-                            .negate()
-                            .map_err(
-                                |message| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        message,
-                                        None,
-                                    )
-                                }
-                            )?
-                    );
-                }
-
-                OpCode::Not => {
-                    let value =
-                        stack.pop()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "pipeline stack underflow",
-                                    None,
-                                )
-                            })?;
-
-                    let Value::Bool(
-                        value
-                    ) = value
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Type,
-                                "expected Bool",
-                                None,
-                            )
-                        );
-                    };
-
-                    stack.push(
-                        Value::Bool(!value)
-                    );
-                }
-
-                OpCode::Return => {
-                    return stack.pop()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "pipeline function returned without value",
-                                None,
-                            )
-                        });
-                }
-
-                _ => {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "unsupported operation in fused pipeline function",
-                            None,
-                        )
-                    );
-                }
-            }
-        }
-    }
-
     fn execute_fused_pipeline(
         &mut self,
         pipeline_index: usize,
@@ -2256,15 +1962,16 @@ impl Vm {
                     )
                 })?;
 
+        let captures =
+            self.current_frame()
+                .closure
+                .upvalues
+                .clone();
+
         let list =
             List::with_capacity(
                 pipeline
                     .capacity_upper_bound()?
-            );
-
-        let closures =
-            Vec::with_capacity(
-                pipeline.stages.len()
             );
 
         match pipeline.source {
@@ -2278,7 +1985,7 @@ impl Vm {
                     end,
                     inclusive,
                     &pipeline.stages,
-                    &closures,
+                    &captures,
                     &list,
                 )?;
             }
@@ -2297,7 +2004,7 @@ impl Vm {
         end: i64,
         inclusive: bool,
         stages: &[PipelineStage],
-        closures: &[Option<ClosureRef>],
+        captures: &[CellRef],
         output: &List,
     ) -> Result<()> {
         /*
@@ -2374,25 +2081,6 @@ impl Vm {
                 .collect::<Vec<_>>();
 
         /*
-        * Validate that the compiler supplied exactly one
-        * closure entry for every stage.
-        *
-        * This turns an internal compiler/runtime mismatch into
-        * an explicit VM error instead of an indexing panic.
-        */
-        if closures.len() !=
-            stages.len()
-        {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "pipeline closure metadata does not match pipeline stages",
-                    None,
-                )
-            );
-        }
-
-        /*
         * Main fused loop.
         *
         * No IteratorObj::Range is created here.
@@ -2434,6 +2122,7 @@ impl Vm {
                             self.eval_pipeline_expr(
                                 expr,
                                 value,
+                                captures,
                             )?;
                     }
 
@@ -2449,6 +2138,7 @@ impl Vm {
                             self.eval_pipeline_expr(
                                 expr,
                                 value.clone(),
+                                captures,
                             )?;
 
                         let Value::Bool(
@@ -3151,6 +2841,7 @@ impl Vm {
         &self,
         expr: &PipelineExpr,
         input: Value,
+        captures: &[CellRef],
     ) -> Result<Value> {
         match expr {
             PipelineExpr::Input =>
@@ -3180,21 +2871,26 @@ impl Vm {
                     )
                 ),
 
-            PipelineExpr::Capture(_) => {
-                /*
-                * Capture support requires resolving the captured
-                * variable from the executing Closure.
-                *
-                * This evaluator will therefore be upgraded to
-                * receive a capture environment.
-                */
-                Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "pipeline capture requires capture environment",
-                        None,
-                    )
-                )
+            PipelineExpr::Capture(index) => {
+                let cell =
+                    captures
+                        .get(*index as usize)
+                        .cloned()
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "pipeline capture slot out of bounds: {}",
+                                    index
+                                ),
+                                None,
+                            )
+                        })?;
+
+                let value =
+                    cell.borrow().clone();
+
+                Ok(value)
             }
 
             PipelineExpr::Add(
@@ -3206,6 +2902,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3218,6 +2915,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3230,6 +2928,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3242,6 +2941,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3254,6 +2954,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3266,6 +2967,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3278,6 +2980,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3290,6 +2993,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3302,6 +3006,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3314,6 +3019,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3326,6 +3032,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3338,6 +3045,7 @@ impl Vm {
                     left,
                     right,
                     input,
+                    captures,
                 )
             }
 
@@ -3348,6 +3056,7 @@ impl Vm {
                     self.eval_pipeline_expr(
                         expr,
                         input,
+                        captures,
                     )?;
 
                 value
@@ -3370,6 +3079,7 @@ impl Vm {
                     self.eval_pipeline_expr(
                         expr,
                         input,
+                        captures,
                     )?;
 
                 match value {
@@ -3400,17 +3110,20 @@ impl Vm {
         left: &PipelineExpr,
         right: &PipelineExpr,
         input: Value,
+        captures: &[CellRef],
     ) -> Result<Value> {
         let lhs =
             self.eval_pipeline_expr(
                 left,
                 input.clone(),
+                captures,
             )?;
 
         let rhs =
             self.eval_pipeline_expr(
                 right,
                 input,
+                captures,
             )?;
 
         apply_binop(
