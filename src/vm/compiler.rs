@@ -956,6 +956,97 @@ impl Compiler {
         )
     }
 
+    fn pipeline_lambda_is_fusable(
+        lambda: &Expr,
+    ) -> bool {
+        let ExprKind::Lambda(
+            params,
+            body,
+        ) = &lambda.kind
+        else {
+            return false;
+        };
+
+        if params.len() != 1 {
+            return false;
+        }
+
+        Self::pipeline_expr_is_fusable(
+            body
+        )
+    }
+
+    fn pipeline_expr_is_fusable(
+        expr: &Expr,
+    ) -> bool {
+        match &expr.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Null
+            | ExprKind::Unit => true,
+
+            ExprKind::Neg(
+                expr
+            )
+            |
+            ExprKind::Not(
+                expr
+            ) => {
+                Self::pipeline_expr_is_fusable(
+                    expr
+                )
+            }
+
+            ExprKind::Binary(
+                _,
+                left,
+                right,
+            ) => {
+                Self::pipeline_expr_is_fusable(
+                    left
+                )
+                &&
+                Self::pipeline_expr_is_fusable(
+                    right
+                )
+            }
+
+            /*
+            * These require the general VM execution path.
+            * Do not put them into the fused pipeline function.
+            */
+            ExprKind::Lambda(..)
+            | ExprKind::Call(..)
+            | ExprKind::Field { .. }
+            | ExprKind::Index(..)
+            | ExprKind::Tuple(..)
+            | ExprKind::TupleIndex { .. }
+            | ExprKind::List(..)
+            | ExprKind::Dict(..)
+            | ExprKind::Range { .. }
+            | ExprKind::Let { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::AssignOp { .. }
+            | ExprKind::If(..)
+            | ExprKind::While(..)
+            | ExprKind::For { .. }
+            | ExprKind::Match { .. }
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(_)
+            | ExprKind::Try(_)
+            | ExprKind::StructDecl { .. }
+            | ExprKind::ClassDecl { .. }
+            | ExprKind::EnumDecl(_)
+            | ExprKind::Import { .. }
+            | ExprKind::Drop(_)
+            | ExprKind::Block(_) => false,
+        }
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
@@ -3337,6 +3428,38 @@ impl Compiler {
             return Ok(false);
         };
 
+        /*
+        * Current fused executor supports only:
+        *
+        *     map(|x| <simple expression>)
+        *     filter(|x| <simple expression>)
+        *
+        * If any stage is outside that subset, do not fuse.
+        * Falling back to the normal iterator implementation
+        * preserves program semantics.
+        */
+        for stage in &stages {
+            match stage {
+                PipelineStageAst::Map(
+                    lambda
+                )
+                |
+                PipelineStageAst::Filter(
+                    lambda
+                ) => {
+                    if !Self::pipeline_lambda_is_fusable(
+                        lambda
+                    ) {
+                        return Ok(false);
+                    }
+                }
+
+                PipelineStageAst::Skip(_)
+                |
+                PipelineStageAst::Take(_) => {}
+            }
+        }
+
         let pipeline =
             self.compile_pipeline_program(
                 &source,
@@ -3355,6 +3478,5 @@ impl Compiler {
 
         Ok(true)
     }
-
 
 }
