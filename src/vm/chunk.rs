@@ -155,8 +155,6 @@ pub struct CallSite {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RangeLoop {
-    pub current_slot: u16,
-    pub end_slot: u16,
     pub value_slot: u16,
     pub inclusive: bool,
     pub exit_ip: u32,

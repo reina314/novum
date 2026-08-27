@@ -16,6 +16,7 @@ use crate::{
         StructValue,
         StructTypeRef,
         CallFrame,
+        RangeCursor,
         FunctionProto,
         FunctionRef,
         Closure,
@@ -141,6 +142,7 @@ impl Vm {
                 ip: 0,
                 locals: Vec::new(),
                 cells: Vec::new(),
+                range_cursors: Vec::new(),
             }
         );
 
@@ -215,6 +217,7 @@ impl Vm {
                 ip: 0,
                 locals,
                 cells,
+                range_cursors: Vec::new(),
             }
         );
 
@@ -1759,6 +1762,91 @@ impl Vm {
                     }
                 }
 
+                OpCode::RangeInit => {
+                    let range_index =
+                        operand as usize;
+
+                    let _range =
+                        self.current_frame()
+                            .closure
+                            .function
+                            .chunk
+                            .range_loops
+                            .get(range_index)
+                            .copied()
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    "range loop index out of bounds",
+                                    None,
+                                )
+                            })?;
+
+                    let end =
+                        self.pop()?;
+
+                    let start =
+                        self.pop()?;
+
+                    let start =
+                        match start {
+                            Value::Int(value) =>
+                                value,
+
+                            other =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range start must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                ),
+                        };
+
+                    let end =
+                        match end {
+                            Value::Int(value) =>
+                                value,
+
+                            other =>
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "range end must be Int, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                ),
+                        };
+
+                    let frame =
+                        self.current_frame_mut();
+
+                    if frame.range_cursors.len()
+                        <= range_index
+                    {
+                        frame.range_cursors.resize(
+                            range_index + 1,
+                            None,
+                        );
+                    }
+
+                    frame.range_cursors[
+                        range_index
+                    ] =
+                        Some(
+                            RangeCursor {
+                                current: start,
+                                end,
+                            }
+                        );
+                }
+
                 OpCode::RangeNext => {
                     let range_index =
                         operand as usize;
@@ -1779,94 +1867,42 @@ impl Vm {
                                 )
                             })?;
 
-                    let (
-                        current,
-                        end,
-                    ) = {
-                        let frame =
-                            self.current_frame();
-
-                        let current =
-                            frame
-                                .locals
-                                .get(
-                                    range.current_slot
-                                        as usize
-                                )
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "range current slot out of bounds",
-                                        None,
-                                    )
-                                })?;
-
-                        let end =
-                            frame
-                                .locals
-                                .get(
-                                    range.end_slot
-                                        as usize
-                                )
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "range end slot out of bounds",
-                                        None,
-                                    )
-                                })?;
-
-                        let Value::Int(
-                            current
-                        ) = current
-                        else {
-                            return Err(
+                    /*
+                    * Take a copy of the current cursor state so that no
+                    * mutable frame borrow is held while deciding control flow.
+                    */
+                    let cursor =
+                        self.current_frame()
+                            .range_cursors
+                            .get(range_index)
+                            .and_then(Option::as_ref)
+                            .copied()
+                            .ok_or_else(|| {
                                 Error::new(
-                                    ErrorKind::Type,
-                                    "range current must be Int",
+                                    ErrorKind::Runtime,
+                                    "range cursor is not initialized",
                                     None,
                                 )
-                            );
-                        };
-
-                        let Value::Int(
-                            end
-                        ) = end
-                        else {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    "range end must be Int",
-                                    None,
-                                )
-                            );
-                        };
-
-                        (
-                            current,
-                            end,
-                        )
-                    };
+                            })?;
 
                     let finished =
                         if range.inclusive {
-                            current > end
+                            cursor.current > cursor.end
                         } else {
-                            current >= end
+                            cursor.current >= cursor.end
                         };
 
                     if finished {
                         /*
-                        * Do NOT return from execute_until_depth().
-                        *
-                        * Just redirect execution to the instruction after
-                        * the loop. The outer VM dispatch loop continues.
+                        * RangeNext is a control-flow instruction.
+                        * It does not return from execute_until_depth().
                         */
                         self.current_frame_mut().ip =
                             range.exit_ip as usize;
                     } else {
+                        let current =
+                            cursor.current;
+
                         let next =
                             current.checked_add(1)
                                 .ok_or_else(|| {
@@ -1877,6 +1913,33 @@ impl Vm {
                                     )
                                 })?;
 
+                        /*
+                        * Update the cursor.
+                        */
+                        {
+                            let frame =
+                                self.current_frame_mut();
+
+                            let cursor =
+                                frame
+                                    .range_cursors
+                                    .get_mut(range_index)
+                                    .and_then(Option::as_mut)
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "range cursor is not initialized",
+                                            None,
+                                        )
+                                    })?;
+
+                            cursor.current =
+                                next;
+                        }
+
+                        /*
+                        * Publish the current value into the loop binding.
+                        */
                         let frame =
                             self.current_frame_mut();
 
@@ -1884,12 +1947,8 @@ impl Vm {
                             range.value_slot
                                 as usize;
 
-                        let current_slot =
-                            range.current_slot
-                                as usize;
-
-                        if frame.locals.len() <=
-                            value_slot
+                        if frame.locals.len()
+                            <= value_slot
                         {
                             frame.locals.resize(
                                 value_slot + 1,
@@ -1897,23 +1956,20 @@ impl Vm {
                             );
                         }
 
-                        if frame.locals.len() <=
-                            current_slot
+                        if frame.cells.len()
+                            <= value_slot
                         {
-                            frame.locals.resize(
-                                current_slot + 1,
-                                Value::Unit,
+                            frame.cells.resize(
+                                value_slot + 1,
+                                None,
                             );
                         }
 
-                        frame.locals[value_slot] =
+                        frame.locals[
+                            value_slot
+                        ] =
                             Value::Int(
                                 current
-                            );
-
-                        frame.locals[current_slot] =
-                            Value::Int(
-                                next
                             );
                     }
                 }
@@ -2741,6 +2797,7 @@ impl Vm {
                         None;
                         local_count
                     ],
+                range_cursors: Vec::new(),
             }
         );
 
@@ -2820,6 +2877,7 @@ impl Vm {
                 ip: 0,
                 locals,
                 cells,
+                range_cursors: Vec::new(),
             }
         );
 
@@ -2892,6 +2950,7 @@ impl Vm {
                 ip: 0,
                 locals,
                 cells,
+                range_cursors: Vec::new(),
             }
         );
 
@@ -2940,6 +2999,7 @@ impl Vm {
                         None;
                         local_count
                     ],
+                range_cursors: Vec::new(),
             }
         );
 

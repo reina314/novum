@@ -463,6 +463,45 @@ fn vm_nested_range_for() {
     );
 }
 
+#[test]
+fn vm_range_for_dynamic_bounds() {
+    assert_eq!(
+        run(
+            r#"
+            let a = 2
+            let b = 5
+            let sum = 0
+
+            for i in a..b {
+                sum += i
+            }
+
+            sum
+            "#
+        ),
+        Value::Int(9)
+    );
+}
+
+#[test]
+fn vm_range_for_negative() {
+    assert_eq!(
+        run(
+            r#"
+            let sum = 0
+
+            for i in -3..2 {
+                sum += i
+            }
+
+            sum
+            "#
+        ),
+        Value::Int(-5)
+    );
+}
+
+
 // ============================================================
 // If / while / for
 // ============================================================

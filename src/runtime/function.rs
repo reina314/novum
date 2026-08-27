@@ -4,7 +4,9 @@ use std::{
 };
 
 use super::Value;
-use crate::vm::Chunk;
+use crate::vm::{
+    Chunk,
+};
 
 pub type CellRef = Rc<RefCell<Value>>;
 pub type FunctionRef = Rc<FunctionProto>;
@@ -36,4 +38,11 @@ pub struct CallFrame {
     pub ip: usize,
     pub locals: Vec<Value>,
     pub cells: Vec<Option<CellRef>>,
+    pub range_cursors: Vec<Option<RangeCursor>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RangeCursor {
+    pub current: i64,
+    pub end: i64,
 }

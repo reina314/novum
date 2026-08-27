@@ -3016,12 +3016,12 @@ impl Compiler {
         body: &Expr,
     ) -> Result<()> {
         /*
-        * ========================================================
-        * 1. Result slot
-        * ========================================================
+        * --------------------------------------------------------
+        * Result of the whole for-expression.
         *
-        * A for-expression with zero iterations evaluates to Unit.
-        * Otherwise it evaluates to the last iteration's value.
+        * Zero iterations => Unit.
+        * Otherwise       => last body value.
+        * --------------------------------------------------------
         */
         let result_slot =
             self.allocate_temp_local();
@@ -3040,46 +3040,28 @@ impl Compiler {
         );
 
         /*
-        * ========================================================
-        * 2. Range state
-        * ========================================================
+        * --------------------------------------------------------
+        * Compile range bounds.
+        *
+        * RangeInit consumes:
+        *
+        *     [start, end]
+        *
+        * and creates a runtime RangeCursor.
+        * --------------------------------------------------------
         */
-        let current_slot =
-            self.allocate_temp_local();
-
         self.compile_expr(
             start
         )?;
-
-        self.chunk.emit_operand(
-            OpCode::StoreLocal,
-            current_slot as u32,
-        );
-
-        self.chunk.emit(
-            OpCode::Pop
-        );
-
-        let end_slot =
-            self.allocate_temp_local();
 
         self.compile_expr(
             end
         )?;
 
-        self.chunk.emit_operand(
-            OpCode::StoreLocal,
-            end_slot as u32,
-        );
-
-        self.chunk.emit(
-            OpCode::Pop
-        );
-
         /*
-        * ========================================================
-        * 3. Loop context
-        * ========================================================
+        * --------------------------------------------------------
+        * Loop context.
+        * --------------------------------------------------------
         */
         let loop_index =
             self.loops.len();
@@ -3098,9 +3080,9 @@ impl Compiler {
         );
 
         /*
-        * ========================================================
-        * 4. Loop scope
-        * ========================================================
+        * --------------------------------------------------------
+        * Loop binding scope.
+        * --------------------------------------------------------
         */
         self.enter_scope();
 
@@ -3134,18 +3116,18 @@ impl Compiler {
             };
 
         /*
-        * ========================================================
-        * 5. Register RangeLoop
-        * ========================================================
+        * --------------------------------------------------------
+        * Register compile-time RangeLoop metadata.
         *
-        * exit_ip is not known yet. It will be patched after
-        * the loop body and cleanup code have been emitted.
+        * Runtime current/end live in CallFrame::range_cursors,
+        * not in locals.
+        *
+        * exit_ip is patched after the body is emitted.
+        * --------------------------------------------------------
         */
         let range_loop_index =
             self.chunk.add_range_loop(
                 RangeLoop {
-                    current_slot,
-                    end_slot,
                     value_slot,
                     inclusive,
                     exit_ip: 0,
@@ -3153,38 +3135,39 @@ impl Compiler {
             );
 
         /*
-        * ========================================================
-        * 6. Loop start
-        * ========================================================
+        * --------------------------------------------------------
+        * Initialize runtime cursor exactly once.
+        * --------------------------------------------------------
+        */
+        self.chunk.emit_operand(
+            OpCode::RangeInit,
+            range_loop_index,
+        );
+
+        /*
+        * --------------------------------------------------------
+        * Loop start.
+        * --------------------------------------------------------
         */
         let loop_start =
             self.chunk.code.len();
 
-        /*
-        * RangeNext performs:
-        *
-        *     if current is exhausted:
-        *         ip = exit_ip
-        *     else:
-        *         value_slot = current
-        *         current += 1
-        */
         self.chunk.emit_operand(
             OpCode::RangeNext,
             range_loop_index,
         );
 
         /*
-        * ========================================================
-        * 7. Body
-        * ========================================================
+        * --------------------------------------------------------
+        * Loop body.
+        * --------------------------------------------------------
         */
         self.compile_expr(
             body
         )?;
 
         /*
-        * Preserve the value of the completed iteration.
+        * Preserve last body result.
         */
         self.chunk.emit(
             OpCode::Dup
@@ -3200,9 +3183,9 @@ impl Compiler {
         );
 
         /*
-        * ========================================================
-        * 8. Exit loop scope
-        * ========================================================
+        * --------------------------------------------------------
+        * End loop scope.
+        * --------------------------------------------------------
         */
         self.exit_scope();
 
@@ -3218,6 +3201,13 @@ impl Compiler {
                 .pop()
                 .unwrap();
 
+        self.loops[loop_index]
+            .local_slots =
+            local_slots;
+
+        /*
+        * `continue` must execute iteration cleanup first.
+        */
         for jump in
             self.loops[loop_index]
                 .continue_jumps
@@ -3229,16 +3219,8 @@ impl Compiler {
             );
         }
 
-        self.loops[loop_index]
-            .local_slots =
-            local_slots;
-
         /*
-        * ========================================================
-        * 9. Cleanup iteration locals
-        * ========================================================
-        *
-        * Continue jumps land here too.
+        * Reset only iteration-local bindings.
         */
         for slot in
             &self.loops[loop_index]
@@ -3251,9 +3233,7 @@ impl Compiler {
         }
 
         /*
-        * ========================================================
-        * 10. Next iteration
-        * ========================================================
+        * Next iteration.
         */
         self.chunk.emit_operand(
             OpCode::Jump,
@@ -3261,18 +3241,15 @@ impl Compiler {
         );
 
         /*
-        * ========================================================
-        * 11. Loop end
-        * ========================================================
-        *
-        * This is the instruction immediately following the
-        * backward jump.
+        * --------------------------------------------------------
+        * Loop end.
+        * --------------------------------------------------------
         */
         let loop_end =
             self.chunk.code.len();
 
         /*
-        * RangeNext needs to jump here when the range is exhausted.
+        * Patch RangeLoop metadata.
         */
         self.chunk.range_loops[
             range_loop_index as usize
@@ -3280,7 +3257,7 @@ impl Compiler {
             loop_end as u32;
 
         /*
-        * break jumps also terminate at loop_end.
+        * Patch break targets.
         */
         let context =
             self.loops
@@ -3297,12 +3274,7 @@ impl Compiler {
         }
 
         /*
-        * ========================================================
-        * 12. Final value
-        * ========================================================
-        *
-        * RangeNext does not leave a sentinel Unit on the stack,
-        * so there is no Pop here.
+        * Final value of the for-expression.
         */
         self.chunk.emit_operand(
             OpCode::LoadLocal,

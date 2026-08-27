@@ -93,6 +93,7 @@ pub use function::{
     FunctionProto,
     FunctionRef,
     UpvalueSpec,
+    RangeCursor,
 };
 
 
