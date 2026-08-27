@@ -39,6 +39,7 @@ use super::{
     Chunk,
     OpCode,
     Instruction,
+    PipelineStepKind,
 };
 
 use std::{
@@ -1732,6 +1733,12 @@ impl Vm {
                     }
                 }
 
+                OpCode::FusedCollect => {
+                    self.execute_fused_collect(
+                        operand as usize
+                    )?;
+                }
+
                 OpCode::MatchTuple => {
                     let value =
                         self.pop()?;
@@ -1923,6 +1930,255 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn execute_fused_collect(
+        &mut self,
+        pipeline_index: usize,
+    ) -> Result<()> {
+        let plan =
+            self.current_frame()
+                .closure
+                .function
+                .chunk
+                .pipelines
+                .get(pipeline_index)
+                .cloned()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "pipeline index out of bounds",
+                        None,
+                    )
+                })?;
+
+        let closure_count =
+            plan.closure_count;
+
+        if self.stack.len() <
+            closure_count + 1
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "pipeline stack underflow",
+                    None,
+                )
+            );
+        }
+
+        let closure_start =
+            self.stack.len()
+                - closure_count;
+
+        let source_index =
+            closure_start - 1;
+
+        let source =
+            match self.stack[
+                source_index
+            ].clone() {
+                Value::Iterator(
+                    iterator
+                ) =>
+                    iterator,
+
+                value => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "fused collect expects Iterator, got {}",
+                                value.type_name()
+                            ),
+                            None,
+                        )
+                    );
+                }
+            };
+
+        let closures =
+            self.stack[
+                closure_start..
+            ]
+            .to_vec();
+
+        self.stack.truncate(
+            source_index
+        );
+
+        let result =
+            Rc::new(
+                List::with_capacity(
+                    1024
+                )
+            );
+
+        let mut skipped =
+            0usize;
+
+        let mut taken =
+            None::<usize>;
+
+        loop {
+            let item =
+                self.iterator_next(
+                    source.clone()
+                )?;
+
+            let mut value =
+                match item {
+                    IterResult::End =>
+                        break,
+
+                    IterResult::Item(value) =>
+                        value,
+                };
+
+            let mut accepted =
+                true;
+
+            for step in
+                &plan.steps
+            {
+                match step.kind {
+                    PipelineStepKind::Map => {
+                        let closure =
+                            match closures
+                                .get(step.value)
+                            {
+                                Some(
+                                    Value::Closure(
+                                        closure
+                                    )
+                                ) =>
+                                    closure.clone(),
+
+                                _ => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "invalid fused map closure",
+                                            None,
+                                        )
+                                    );
+                                }
+                            };
+
+                        value =
+                            self.call_closure_sync1(
+                                closure,
+                                value,
+                            )?;
+                    }
+
+                    PipelineStepKind::Filter => {
+                        let closure =
+                            match closures
+                                .get(step.value)
+                            {
+                                Some(
+                                    Value::Closure(
+                                        closure
+                                    )
+                                ) =>
+                                    closure.clone(),
+
+                                _ => {
+                                    return Err(
+                                        Error::new(
+                                            ErrorKind::Runtime,
+                                            "invalid fused filter closure",
+                                            None,
+                                        )
+                                    );
+                                }
+                            };
+
+                        let predicate =
+                            self.call_closure_sync1(
+                                closure,
+                                value.clone(),
+                            )?;
+
+                        match predicate {
+                            Value::Bool(true) => {}
+
+                            Value::Bool(false) => {
+                                accepted = false;
+                                break;
+                            }
+
+                            other => {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "filter predicate must return Bool, got {}",
+                                            other.type_name()
+                                        ),
+                                        None,
+                                    )
+                                );
+                            }
+                        }
+                    }
+
+                    PipelineStepKind::Skip => {
+                        if skipped <
+                            step.value
+                        {
+                            skipped += 1;
+                            accepted = false;
+                            break;
+                        }
+                    }
+
+                    PipelineStepKind::Take => {
+                        if taken.is_none() {
+                            taken =
+                                Some(
+                                    step.value
+                                );
+                        }
+
+                        if taken ==
+                            Some(0)
+                        {
+                            accepted = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if !accepted {
+                continue;
+            }
+
+            if let Some(
+                remaining
+            ) = &mut taken
+            {
+                if *remaining == 0 {
+                    break;
+                }
+
+                *remaining -= 1;
+            }
+
+            result.push(
+                value
+            );
+        }
+
+        self.push(
+            Value::List(
+                result
+            )
+        );
+
+        Ok(())
     }
 
     fn bind_arguments(

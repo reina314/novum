@@ -30,6 +30,9 @@ use crate::{
 use super::{
     Chunk,
     OpCode,
+    PipelinePlan,
+    PipelineStep,
+    PipelineStepKind,
 };
 
 use std::{
@@ -38,6 +41,13 @@ use std::{
     collections::HashMap,
 };
 
+
+enum PipelineStepAst {
+    Map(Expr),
+    Filter(Expr),
+    Skip(usize),
+    Take(usize),
+}
 
 #[derive(Clone, Copy)]
 enum Binding {
@@ -788,6 +798,117 @@ impl Compiler {
             self.chunk.add_call_site(
                 names,
                 method,
+            )
+        )
+    }
+
+    fn extract_pipeline(
+        &self,
+        expr: &Expr,
+    ) -> Result<
+        Option<(
+            &Expr,
+            Vec<PipelineStepAst>,
+        )>
+    > {
+        let mut steps =
+            Vec::new();
+
+        let mut current =
+            expr;
+
+        loop {
+            let ExprKind::Call(
+                callee,
+                args,
+            ) =
+                &current.kind
+            else {
+                break;
+            };
+
+            let ExprKind::Field {
+                object,
+                name,
+            } =
+                &callee.kind
+            else {
+                break;
+            };
+
+            match name.as_str() {
+                "map"
+                | "filter" => {
+                    if args.len() != 1 {
+                        return Ok(None);
+                    }
+
+                    steps.push(
+                        if name == "map" {
+                            PipelineStepAst::Map(
+                                args[0].value.as_ref().clone()
+                            )
+                        } else {
+                            PipelineStepAst::Filter(
+                                args[0].value.as_ref().clone()
+                            )
+                        }
+                    );
+
+                    current =
+                        object;
+                }
+
+                "skip"
+                | "take" => {
+                    if args.len() != 1 {
+                        return Ok(None);
+                    }
+
+                    let ExprKind::Int(
+                        count
+                    ) =
+                        args[0].value.kind
+                    else {
+                        return Ok(None);
+                    };
+
+                    if count < 0 {
+                        return Ok(None);
+                    }
+
+                    steps.push(
+                        if name == "skip" {
+                            PipelineStepAst::Skip(
+                                count as usize
+                            )
+                        } else {
+                            PipelineStepAst::Take(
+                                count as usize
+                            )
+                        }
+                    );
+
+                    current =
+                        object;
+                }
+
+                _ => break,
+            }
+        }
+
+        if steps.is_empty() {
+            return Ok(None);
+        }
+
+        steps.reverse();
+
+        Ok(
+            Some(
+                (
+                    current,
+                    steps,
+                )
             )
         )
     }
@@ -2193,6 +2314,13 @@ impl Compiler {
                 callee,
                 args,
             ) => {
+                if self.try_compile_fused_collect(
+                    callee,
+                    args,
+                )? {
+                    return Ok(());
+                }
+
                 // receiver.method(...)
                 if let ExprKind::Field {
                     object,
@@ -2978,6 +3106,130 @@ impl Compiler {
         }
 
         Ok(failures)
+    }
+
+    fn try_compile_fused_collect(
+        &mut self,
+        callee: &Expr,
+        args: &[CallArg],
+    ) -> Result<bool> {
+        if !args.is_empty() {
+            return Ok(false);
+        }
+
+        let ExprKind::Field {
+            object,
+            name,
+        } = &callee.kind
+        else {
+            return Ok(false);
+        };
+
+        if name != "collect" {
+            return Ok(false);
+        }
+
+        let Some((
+            source,
+            steps,
+        )) =
+            self.extract_pipeline(
+                object
+            )?
+        else {
+            return Ok(false);
+        };
+
+        self.compile_expr(
+            source
+        )?;
+
+        let mut plan =
+            PipelinePlan {
+                steps: Vec::new(),
+            };
+
+        for step in steps {
+            match step {
+                PipelineStepAst::Map(expr) => {
+                    self.compile_expr(
+                        &expr
+                    )?;
+
+                    plan.steps.push(
+                        PipelineStep {
+                            kind:
+                                PipelineStepKind::Map,
+                            argument:
+                                0,
+                        }
+                    );
+                }
+
+                PipelineStepAst::Filter(expr) => {
+                    self.compile_expr(
+                        &expr
+                    )?;
+
+                    plan.steps.push(
+                        PipelineStep {
+                            kind:
+                                PipelineStepKind::Filter,
+                            argument:
+                                0,
+                        }
+                    );
+                }
+
+                PipelineStepAst::Skip(count) => {
+                    let constant =
+                        self.chunk.add_constant(
+                            Value::Int(
+                                count as i64
+                            )
+                        );
+
+                    plan.steps.push(
+                        PipelineStep {
+                            kind:
+                                PipelineStepKind::Skip,
+                            argument:
+                                constant as usize,
+                        }
+                    );
+                }
+
+                PipelineStepAst::Take(count) => {
+                    let constant =
+                        self.chunk.add_constant(
+                            Value::Int(
+                                count as i64
+                            )
+                        );
+
+                    plan.steps.push(
+                        PipelineStep {
+                            kind:
+                                PipelineStepKind::Take,
+                            argument:
+                                constant as usize,
+                        }
+                    );
+                }
+            }
+        }
+
+        let pipeline =
+            self.chunk.add_pipeline(
+                plan
+            );
+
+        self.chunk.emit_operand(
+            OpCode::FusedCollect,
+            pipeline,
+        );
+
+        Ok(true)
     }
 
 }
