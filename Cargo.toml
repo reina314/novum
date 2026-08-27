@@ -30,5 +30,5 @@ name = "novum"
 path = "src/main.rs"
 
 [[bench]]
-name = "vm_iterator"
+name = "vm"
 harness = false

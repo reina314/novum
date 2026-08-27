@@ -2739,32 +2739,73 @@ impl Vm {
         &mut self,
         iterator: IteratorRef,
     ) -> Result<IterResult> {
-        let state =
-            iterator.borrow().clone();
+        let kind =
+            {
+                let state =
+                    iterator.borrow();
 
-        match state {
-            // Base iterators do not require VM execution.
-            IteratorObj::List { .. }
-            | IteratorObj::Str { .. }
-            | IteratorObj::Vector { .. }
-            | IteratorObj::Range { .. } => {
-                IteratorObj::next(
+                match &*state {
+                    IteratorObj::List { .. } =>
+                        0,
+
+                    IteratorObj::Str { .. } =>
+                        1,
+
+                    IteratorObj::Vector { .. } =>
+                        2,
+
+                    IteratorObj::Range { .. } =>
+                        3,
+
+                    IteratorObj::Map { .. } =>
+                        4,
+
+                    IteratorObj::Filter { .. } =>
+                        5,
+
+                    IteratorObj::Enumerate { .. } =>
+                        6,
+
+                    IteratorObj::Zip { .. } =>
+                        7,
+
+                    IteratorObj::Take { .. } =>
+                        8,
+
+                    IteratorObj::Skip { .. } =>
+                        9,
+                }
+            };
+
+        match kind {
+            0 | 1 | 2 | 3 => {
+                self.iterator_next_base(
                     &iterator
                 )
-                .map_err(|message| {
-                    Error::new(
-                        ErrorKind::Runtime,
-                        message,
-                        None,
-                    )
-                })
             }
 
-            // Lazy transformation.
-            IteratorObj::Map {
-                source,
-                function,
-            } => {
+            4 => {
+                let (
+                    source,
+                    function,
+                ) = {
+                    let state =
+                        iterator.borrow();
+
+                    let IteratorObj::Map {
+                        source,
+                        function,
+                    } = &*state
+                    else {
+                        unreachable!();
+                    };
+
+                    (
+                        source.clone(),
+                        function.clone(),
+                    )
+                };
+
                 match self.iterator_next(
                     source
                 )? {
@@ -2789,11 +2830,28 @@ impl Vm {
                 }
             }
 
-            // Lazy filtering.
-            IteratorObj::Filter {
-                source,
-                predicate,
-            } => {
+            5 => {
+                let (
+                    source,
+                    predicate,
+                ) = {
+                    let state =
+                        iterator.borrow();
+
+                    let IteratorObj::Filter {
+                        source,
+                        predicate,
+                    } = &*state
+                    else {
+                        unreachable!();
+                    };
+
+                    (
+                        source.clone(),
+                        predicate.clone(),
+                    )
+                };
+
                 loop {
                     match self.iterator_next(
                         source.clone()
@@ -2811,19 +2869,16 @@ impl Vm {
                                 )?;
 
                             match result {
-                                Value::Bool(true) => {
+                                Value::Bool(true) =>
                                     return Ok(
                                         IterResult::Item(
                                             value
                                         )
-                                    );
-                                }
+                                    ),
 
-                                Value::Bool(false) => {
-                                    continue;
-                                }
+                                Value::Bool(false) => {}
 
-                                other => {
+                                other =>
                                     return Err(
                                         Error::new(
                                             ErrorKind::Type,
@@ -2833,19 +2888,30 @@ impl Vm {
                                             ),
                                             None,
                                         )
-                                    );
-                                }
+                                    ),
                             }
                         }
                     }
                 }
             }
 
-            // Add an index to each item.
-            IteratorObj::Enumerate {
-                source,
-                index: _,
-            } => {
+            6 => {
+                let source =
+                    {
+                        let state =
+                            iterator.borrow();
+
+                        let IteratorObj::Enumerate {
+                            source,
+                            ..
+                        } = &*state
+                        else {
+                            unreachable!();
+                        };
+
+                        source.clone()
+                    };
+
                 match self.iterator_next(
                     source
                 )? {
@@ -2855,53 +2921,78 @@ impl Vm {
                         ),
 
                     IterResult::Item(value) => {
-                        if let IteratorObj::Enumerate {
-                            index,
-                            ..
-                        } = &mut *iterator.borrow_mut()
-                        {
-                            let current =
-                                *index;
+                        let current =
+                            {
+                                let mut state =
+                                    iterator.borrow_mut();
 
-                            *index += 1;
+                                let IteratorObj::Enumerate {
+                                    index,
+                                    ..
+                                } = &mut *state
+                                else {
+                                    unreachable!();
+                                };
 
-                            Ok(
-                                IterResult::Item(
-                                    Value::Tuple(
-                                        Rc::new(vec![
-                                            Value::Int(
-                                                current as i64
-                                            ),
-                                            value,
-                                        ])
-                                    )
+                                let current =
+                                    *index;
+
+                                *index += 1;
+
+                                current
+                            };
+
+                        Ok(
+                            IterResult::Item(
+                                Value::Tuple(
+                                    Rc::new(vec![
+                                        Value::Int(
+                                            current as i64
+                                        ),
+                                        value,
+                                    ])
                                 )
                             )
-                        } else {
-                            unreachable!();
-                        }
+                        )
                     }
                 }
             }
 
-            // Zip terminates when either source terminates.
-            IteratorObj::Zip {
-                left,
-                right,
-            } => {
-                let left_value =
+            7 => {
+                let (
+                    left,
+                    right,
+                ) = {
+                    let state =
+                        iterator.borrow();
+
+                    let IteratorObj::Zip {
+                        left,
+                        right,
+                    } = &*state
+                    else {
+                        unreachable!();
+                    };
+
+                    (
+                        left.clone(),
+                        right.clone(),
+                    )
+                };
+
+                let left =
                     self.iterator_next(
                         left
                     )?;
 
-                let right_value =
+                let right =
                     self.iterator_next(
                         right
                     )?;
 
                 match (
-                    left_value,
-                    right_value,
+                    left,
+                    right,
                 ) {
                     (
                         IterResult::Item(left),
@@ -2926,16 +3017,28 @@ impl Vm {
                 }
             }
 
-            // Take at most `remaining` items.
-            IteratorObj::Take {
-                source,
-                remaining,
-            } => {
-                if remaining == 0 {
-                    return Ok(
-                        IterResult::End
-                    );
-                }
+            8 => {
+                let source =
+                    {
+                        let state =
+                            iterator.borrow();
+
+                        let IteratorObj::Take {
+                            source,
+                            remaining,
+                        } = &*state
+                        else {
+                            unreachable!();
+                        };
+
+                        if *remaining == 0 {
+                            return Ok(
+                                IterResult::End
+                            );
+                        }
+
+                        source.clone()
+                    };
 
                 match self.iterator_next(
                     source
@@ -2946,13 +3049,18 @@ impl Vm {
                         ),
 
                     IterResult::Item(value) => {
-                        if let IteratorObj::Take {
+                        let mut state =
+                            iterator.borrow_mut();
+
+                        let IteratorObj::Take {
                             remaining,
                             ..
-                        } = &mut *iterator.borrow_mut()
-                        {
-                            *remaining -= 1;
-                        }
+                        } = &mut *state
+                        else {
+                            unreachable!();
+                        };
+
+                        *remaining -= 1;
 
                         Ok(
                             IterResult::Item(
@@ -2963,15 +3071,44 @@ impl Vm {
                 }
             }
 
-            // Skip the first `remaining` items, then pass through.
-            IteratorObj::Skip {
-                source,
-                remaining,
-            } => {
-                let mut remaining =
-                    remaining;
+            9 => {
+                let source =
+                    {
+                        let state =
+                            iterator.borrow();
 
-                while remaining > 0 {
+                        let IteratorObj::Skip {
+                            source,
+                            remaining: _,
+                        } = &*state
+                        else {
+                            unreachable!();
+                        };
+
+                        source.clone()
+                    };
+
+                loop {
+                    let remaining =
+                        {
+                            let state =
+                                iterator.borrow();
+
+                            let IteratorObj::Skip {
+                                remaining,
+                                ..
+                            } = &*state
+                            else {
+                                unreachable!();
+                            };
+
+                            *remaining
+                        };
+
+                    if remaining == 0 {
+                        break;
+                    }
+
                     match self.iterator_next(
                         source.clone()
                     )? {
@@ -2981,23 +3118,147 @@ impl Vm {
                             ),
 
                         IterResult::Item(_) => {
-                            remaining -= 1;
+                            let mut state =
+                                iterator.borrow_mut();
+
+                            let IteratorObj::Skip {
+                                remaining,
+                                ..
+                            } = &mut *state
+                            else {
+                                unreachable!();
+                            };
+
+                            *remaining -= 1;
                         }
                     }
-                }
-
-                if let IteratorObj::Skip {
-                    remaining: state_remaining,
-                    ..
-                } = &mut *iterator.borrow_mut()
-                {
-                    *state_remaining = 0;
                 }
 
                 self.iterator_next(
                     source
                 )
             }
+
+            _ =>
+                unreachable!(),
+        }
+    }
+
+    fn iterator_next_base(
+        &mut self,
+        iterator: &IteratorRef,
+    ) -> Result<IterResult> {
+        match &mut *iterator.borrow_mut() {
+            IteratorObj::List {
+                data,
+                index,
+            } => {
+                let value =
+                    data.get(*index);
+
+                match value {
+                    Some(value) => {
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                value
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            IteratorObj::Str {
+                data,
+                byte_index,
+            } => {
+                let slice =
+                    &data[*byte_index..];
+
+                let Some(ch) =
+                    slice.chars().next()
+                else {
+                    return Ok(
+                        IterResult::End
+                    );
+                };
+
+                *byte_index +=
+                    ch.len_utf8();
+
+                Ok(
+                    IterResult::Item(
+                        Value::Str(
+                            Rc::new(
+                                ch.to_string()
+                            )
+                        )
+                    )
+                )
+            }
+
+            IteratorObj::Vector {
+                data,
+                index,
+            } => {
+                let value =
+                    data.borrow()
+                        .get(*index);
+
+                match value {
+                    Some(value) => {
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                Value::Float(value)
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            IteratorObj::Range {
+                current,
+                end,
+            } => {
+                if *current >= *end {
+                    return Ok(
+                        IterResult::End
+                    );
+                }
+
+                let value =
+                    *current;
+
+                *current += 1;
+
+                Ok(
+                    IterResult::Item(
+                        Value::Int(value)
+                    )
+                )
+            }
+
+            _ =>
+                Err(
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "iterator is not a base iterator",
+                        None,
+                    )
+                ),
         }
     }
 
