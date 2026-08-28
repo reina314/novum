@@ -92,6 +92,7 @@ pub use function::{
     CellRef,
     Closure,
     ClosureRef,
+    FunctionParameter,
     FunctionProto,
     FunctionRef,
     UpvalueSpec,

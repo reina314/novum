@@ -1,5 +1,3 @@
-use reedline::CommandLineSearch::Prefix;
-
 use crate::{
     error::{
         Error,
@@ -19,6 +17,7 @@ use crate::{
         StructTypeRef,
         CallFrame,
         RangeCursor,
+        FunctionParameter,
         FunctionProto,
         FunctionRef,
         Closure,
@@ -3314,7 +3313,7 @@ impl Vm {
 
     fn bind_arguments(
         &self,
-        parameters: &[String],
+        parameters: &[FunctionParameter],
         names: &[Option<String>],
         values: Vec<Value>,
     ) -> Result<Vec<Value>> {
@@ -3362,7 +3361,8 @@ impl Vm {
         for (
             name,
             value,
-        ) in names.iter()
+        ) in names
+            .iter()
             .zip(values)
         {
             match name {
@@ -3370,7 +3370,9 @@ impl Vm {
                     while positional_index <
                         assigned.len()
                         &&
-                        assigned[positional_index]
+                        assigned[
+                            positional_index
+                        ]
                     {
                         positional_index += 1;
                     }
@@ -3387,11 +3389,13 @@ impl Vm {
                         );
                     }
 
-                    bound[positional_index] =
-                        value;
+                    bound[
+                        positional_index
+                    ] = value;
 
-                    assigned[positional_index] =
-                        true;
+                    assigned[
+                        positional_index
+                    ] = true;
 
                     positional_index += 1;
                 }
@@ -3401,8 +3405,12 @@ impl Vm {
                         parameters
                             .iter()
                             .position(
-                                |parameter|
-                                    parameter == name
+                                |parameter| {
+                                    parameter.name.as_deref()
+                                        == Some(
+                                            name.as_str()
+                                        )
+                                }
                             )
                             .ok_or_else(|| {
                                 Error::new(
@@ -3437,7 +3445,8 @@ impl Vm {
             }
         }
 
-        if assigned.iter()
+        if assigned
+            .iter()
             .any(|assigned| !assigned)
         {
             return Err(
@@ -3449,6 +3458,10 @@ impl Vm {
             );
         }
 
+        /*
+        * A destructured parameter has no name, so it can only
+        * be supplied positionally.
+        */
         Ok(bound)
     }
 

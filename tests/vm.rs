@@ -2594,3 +2594,135 @@ fn fs_read_try_propagates_from_function() {
     }
 }
 
+// ============================================================
+// Parameter pattern
+// ============================================================
+
+#[test]
+fn destructuring_list_parameter() {
+    assert_int(
+        r#"
+        let f =
+            |[x, y]| {
+                x + y
+            }
+
+        f([10, 20])
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn destructuring_tuple_parameter() {
+    assert_int(
+        r#"
+        let f =
+            |(x, y)| {
+                x * y
+            }
+
+        f((6, 7))
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn nested_destructuring_parameter() {
+    assert_int(
+        r#"
+        let f =
+            |(x, [y, z])| {
+                x + y + z
+            }
+
+        f(
+            (10, [20, 30])
+        )
+        "#,
+        60,
+    );
+}
+
+#[test]
+fn literal_parameter_pattern() {
+    assert_int(
+        r#"
+        let f =
+            |42| {
+                100
+            }
+
+        f(42)
+        "#,
+        100,
+    );
+}
+
+#[test]
+fn literal_parameter_pattern_fails() {
+    assert_error_kind(
+        r#"
+        let f =
+            |42| {
+                100
+            }
+
+        f(41)
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn enum_parameter_pattern() {
+    assert_int(
+        r#"
+        let f =
+            |Option.Some(x)| {
+                x + 1
+            }
+
+        f(
+            Option.Some(41)
+        )
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn result_parameter_pattern() {
+    assert_int(
+        r#"
+        let f =
+            |Result.Ok(x)| {
+                x
+            }
+
+        f(
+            Result.Ok(42)
+        )
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn named_function_argument() {
+    assert_int(
+        r#"
+        let f =
+            |x, y| {
+                x + y
+            }
+
+        f(
+            y = 20,
+            x = 22
+        )
+        "#,
+        42,
+    );
+}

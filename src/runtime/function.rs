@@ -23,9 +23,14 @@ pub enum UpvalueSpec {
 }
 
 #[derive(Debug, Clone)]
+pub struct FunctionParameter {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionProto {
     pub arity: u16,
-    pub parameters: Vec<String>,
+    pub parameters: Vec<FunctionParameter>,
     pub chunk: Rc<Chunk>,
     pub upvalue_specs: Vec<UpvalueSpec>,
 }

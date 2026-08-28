@@ -19,6 +19,7 @@ use crate::{
         Value,
         StructType,
         UpvalueSpec,
+        FunctionParameter,
         FunctionProto,
         FunctionRef,
         ModulePath,
@@ -130,7 +131,7 @@ pub struct Compiler {
     next_local_slot: u16,
     loops: Vec<LoopContext>,
     loop_local_stack: Vec<Vec<u16>>,
-    function_parameters: Vec<String>,
+    function_parameters: Vec<FunctionParameter>,
 }
 
 impl Compiler {
@@ -143,70 +144,6 @@ impl Compiler {
             loop_local_stack: Vec::new(),
             function_parameters: Vec::new(),
         }
-    }
-
-    fn new_function(
-        parent: ScopeRef,
-        params: &[Pattern],
-    ) -> Result<Self> {
-        let scope =
-            Scope::new(
-                Some(parent),
-                true,
-            );
-
-        let mut compiler =
-            Self {
-                chunk: Chunk::default(),
-                scope: scope.clone(),
-                next_local_slot: 0,
-                loops: Vec::new(),
-                loop_local_stack: Vec::new(),
-                function_parameters: Vec::new(),
-            };
-
-        let mut parameter_names =
-            Vec::with_capacity(
-                params.len()
-            );
-
-        for (
-            index,
-            param,
-        ) in params.iter().enumerate()
-        {
-            let Pattern::Ident(name) =
-                param
-            else {
-                return Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "VM currently supports only identifier parameters",
-                        None,
-                    )
-                );
-            };
-
-            scope
-                .borrow_mut()
-                .locals
-                .insert(
-                    name.clone(),
-                    index as u16,
-                );
-
-            parameter_names.push(
-                name.clone()
-            );
-        }
-
-        compiler.next_local_slot =
-            params.len() as u16;
-
-        compiler.function_parameters =
-            parameter_names;
-
-        Ok(compiler)
     }
 
     fn declare_local(
@@ -264,45 +201,6 @@ impl Compiler {
         self.next_local_slot += 1;
 
         slot
-    }
-
-    fn resolve_local(
-        &self,
-        name: &str,
-    ) -> Option<u16> {
-        let mut scope =
-            Some(self.scope.clone());
-
-        while let Some(current) =
-            scope
-        {
-            if let Some(slot) =
-                current
-                    .borrow()
-                    .locals
-                    .get(name)
-                    .copied()
-            {
-                return Some(slot);
-            }
-
-            let is_function_boundary =
-                current
-                    .borrow()
-                    .function_boundary;
-
-            if is_function_boundary {
-                break;
-            }
-
-            scope =
-                current
-                    .borrow()
-                    .parent
-                    .clone();
-        }
-
-        None
     }
 
     fn emit_load_lvalue(
@@ -793,6 +691,45 @@ impl Compiler {
         )
     }
 
+    fn resolve_local(
+        &self,
+        name: &str,
+    ) -> Option<u16> {
+        let mut scope =
+            Some(self.scope.clone());
+
+        while let Some(current) =
+            scope
+        {
+            if let Some(slot) =
+                current
+                    .borrow()
+                    .locals
+                    .get(name)
+                    .copied()
+            {
+                return Some(slot);
+            }
+
+            let is_function_boundary =
+                current
+                    .borrow()
+                    .function_boundary;
+
+            if is_function_boundary {
+                break;
+            }
+
+            scope =
+                current
+                    .borrow()
+                    .parent
+                    .clone();
+        }
+
+        None
+    }
+
     pub fn finish(self) -> Chunk {
         let mut chunk =
             self.chunk;
@@ -801,6 +738,123 @@ impl Compiler {
             self.next_local_slot as usize;
 
         chunk
+    }
+
+    fn new_function(
+        parent: ScopeRef,
+        params: &[Pattern],
+    ) -> Result<Self> {
+        if params.len() >
+            u16::MAX as usize
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    "too many function parameters",
+                    None,
+                )
+            );
+        }
+
+        let scope =
+            Scope::new(
+                Some(parent),
+                true,
+            );
+
+        let mut compiler =
+            Self {
+                chunk: Chunk::default(),
+                scope: scope.clone(),
+                next_local_slot:
+                    params.len() as u16,
+                loops: Vec::new(),
+                loop_local_stack:
+                    Vec::new(),
+                function_parameters:
+                    Vec::with_capacity(
+                        params.len()
+                    ),
+            };
+
+        for (
+            index,
+            param,
+        ) in params.iter().enumerate()
+        {
+            let parameter =
+                match param {
+                    Pattern::Ident(name) => {
+                        scope
+                            .borrow_mut()
+                            .locals
+                            .insert(
+                                name.clone(),
+                                index as u16,
+                            );
+
+                        FunctionParameter {
+                            name:
+                                Some(name.clone()),
+                        }
+                    }
+
+                    _ => {
+                        FunctionParameter {
+                            name: None,
+                        }
+                    }
+                };
+
+            compiler
+                .function_parameters
+                .push(
+                    parameter
+                );
+        }
+
+        /*
+        * Function-entry pattern destructuring.
+        */
+        for (
+            index,
+            param,
+        ) in params.iter().enumerate()
+        {
+            if matches!(
+                param,
+                Pattern::Ident(_)
+            ) {
+                continue;
+            }
+
+            let failures =
+                compiler.compile_pattern(
+                    index as u16,
+                    param,
+                )?;
+
+            /*
+            * There is no alternate branch for a parameter
+            * pattern, so a failed pattern means that the call
+            * is invalid.
+            */
+            let failure_target =
+                compiler.chunk.code.len();
+
+            for jump in failures {
+                compiler.chunk.patch_operand(
+                    jump,
+                    failure_target as u32,
+                );
+            }
+
+            compiler.chunk.emit(
+                OpCode::PatternFail
+            );
+        }
+
+        Ok(compiler)
     }
 
     fn finish_function(
@@ -860,41 +914,6 @@ impl Compiler {
         loop_index
     }
 
-    fn set_loop_cleanup(
-        &mut self,
-        loop_index: usize,
-        cleanup_target: usize,
-    ) {
-        self.loops[loop_index]
-            .cleanup_target =
-            Some(
-                cleanup_target
-            );
-    }
-
-    fn set_continue_target(
-        &mut self,
-        loop_index: usize,
-        target: usize,
-    ) {
-        self.loops[loop_index]
-            .continue_target =
-            Some(target);
-
-        let jumps =
-            std::mem::take(
-                &mut self.loops[loop_index]
-                    .continue_jumps
-            );
-
-        for jump in jumps {
-            self.chunk.patch_operand(
-                jump,
-                target as u32,
-            );
-        }
-    }
-
     fn finish_loop(
         &mut self,
         loop_index: usize,
@@ -932,6 +951,41 @@ impl Compiler {
         * Remove the loop context.
         */
         self.loops.pop();
+    }
+
+    fn set_loop_cleanup(
+        &mut self,
+        loop_index: usize,
+        cleanup_target: usize,
+    ) {
+        self.loops[loop_index]
+            .cleanup_target =
+            Some(
+                cleanup_target
+            );
+    }
+
+    fn set_continue_target(
+        &mut self,
+        loop_index: usize,
+        target: usize,
+    ) {
+        self.loops[loop_index]
+            .continue_target =
+            Some(target);
+
+        let jumps =
+            std::mem::take(
+                &mut self.loops[loop_index]
+                    .continue_jumps
+            );
+
+        for jump in jumps {
+            self.chunk.patch_operand(
+                jump,
+                target as u32,
+            );
+        }
     }
 
     fn add_standard_enum(
@@ -4593,7 +4647,7 @@ impl Compiler {
                     OpCode::LoadLocal,
                     value_slot as u32,
                 );
-                
+
                 self.chunk.emit_operand(
                     OpCode::MatchList,
                     patterns.len() as u32,
@@ -4846,6 +4900,32 @@ impl Compiler {
         }
 
         Ok(failures)
+    }
+
+    fn compile_parameter_pattern(
+        &mut self,
+        value_slot: u16,
+        pattern: &Pattern,
+    ) -> Result<Vec<usize>> {
+        match pattern {
+            Pattern::Ident(name) => {
+                self.scope
+                    .borrow_mut()
+                    .locals
+                    .insert(
+                        name.clone(),
+                        value_slot,
+                    );
+
+                Ok(Vec::new())
+            }
+
+            _ =>
+                self.compile_pattern(
+                    value_slot,
+                    pattern,
+                ),
+        }
     }
 
     fn compile_pipeline_program(
