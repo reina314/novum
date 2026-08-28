@@ -41,6 +41,7 @@ use super::{
     IntPipelineExpr,
     IntPipelinePredicate,
     IntPipelineStage,
+    ModuleRefSpec,
 };
 
 use std::{
@@ -3464,27 +3465,6 @@ impl Compiler {
                     );
                 }
 
-                /*
-                * Phase 3:
-                *
-                * import foo
-                * import foo as bar
-                * import a.b.c as x
-                *
-                * Nested import without alias is deferred.
-                */
-                if alias.is_none()
-                    && path.len() != 1
-                {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Import,
-                            "nested imports without alias are not supported yet",
-                            None,
-                        )
-                    );
-                }
-
                 let binding_name =
                     match alias {
                         Some(alias) => {
@@ -3508,7 +3488,13 @@ impl Compiler {
 
                 let module_ref =
                     self.chunk.add_module_ref(
-                        module_path
+                        ModuleRefSpec {
+                            path:
+                                module_path,
+
+                            namespace:
+                                alias.is_none(),
+                        }
                     );
 
                 self.chunk.emit_operand(

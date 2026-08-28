@@ -79,6 +79,7 @@ pub struct Vm {
     modules: HashMap<PathBuf, ModuleRef>,
     loading_modules: Vec<PathBuf>,
     stdlib_modules: HashMap<String, ModuleRef>,
+    module_namespaces: HashMap<ModulePath, ModuleRef>,
 }
 
 impl Vm {
@@ -104,6 +105,7 @@ impl Vm {
             modules: HashMap::new(),
             loading_modules: Vec::new(),
             stdlib_modules: HashMap::new(),
+            module_namespaces: HashMap::new(),
         }
     }
 
@@ -2448,7 +2450,7 @@ impl Vm {
                 }
 
                 OpCode::LoadModule => {
-                    let module_path =
+                    let reference =
                         self.current_frame()
                             .closure
                             .function
@@ -2457,9 +2459,7 @@ impl Vm {
                             .get(
                                 operand as usize
                             )
-                            .map(|reference|
-                                reference.path.clone()
-                            )
+                            .cloned()
                             .ok_or_else(|| {
                                 Error::new(
                                     ErrorKind::Import,
@@ -2469,9 +2469,15 @@ impl Vm {
                             })?;
 
                     let module =
-                        self.load_module(
-                            &module_path
-                        )?;
+                        if reference.namespace {
+                            self.load_module_namespace(
+                                &reference.path
+                            )?
+                        } else {
+                            self.load_module(
+                                &reference.path
+                            )?
+                        };
 
                     self.push(
                         Value::Module(module)
@@ -4788,6 +4794,35 @@ impl Vm {
         )
     }
 
+    fn ensure_namespace(
+        &mut self,
+        path: &ModulePath,
+    ) -> ModuleRef {
+        if let Some(module) =
+            self.module_namespaces
+                .get(path)
+                .cloned()
+        {
+            return module;
+        }
+
+        let module =
+            Rc::new(
+                RefCell::new(
+                    Module::new(
+                        path.name()
+                    )
+                )
+            );
+
+        self.module_namespaces.insert(
+            path.clone(),
+            module.clone(),
+        );
+
+        module
+    }
+
     fn load_module(
         &mut self,
         path: &ModulePath,
@@ -4855,6 +4890,149 @@ impl Vm {
                 None,
             )
         )
+    }
+
+    fn load_module_namespace(
+        &mut self,
+        path: &ModulePath,
+    ) -> Result<ModuleRef> {
+        let parts =
+            path.parts();
+
+        if parts.is_empty() {
+            return Err(
+                Error::new(
+                    ErrorKind::Import,
+                    "empty module path",
+                    None,
+                )
+            );
+        }
+
+        /*
+        * Load the actual leaf module.
+        */
+        let leaf =
+            self.load_module(path)?;
+
+        /*
+        * Ensure:
+        *
+        * a
+        * a.b
+        * a.b.c
+        */
+        for depth in
+            0..parts.len()
+        {
+            let prefix =
+                ModulePath::new(
+                    parts[..=depth]
+                        .to_vec()
+                );
+
+            self.ensure_namespace(
+                &prefix
+            );
+        }
+
+        /*
+        * Link:
+        *
+        * a
+        *  └─ b
+        *      └─ c
+        *
+        * We link from the deepest
+        * parent upward.
+        */
+        for depth in
+            0..parts.len() - 1
+        {
+            let parent_path =
+                ModulePath::new(
+                    parts[..=depth]
+                        .to_vec()
+                );
+
+            let child_path =
+                ModulePath::new(
+                    parts[..=depth + 1]
+                        .to_vec()
+                );
+
+            let parent =
+                self.module_namespaces
+                    .get(&parent_path)
+                    .cloned()
+                    .expect(
+                        "namespace must exist"
+                    );
+
+            let child =
+                self.module_namespaces
+                    .get(&child_path)
+                    .cloned()
+                    .expect(
+                        "namespace must exist"
+                    );
+
+            parent
+                .borrow_mut()
+                .set_exported(
+                    parts[depth + 1]
+                        .clone(),
+                    Value::Module(child),
+                );
+        }
+
+        /*
+        * Replace the leaf synthetic namespace's
+        * own contents with the actual module.
+        *
+        * a.b.c
+        *
+        * a
+        * └─ b
+        *     └─ c -> actual c module
+        */
+        let parent_path =
+            ModulePath::new(
+                parts[..parts.len() - 1]
+                    .to_vec()
+            );
+
+        let parent =
+            self.module_namespaces
+                .get(&parent_path)
+                .cloned()
+                .expect(
+                    "parent namespace must exist"
+                );
+
+        parent
+            .borrow_mut()
+            .set_exported(
+                parts
+                    [parts.len() - 1]
+                    .clone(),
+                Value::Module(leaf),
+            );
+
+        self.module_namespaces
+            .get(
+                &ModulePath::new(
+                    vec![parts[0].clone()]
+                )
+            )
+            .cloned()
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Import,
+                    "failed to construct module namespace",
+                    None,
+                )
+            })
     }
 
     fn load_file_module(

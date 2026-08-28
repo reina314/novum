@@ -1,12 +1,14 @@
-let i = 0
+import math
 
-let f = || {
-    i += 1
-    i
+class Test {
+    x = 0,
+    y = 0,
+
+    init = |self, x, y| {
+        self.x = x
+        self.y = math.sqrt(x + y)
+    }
 }
 
-let a = [10, 20, 30]
-
-a[f()] = 100
-
-a
+test = Test(x=5, y=9)
+print(test)

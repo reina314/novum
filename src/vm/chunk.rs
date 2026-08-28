@@ -85,15 +85,13 @@ impl Chunk {
     #[inline]
     pub fn add_module_ref(
         &mut self,
-        path: ModulePath,
+        reference: ModuleRefSpec,
     ) -> u32 {
         let index =
             self.module_refs.len();
 
         self.module_refs.push(
-            ModuleRefSpec {
-                path,
-            }
+            reference
         );
 
         index as u32
@@ -176,6 +174,7 @@ impl Default for Chunk {
 #[derive(Debug, Clone)]
 pub struct ModuleRefSpec {
     pub path: ModulePath,
+    pub namespace: bool,
 }
 
 #[derive(Clone, Debug)]

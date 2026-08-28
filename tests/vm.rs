@@ -1736,6 +1736,20 @@ fn vm_import_user_module_alias() {
 }
 
 #[test]
+fn vm_import_with_and_without_alias() {
+    assert_bool(
+        r#"
+        import tests.modules.counter
+        import tests.modules.counter as c
+        
+        tests.modules.counter.value
+            == c.value
+        "#, 
+        true
+    );
+}
+
+#[test]
 fn vm_import_without_alias_keeps_namespace() {
     assert_int(
         r#"
