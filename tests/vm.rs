@@ -703,7 +703,7 @@ fn dynamic_range_expression_bounds() {
         r#"
         let n = 10
 
-        (0 + 1)..(n + 1)
+        ((0 + 1)..(n + 1))
             .map(|x| x * 2)
             .collect()
         "#,
@@ -961,8 +961,8 @@ fn vm_match() {
         let y = (1, 2)
 
         match y {
-            (1, b) => b
-            (a, b) => a + b
+            (1, b) => b,
+            (a, b) => a + b,
         }
         ",
         2,
@@ -973,8 +973,8 @@ fn vm_match() {
         let y = (3, 4)
 
         match y {
-            (1, b) => b
-            (a, b) => a + b
+            (1, b) => b,
+            (a, b) => a + b,
         }
         ",
         7,
@@ -985,8 +985,8 @@ fn vm_match() {
         let y = [1, 2]
 
         match y {
-            [1, b] => b
-            [a, b] => a + b
+            [1, b] => b,
+            [a, b] => a + b,
         }
         ",
         2,
@@ -1380,8 +1380,8 @@ fn vm_match_list_pattern() {
         let y = [1, 2]
 
         match y {
-            [1, b] => b
-            [a, b] => a + b
+            [1, b] => b,
+            [a, b] => a + b,
         }
         ",
         2,
@@ -1395,8 +1395,8 @@ fn vm_match_list_second_arm() {
         let y = [3, 4]
 
         match y {
-            [1, b] => b
-            [a, b] => a + b
+            [1, b] => b,
+            [a, b] => a + b,
         }
         ",
         7,
