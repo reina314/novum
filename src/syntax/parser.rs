@@ -1641,16 +1641,23 @@ impl Parser {
                 }
 
                 TokenKind::LBracket => {
-                    let next =
-                        self.peek().clone();
-
-                    if !self.is_adjacent(
-                        expr.span,
-                        next.span,
-                    ) {
-                        break;
-                    }
-
+                    /*
+                    * Indexing is allowed across whitespace and
+                    * newlines.
+                    *
+                    * These must all be equivalent:
+                    *
+                    *     a[i]
+                    *
+                    *     a
+                    *         [i]
+                    *
+                    *     a[i]
+                    *         [j]
+                    *
+                    * This is particularly important for readable
+                    * multiline numerical code.
+                    */
                     self.eat();
 
                     let index =
