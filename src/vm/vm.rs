@@ -4742,23 +4742,14 @@ impl Vm {
                     )
                 })?;
 
+        let value =
+            Value::Int(current);
+
         let value_slot =
             range.value_slot as usize;
 
         /*
-        * Fast path:
-        *
-        * Top-level/non-capturing function.
-        */
-        if frame.cells.is_none() {
-            frame.locals[value_slot] =
-                Value::Int(current);
-
-            return Ok(());
-        }
-
-        /*
-        * Capturing-function path.
+        * Local storage invariant.
         */
         if frame.locals.len()
             <= value_slot
@@ -4769,17 +4760,24 @@ impl Vm {
             );
         }
 
-        let value =
-            Value::Int(current);
-
         frame.locals[value_slot] =
             value.clone();
 
+        /*
+        * Capture storage invariant.
+        */
         if let Some(cells) =
-            frame.cells.as_ref()
+            frame.cells.as_mut()
         {
-            if let Some(Some(cell)) =
-                cells.get(value_slot)
+            if cells.len() <= value_slot {
+                cells.resize(
+                    value_slot + 1,
+                    None,
+                );
+            }
+
+            if let Some(cell) =
+                cells[value_slot].as_ref()
             {
                 *cell.borrow_mut() =
                     value;
