@@ -3272,6 +3272,18 @@ impl Compiler {
                 }
             }
 
+            ExprKind::Try(
+                inner
+            ) => {
+                self.compile_expr(
+                    inner
+                )?;
+
+                self.chunk.emit(
+                    OpCode::Try
+                );
+            }
+
             ExprKind::Lambda(
                 params,
                 body,

@@ -103,6 +103,8 @@ pub enum OpCode {
 
     InvokeMethod,
 
+    Try,
+
     Call,
     Return,
 
