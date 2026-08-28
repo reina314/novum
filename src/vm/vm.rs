@@ -954,126 +954,30 @@ impl Vm {
                     let callable =
                         self.stack[
                             function_index
-                        ].clone();
+                        ]
+                        .clone();
 
-                    match callable {
-                        Value::Closure(
-                            closure
-                        ) => {
-                            self.call_closure_frame(
-                                function_index,
-                                closure,
-                                &metadata.names,
-                            )?;
-                        }
+                    let args =
+                        self.stack[
+                            function_index + 1..
+                        ]
+                        .to_vec();
 
-                        Value::EnumConstructor(
-                            constructor
-                        ) => {
-                            if metadata.names
-                                .iter()
-                                .any(Option::is_some)
-                            {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "named arguments are not supported for enum constructors",
-                                        None,
-                                    )
-                                );
-                            }
+                    let names =
+                        metadata.names.clone();
 
-                            self.call_enum_constructor(
-                                function_index,
-                                constructor,
-                                argc,
-                            )?;
-                        }
+                    self.stack.truncate(
+                        function_index
+                    );
 
-                        Value::StructType(
-                            ty
-                        ) => {
-                            if metadata.names
-                                .iter()
-                                .any(Option::is_some)
-                            {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "named arguments are not supported for struct constructors",
-                                        None,
-                                    )
-                                );
-                            }
+                    let result =
+                        self.call_value(
+                            callable,
+                            args,
+                            &names,
+                        )?;
 
-                            self.call_struct_constructor(
-                                function_index,
-                                ty,
-                                argc,
-                            )?;
-                        }
-
-                        Value::Class(
-                            class
-                        ) => {
-                            self.call_class(
-                                function_index,
-                                class,
-                                &metadata.names,
-                            )?;
-                        }
-
-                        Value::Builtin(
-                            builtin
-                        ) => {
-                            if metadata.names
-                                .iter()
-                                .any(Option::is_some)
-                            {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Runtime,
-                                        "named arguments are not supported for builtin functions",
-                                        None,
-                                    )
-                                );
-                            }
-
-                            let args =
-                                self.stack[
-                                    function_index + 1..
-                                ]
-                                .to_vec();
-
-                            self.stack.truncate(
-                                function_index
-                            );
-
-                            let result =
-                                builtin(args)
-                                    .map_err(|message| {
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            message,
-                                            None,
-                                        )
-                                    })?;
-
-                            self.push(
-                                result
-                            );
-                        }
-
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    "value is not callable",
-                                    None,
-                                )
-                            );
-                        }
-                    }
+                    self.push(result);
                 }
 
                 OpCode::Closure => {
@@ -3465,77 +3369,6 @@ impl Vm {
         Ok(bound)
     }
 
-    fn call_closure_frame(
-        &mut self,
-        function_index: usize,
-        closure: ClosureRef,
-        names: &[Option<String>],
-    ) -> Result<()> {
-        let args =
-            self.stack[
-                function_index + 1..
-            ]
-            .to_vec();
-
-        let bound =
-            self.bind_arguments(
-                &closure.function.parameters,
-                names,
-                args,
-            )?;
-
-        self.stack.truncate(
-            function_index
-        );
-
-        let local_count =
-            closure
-                .function
-                .chunk
-                .local_count;
-
-        let mut locals =
-            bound;
-
-        locals.resize(
-            local_count,
-            Value::Unit,
-        );
-
-        let caller_module =
-            self.current_frame()
-                .module
-                .clone();
-
-        let caller_source_path =
-            self.current_frame()
-                .source_path
-                .clone();
-
-        self.frames.push(
-            CallFrame {
-                closure,
-                ip: 0,
-                locals,
-                cells:
-                    vec![
-                        None;
-                        local_count
-                    ].into(),
-                range_cursors:
-                    Vec::new(),
-
-                module:
-                    caller_module,
-
-                source_path:
-                    caller_source_path,
-            }
-        );
-
-        Ok(())
-    }
-
     fn call_closure_sync(
         &mut self,
         closure: ClosureRef,
@@ -3786,115 +3619,6 @@ impl Vm {
         )
     }
 
-    fn call_enum_constructor(
-        &mut self,
-        function_index: usize,
-        constructor: EnumConstructor,
-        argc: usize,
-    ) -> Result<()> {
-        let expected =
-            constructor.arity();
-
-        if argc != expected {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    format!(
-                        "{} expects {} arguments, got {}",
-                        constructor,
-                        expected,
-                        argc
-                    ),
-                    None,
-                )
-            );
-        }
-
-        let args =
-            self.stack[
-                function_index + 1..
-            ]
-            .to_vec();
-
-        self.stack.truncate(
-            function_index
-        );
-
-        let value =
-            EnumValue::new(
-                constructor
-                    .enum_def()
-                    .name(),
-                constructor
-                    .variant(),
-                args,
-            );
-
-        self.push(
-            Value::EnumValue(
-                Rc::new(value)
-            )
-        );
-
-        Ok(())
-    }
-
-    fn call_struct_constructor(
-        &mut self,
-        function_index: usize,
-        ty: StructTypeRef,
-        argc: usize,
-    ) -> Result<()> {
-        let expected =
-            ty.fields().len();
-
-        if argc != expected {
-            return Err(
-                Error::new(
-                    ErrorKind::Arity,
-                    format!(
-                        "{} expects {} arguments, got {}",
-                        ty.name(),
-                        expected,
-                        argc,
-                    ),
-                    None,
-                )
-            );
-        }
-
-        let fields =
-            self.stack[
-                function_index + 1..
-            ]
-            .to_vec();
-
-        self.stack.truncate(
-            function_index
-        );
-
-        let value =
-            StructValue::new(
-                ty,
-                fields,
-            )
-            .map_err(|message| {
-                Error::new(
-                    ErrorKind::Type,
-                    message,
-                    None,
-                )
-            })?;
-
-        self.push(
-            Value::Struct(
-                Rc::new(value)
-            )
-        );
-
-        Ok(())
-    }
-
     fn call_class_value(
         &mut self,
         class: ClassRef,
@@ -4001,34 +3725,168 @@ impl Vm {
         )
     }
 
-    fn call_class(
+    fn call_value(
         &mut self,
-        function_index: usize,
-        class: ClassRef,
+        callable: Value,
+        args: Vec<Value>,
         names: &[Option<String>],
-    ) -> Result<()> {
-        let args =
-            self.stack[
-                function_index + 1..
-            ]
-            .to_vec();
+    ) -> Result<Value> {
+        match callable {
+            Value::Closure(
+                closure
+            ) => {
+                self.call_closure_sync_named(
+                    closure,
+                    args,
+                    names,
+                )
+            }
+
+            Value::Builtin(
+                builtin
+            ) => {
+                ensure_positional_args(
+                    names
+                )?;
+
+                builtin(args)
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Runtime,
+                            message,
+                            None,
+                        )
+                    })
+            }
+
+            Value::Class(
+                class
+            ) => {
+                self.call_class_value(
+                    class,
+                    args,
+                    names,
+                )
+            }
+
+            Value::EnumConstructor(
+                constructor
+            ) => {
+                ensure_positional_args(
+                    names
+                )?;
+
+                self.make_enum_value(
+                    constructor,
+                    args,
+                )
+            }
+
+            Value::StructType(
+                ty
+            ) => {
+                ensure_positional_args(
+                    names
+                )?;
+
+                self.make_struct_value(
+                    ty,
+                    args,
+                )
+            }
+
+            other => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "value is not callable: {}",
+                            other.type_name()
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn make_enum_value(
+        &mut self,
+        constructor: EnumConstructor,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let expected =
+            constructor.arity();
+
+        if args.len() != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects {} arguments, got {}",
+                        constructor,
+                        expected,
+                        args.len(),
+                    ),
+                    None,
+                )
+            );
+        }
+
+        Ok(
+            Value::EnumValue(
+                Rc::new(
+                    EnumValue::new(
+                        constructor.enum_def().name(),
+                        constructor.variant(),
+                        args,
+                    )
+                )
+            )
+        )
+    }
+
+    fn make_struct_value(
+        &mut self,
+        ty: StructTypeRef,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        let expected =
+            ty.fields().len();
+
+        if args.len() != expected {
+            return Err(
+                Error::new(
+                    ErrorKind::Arity,
+                    format!(
+                        "{} expects {} arguments, got {}",
+                        ty.name(),
+                        expected,
+                        args.len(),
+                    ),
+                    None,
+                )
+            );
+        }
 
         let value =
-            self.call_class_value(
-                class,
+            StructValue::new(
+                ty,
                 args,
-                names,
-            )?;
+            )
+            .map_err(|message| {
+                Error::new(
+                    ErrorKind::Type,
+                    message,
+                    None,
+                )
+            })?;
 
-        self.stack.truncate(
-            function_index
-        );
-
-        self.push(
-            value
-        );
-
-        Ok(())
+        Ok(
+            Value::Struct(
+                Rc::new(value)
+            )
+        )
     }
 
     fn eval_pipeline_expr(
@@ -6245,100 +6103,75 @@ impl Vm {
         names: &[Option<String>],
     ) -> Result<Value> {
         match receiver {
-            Value::List(list) => {
-                ensure_positional_args(
-                    names
-                )?;
+            Value::Module(module) =>
+                self.invoke_module_member(
+                    module,
+                    name,
+                    args,
+                    names,
+                ),
 
+            Value::Object(object) =>
+                self.invoke_object_method(
+                    object,
+                    name,
+                    args,
+                    names,
+                ),
+
+            Value::List(list) =>
                 self.invoke_list_method(
                     list,
                     name,
                     args,
-                )
-            }
+                ),
 
-            Value::Str(string) => {
-                ensure_positional_args(
-                    names
-                )?;
-                
+            Value::Str(string) =>
                 self.invoke_string_method(
                     string,
                     name,
                     args,
-                )
-            }
+                ),
 
-            Value::Enum(enum_def) => {
-                self.invoke_enum_constructor(
-                    enum_def,
-                    name,
-                    args,
-                )
-            }
-
-            Value::Iterator(iterator) => {
-                ensure_positional_args(
-                    names
-                )?;
-                
+            Value::Iterator(iterator) =>
                 self.invoke_iterator_method(
                     iterator,
                     name,
                     args,
-                )
-            }
+                ),
 
             Value::Range(
                 start,
                 end,
                 inclusive,
-            ) => {
-                ensure_positional_args(
-                    names
-                )?;
-
+            ) =>
                 self.invoke_range_method(
                     start,
                     end,
                     inclusive,
                     name,
                     args,
-                )
-            }
+                ),
 
-            Value::Module(module) => {
-                self.invoke_module_member(
-                    module,
+            Value::Enum(enum_def) =>
+                self.invoke_enum_constructor(
+                    enum_def,
                     name,
                     args,
-                    names,
-                )
-            }
+                ),
 
-            Value::Object(
-                object
-            ) => {
-                self.invoke_object_method(
-                    object,
-                    name,
-                    args,
-                    names,
-                )
-            }
-
-            _ => {
+            other =>
                 Err(
                     Error::new(
                         ErrorKind::Type,
                         format!(
-                            "method '{}' is not supported for this value",
-                            name
+                            "method '{}' is not supported for this value ({})",
+                            name,
+                            other.type_name(),
                         ),
                         None,
                     )
-                )
-            }
+                ),
         }
     }
 

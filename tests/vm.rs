@@ -2763,6 +2763,63 @@ fn named_function_argument() {
     );
 }
 
+// ============================================================
+// Method call
+// ============================================================
 
+#[test]
+fn nested_method_call_argument() {
+    assert_int(
+        r#"
+        class Test {
+            value = 42
 
+            get = |self| {
+                self.value
+            }
+        }
+
+        let t =
+            Test()
+
+        let f =
+            |x| x
+
+        f(
+            t.get()
+        )
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn nested_method_call_in_builtin() {
+    match run(
+        r#"
+        class Test {
+            value = 42
+
+            get = |self| {
+                self.value
+            }
+        }
+
+        let t =
+            Test()
+
+        print(
+            t.get()
+        )
+        "#
+    ) {
+        Ok(Value::Unit) => {}
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
 

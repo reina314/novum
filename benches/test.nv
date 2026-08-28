@@ -71,7 +71,9 @@ print("Bias after fitting: " + model_and.bias)
 
 print("\nPrediction: ")
 for (x, y) in zip(X_and, y_and) {
-    model_and.predict(x)
+    print(x)
+    print(y)
+    print(model_and.predict(x))
     
     //print(
     //    "\t" + x + " -> " + model_and.predict(x) + "   Answer: " + y
