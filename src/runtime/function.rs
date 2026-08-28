@@ -55,5 +55,17 @@ pub struct CallFrame {
 #[derive(Debug, Clone, Copy)]
 pub struct RangeCursor {
     pub current: i64,
+
+    /*
+     * Always exclusive.
+     *
+     * For:
+     *
+     *     0..10
+     *     end = 10
+     *
+     *     0..=10
+     *     end = 11
+     */
     pub end: i64,
 }

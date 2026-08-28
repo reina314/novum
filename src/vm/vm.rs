@@ -2010,7 +2010,7 @@ impl Vm {
                     let range_index =
                         operand as usize;
 
-                    let _range =
+                    let range =
                         self.current_frame()
                             .closure
                             .function
@@ -2026,6 +2026,11 @@ impl Vm {
                                 )
                             })?;
 
+                    /*
+                    * Stack:
+                    *
+                    *     [start, end]
+                    */
                     let end =
                         self.pop()?;
 
@@ -2034,10 +2039,9 @@ impl Vm {
 
                     let start =
                         match start {
-                            Value::Int(value) =>
-                                value,
+                            Value::Int(value) => value,
 
-                            other =>
+                            other => {
                                 return Err(
                                     Error::new(
                                         ErrorKind::Type,
@@ -2047,15 +2051,15 @@ impl Vm {
                                         ),
                                         None,
                                     )
-                                ),
+                                );
+                            }
                         };
 
                     let end =
                         match end {
-                            Value::Int(value) =>
-                                value,
+                            Value::Int(value) => value,
 
-                            other =>
+                            other => {
                                 return Err(
                                     Error::new(
                                         ErrorKind::Type,
@@ -2065,7 +2069,29 @@ impl Vm {
                                         ),
                                         None,
                                     )
-                                ),
+                                );
+                            }
+                        };
+
+                    /*
+                    * Normalize inclusive ranges once.
+                    *
+                    *     [start, end]
+                    *          =>
+                    *     [start, end + 1)
+                    */
+                    let exclusive_end =
+                        if range.inclusive {
+                            end.checked_add(1)
+                                .ok_or_else(|| {
+                                    Error::new(
+                                        ErrorKind::Overflow,
+                                        "inclusive range endpoint overflow",
+                                        None,
+                                    )
+                                })?
+                        } else {
+                            end
                         };
 
                     let frame =
@@ -2086,138 +2112,15 @@ impl Vm {
                         Some(
                             RangeCursor {
                                 current: start,
-                                end,
+                                end: exclusive_end,
                             }
                         );
                 }
 
                 OpCode::RangeNext => {
-                    let range_index =
-                        operand as usize;
-
-                    let range =
-                        self.current_frame()
-                            .closure
-                            .function
-                            .chunk
-                            .range_loops
-                            .get(range_index)
-                            .copied()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "range loop index out of bounds",
-                                    None,
-                                )
-                            })?;
-
-                    /*
-                    * Take a copy of the current cursor state so that no
-                    * mutable frame borrow is held while deciding control flow.
-                    */
-                    let cursor =
-                        self.current_frame()
-                            .range_cursors
-                            .get(range_index)
-                            .and_then(Option::as_ref)
-                            .copied()
-                            .ok_or_else(|| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    "range cursor is not initialized",
-                                    None,
-                                )
-                            })?;
-
-                    let finished =
-                        if range.inclusive {
-                            cursor.current > cursor.end
-                        } else {
-                            cursor.current >= cursor.end
-                        };
-
-                    if finished {
-                        /*
-                        * RangeNext is a control-flow instruction.
-                        * It does not return from execute_until_depth().
-                        */
-                        self.current_frame_mut().ip =
-                            range.exit_ip as usize;
-                    } else {
-                        let current =
-                            cursor.current;
-
-                        let next =
-                            current.checked_add(1)
-                                .ok_or_else(|| {
-                                    Error::new(
-                                        ErrorKind::Overflow,
-                                        "range increment overflow",
-                                        None,
-                                    )
-                                })?;
-
-                        /*
-                        * Update the cursor.
-                        */
-                        {
-                            let frame =
-                                self.current_frame_mut();
-
-                            let cursor =
-                                frame
-                                    .range_cursors
-                                    .get_mut(range_index)
-                                    .and_then(Option::as_mut)
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "range cursor is not initialized",
-                                            None,
-                                        )
-                                    })?;
-
-                            cursor.current =
-                                next;
-                        }
-
-                        /*
-                        * Publish the current value into the loop binding.
-                        */
-                        let frame =
-                            self.current_frame_mut();
-
-                        let value_slot =
-                            range.value_slot
-                                as usize;
-
-                        if frame.locals.len()
-                            <= value_slot
-                        {
-                            frame.locals.resize(
-                                value_slot + 1,
-                                Value::Unit,
-                            );
-                        }
-
-                        if let Some(cells) =
-                            frame.cells.as_mut()
-                        {
-                            if cells.len() <= value_slot {
-                                cells.resize(
-                                    value_slot + 1,
-                                    None,
-                                );
-                            }
-                        }
-
-                        frame.locals[
-                            value_slot
-                        ] =
-                            Value::Int(
-                                current
-                            );
-                    }
+                    self.advance_range(
+                        operand as usize
+                    )?;
                 }
 
                 OpCode::FusedPipeline => {
@@ -4780,6 +4683,110 @@ impl Vm {
                 )
             }
         }
+    }
+
+    #[inline(always)]
+    fn advance_range(
+        &mut self,
+        range_index: usize,
+    ) -> Result<()> {
+        let range =
+            self.current_frame()
+                .closure
+                .function
+                .chunk
+                .range_loops
+                .get(range_index)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "range loop index out of bounds",
+                        None,
+                    )
+                })?;
+
+        let frame =
+            self.current_frame_mut();
+
+        let cursor =
+            frame
+                .range_cursors
+                .get_mut(range_index)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Runtime,
+                        "range cursor is not initialized",
+                        None,
+                    )
+                })?;
+
+        if cursor.current >= cursor.end {
+            frame.ip =
+                range.exit_ip as usize;
+
+            return Ok(());
+        }
+
+        let current =
+            cursor.current;
+
+        cursor.current =
+            current.checked_add(1)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "range increment overflow",
+                        None,
+                    )
+                })?;
+
+        let value_slot =
+            range.value_slot as usize;
+
+        /*
+        * Fast path:
+        *
+        * Top-level/non-capturing function.
+        */
+        if frame.cells.is_none() {
+            frame.locals[value_slot] =
+                Value::Int(current);
+
+            return Ok(());
+        }
+
+        /*
+        * Capturing-function path.
+        */
+        if frame.locals.len()
+            <= value_slot
+        {
+            frame.locals.resize(
+                value_slot + 1,
+                Value::Unit,
+            );
+        }
+
+        let value =
+            Value::Int(current);
+
+        frame.locals[value_slot] =
+            value.clone();
+
+        if let Some(cells) =
+            frame.cells.as_ref()
+        {
+            if let Some(Some(cell)) =
+                cells.get(value_slot)
+            {
+                *cell.borrow_mut() =
+                    value;
+            }
+        }
+
+        Ok(())
     }
 
     #[inline]
