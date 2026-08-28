@@ -2166,19 +2166,23 @@ impl Parser {
             )?
             .span;
 
+        let mut entries =
+            Vec::new();
+
         if self.check(
             TokenKind::RBrace
         ) {
-            return Err(
-                Error::parse(
-                    "empty dictionary is not supported; use a non-empty dictionary",
-                    self.peek().span,
+            let close =
+                self.eat()
+                    .span;
+
+            return Ok(
+                Expr::new(
+                    ExprKind::Dict(entries),
+                    open.join(close),
                 )
             );
         }
-
-        let mut entries =
-            Vec::new();
 
         loop {
             let key_token =
@@ -2504,6 +2508,12 @@ impl Parser {
     fn looks_like_dict(
         &self,
     ) -> bool {
+        if self.peek_n(1).kind
+            == TokenKind::RBrace
+        {
+            return true;
+        }
+
         matches!(
             (
                 self.peek_n(1).kind.clone(),

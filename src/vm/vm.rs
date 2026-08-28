@@ -1629,13 +1629,22 @@ impl Vm {
                 }
 
                 OpCode::IndexSet => {
+                    /*
+                    * Stack contract:
+                    *
+                    *     [object, index, value]
+                    *
+                    * IndexSet consumes all three values and leaves the
+                    * assigned value on the stack.
+                    */
+                    
+                    let value =
+                        self.pop()?;
+
                     let index =
                         self.pop()?;
 
                     let object =
-                        self.pop()?;
-
-                    let value =
                         self.pop()?;
 
                     match (object, index) {

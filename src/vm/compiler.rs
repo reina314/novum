@@ -399,12 +399,12 @@ impl Compiler {
                 index_slot,
             } => {
                 /*
-                * The assigned value is already on the stack.
+                * The assigned value is on the stack.
                 *
-                * Save it temporarily because IndexSet expects:
-                *
-                *     object, index, value
+                * StoreLocal does not consume the value, so explicitly
+                * discard the original stack copy after saving it.
                 */
+
                 let value_slot =
                     self.allocate_temp_local();
 
@@ -413,25 +413,26 @@ impl Compiler {
                     value_slot as u32,
                 );
 
+                self.chunk.emit(
+                    OpCode::Pop
+                );
+
                 /*
-                *     [object]
+                * IndexSet contract:
+                *
+                *     [object, index, value]
                 */
+
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     *object_slot as u32,
                 );
 
-                /*
-                *     [object, index]
-                */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     *index_slot as u32,
                 );
 
-                /*
-                *     [object, index, value]
-                */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     value_slot as u32,
