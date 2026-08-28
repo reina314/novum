@@ -4484,6 +4484,38 @@ impl Compiler {
             }
 
             Pattern::Tuple(patterns) => {
+                /*
+                * First check tuple type and exact arity.
+                *
+                * Stack:
+                *
+                *     [tuple]
+                *
+                * becomes:
+                *
+                *     [tuple, matched]
+                */
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    value_slot as u32,
+                );
+
+                let match_jump =
+                    self.chunk.emit_operand(
+                        OpCode::MatchTuple,
+                        patterns.len() as u32,
+                    );
+
+                let failure =
+                    self.chunk.emit_operand(
+                        OpCode::JumpIfFalse,
+                        0,
+                    );
+
+                /*
+                * Only extract elements after the tuple
+                * itself has been verified.
+                */
                 let mut element_slots =
                     Vec::with_capacity(
                         patterns.len()
@@ -4535,9 +4567,7 @@ impl Compiler {
                     slot,
                 ) in patterns
                     .iter()
-                    .zip(
-                        element_slots
-                    )
+                    .zip(element_slots)
                 {
                     failures.extend(
                         self.compile_pattern(
@@ -4546,9 +4576,35 @@ impl Compiler {
                         )?
                     );
                 }
+
+                failures.push(
+                    failure
+                );
+
+                /*
+                * `match_jump` is kept named here to make the
+                * generated control flow explicit.
+                */
+                let _ = match_jump;
             }
 
             Pattern::List(patterns) => {
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    value_slot as u32,
+                );
+                
+                self.chunk.emit_operand(
+                    OpCode::MatchList,
+                    patterns.len() as u32,
+                );
+
+                let failure =
+                    self.chunk.emit_operand(
+                    OpCode::JumpIfFalse,
+                        0,
+                    );
+
                 let mut element_slots =
                     Vec::with_capacity(
                         patterns.len()
@@ -4600,9 +4656,7 @@ impl Compiler {
                     slot,
                 ) in patterns
                     .iter()
-                    .zip(
-                        element_slots
-                    )
+                    .zip(element_slots)
                 {
                     failures.extend(
                         self.compile_pattern(
@@ -4611,6 +4665,10 @@ impl Compiler {
                         )?
                     );
                 }
+
+                failures.push(
+                    failure
+                );
             }
 
             Pattern::Enum {

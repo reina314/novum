@@ -95,6 +95,10 @@ impl StructValue {
         self.ty.name()
     }
 
+    pub fn fields(&self) -> &[Value] {
+        &self.fields
+    }
+
     pub fn field(
         &self,
         index: usize,

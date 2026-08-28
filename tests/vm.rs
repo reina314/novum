@@ -923,6 +923,168 @@ fn vm_match() {
     );
 }
 
+#[test]
+fn match_wildcard() {
+    assert_int(
+        r#"
+        match 99 {
+            1 => 10,
+            _ => 42,
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn match_tuple_length_mismatch() {
+    assert_int(
+        r#"
+        match (1,) {
+            (1, 2) => 10,
+            _ => 20,
+        }
+        "#,
+        20,
+    );
+}
+
+#[test]
+fn match_list_length_mismatch() {
+    assert_int(
+        r#"
+        match [1] {
+            [1, 2] => 10,
+            _ => 20,
+        }
+        "#,
+        20,
+    );
+}
+
+#[test]
+fn match_nested_list() {
+    assert_int(
+        r#"
+        match [[1, 2]] {
+            [[1, 3]] => 10,
+            [[1, 2]] => 20,
+            _ => 30,
+        }
+        "#,
+        20,
+    );
+}
+
+#[test]
+fn match_binding() {
+    assert_int(
+        r#"
+        match 42 {
+            x => x + 1,
+        }
+        "#,
+        43,
+    );
+}
+
+#[test]
+fn match_tuple_binding() {
+    assert_int(
+        r#"
+        match (10, 20) {
+            (x, y) => x + y,
+        }
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn match_option_some() {
+    assert_int(
+        r#"
+        match Option.Some(42) {
+            Option.Some(x) => x,
+            Option.None => 0,
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn match_option_none() {
+    assert_int(
+        r#"
+        match Option.None {
+            Option.Some(x) => x,
+            Option.None => 42,
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn match_result_ok() {
+    assert_int(
+        r#"
+        match Result.Ok(42) {
+            Result.Ok(x) => x,
+            Result.Err(_) => 0,
+        }
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn match_result_then_try() {
+    assert_int(
+        r#"
+        let f = || {
+            let value =
+                match Result.Ok(41) {
+                    Result.Ok(x) => x,
+                    Result.Err(_) => 0,
+                }
+
+            value + 1
+        }
+
+        f()
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn match_no_arm() {
+    assert_error_kind(
+        r#"
+        match 3 {
+            1 => 10,
+            2 => 20,
+        }
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn match_enum_wrong_arity() {
+    assert_int(
+        r#"
+        match Result.Ok(42) {
+            Result.Ok(x, y) => 10,
+            _ => 20,
+        }
+        "#,
+        20,
+    );
+}
+
 // ============================================================
 // Combined stress test
 // ============================================================

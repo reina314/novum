@@ -2450,9 +2450,16 @@ impl Vm {
 
                     let matched =
                         match &value {
-                            Value::Struct(value) =>
+                            Value::Struct(value) => {
+                                let fields =
+                                    value
+                                        .fields();
+
                                 value.type_name()
-                                    == name.as_str(),
+                                    == name.as_str()
+                                    && fields.len()
+                                        >= operand as usize
+                            }
 
                             _ => false,
                         };
