@@ -733,6 +733,63 @@ impl Compiler {
         None
     }
 
+    fn resolve_enum_pattern(
+        &self,
+        path: &[String],
+    ) -> Result<(String, String)> {
+        match path.len() {
+            2 => {
+                Ok((
+                    path[0].clone(),
+                    path[1].clone(),
+                ))
+            }
+
+            1 => {
+                match path[0].as_str() {
+                    "Ok" |
+                    "Err" => {
+                        Ok((
+                            "Result".to_string(),
+                            path[0].clone(),
+                        ))
+                    }
+
+                    "Some" |
+                    "None" => {
+                        Ok((
+                            "Option".to_string(),
+                            path[0].clone(),
+                        ))
+                    }
+
+                    variant => {
+                        Err(
+                            Error::new(
+                                ErrorKind::Name,
+                                format!(
+                                    "unknown unqualified enum variant '{}'",
+                                    variant
+                                ),
+                                None,
+                            )
+                        )
+                    }
+                }
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        "enum pattern requires Enum.Variant",
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
     pub fn finish(self) -> Chunk {
         let mut chunk =
             self.chunk;
@@ -5008,34 +5065,45 @@ impl Compiler {
                 path,
                 fields,
             } => {
-                if path.len() != 2 {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "enum pattern requires Enum.Variant",
-                            None,
-                        )
-                    );
-                }
+                let (
+                    enum_name,
+                    variant_name,
+                ) =
+                    self.resolve_enum_pattern(
+                        path
+                    )?;
 
-                let enum_name =
+                let enum_name_constant =
                     self.chunk.add_constant(
                         Value::Str(
                             Rc::new(
-                                path[0].clone()
+                                enum_name
                             )
                         )
                     );
 
-                let variant =
+                let variant_constant =
                     self.chunk.add_constant(
                         Value::Str(
                             Rc::new(
-                                path[1].clone()
+                                variant_name
                             )
                         )
                     );
 
+                /*
+                * --------------------------------------------------------
+                * MatchEnum
+                *
+                * Stack before:
+                *
+                *     [value, enum_name, variant]
+                *
+                * Stack after:
+                *
+                *     [Bool]
+                * --------------------------------------------------------
+                */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     value_slot as u32,
@@ -5043,12 +5111,12 @@ impl Compiler {
 
                 self.chunk.emit_operand(
                     OpCode::Constant,
-                    enum_name,
+                    enum_name_constant,
                 );
 
                 self.chunk.emit_operand(
                     OpCode::Constant,
-                    variant,
+                    variant_constant,
                 );
 
                 self.chunk.emit_operand(
@@ -5062,6 +5130,11 @@ impl Compiler {
                         0,
                     );
 
+                /*
+                * --------------------------------------------------------
+                * Destructure payload fields.
+                * --------------------------------------------------------
+                */
                 for (
                     index,
                     pattern,
@@ -5112,7 +5185,7 @@ impl Compiler {
                     failure
                 );
             }
-        
+
             Pattern::Struct {
                 path,
                 fields,

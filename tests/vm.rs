@@ -2357,6 +2357,42 @@ fn stdlib_process_cwd() {
     }
 }
 
+#[test]
+fn process_cwd_returns_path() {
+    assert_string(
+        r#"
+        import process
+
+        let result =
+            process.cwd()
+
+        match result {
+            Ok(p) => typeof(p),
+            Err(_) => "error"
+        }
+        "#,
+        "Path",
+    );
+}
+
+#[test]
+fn process_cwd_path_methods() {
+    assert_bool(
+        r#"
+        import process
+
+        let result =
+            process.cwd()
+
+        match result {
+            Ok(p) => p.is_dir(),
+            Err(_) => false
+        }
+        "#,
+        true,
+    );
+}
+
 // ============================================================
 // Option and Result
 // ============================================================

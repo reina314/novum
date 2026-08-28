@@ -36,6 +36,8 @@ use crate::{
     syntax::BinOp,
     stdlib::{
         decode_class_counts,
+        option_some,
+        option_none,
     },
 };
 
@@ -6273,6 +6275,13 @@ impl Vm {
                     args,
                 ),
 
+            Value::Path(path) =>
+                self.invoke_path_method(
+                    path,
+                    name,
+                    args,
+                ),
+
             other =>
                 Err(
                     Error::new(
@@ -7298,6 +7307,284 @@ impl Vm {
             call_args,
             &call_names,
         )
+    }
+
+    fn invoke_path_method(
+        &mut self,
+        path: crate::runtime::PathRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            /*
+            * ----------------------------------------------------
+            * name()
+            * ----------------------------------------------------
+            *
+            * Returns the final component of the path.
+            *
+            *     path("foo/bar.txt").name()
+            *         -> Some("bar.txt")
+            */
+            "name" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                match path.name() {
+                    Some(value) =>
+                        Ok(
+                            option_some(
+                                Value::Str(
+                                    Rc::new(value)
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            option_none()
+                        ),
+                }
+            }
+
+            /*
+            * ----------------------------------------------------
+            * extension()
+            * ----------------------------------------------------
+            */
+            "extension" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                match path.extension() {
+                    Some(value) =>
+                        Ok(
+                            option_some(
+                                Value::Str(
+                                    Rc::new(value)
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            option_none()
+                        ),
+                }
+            }
+
+            /*
+            * ----------------------------------------------------
+            * stem()
+            * ----------------------------------------------------
+            */
+            "stem" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                match path.stem() {
+                    Some(value) =>
+                        Ok(
+                            option_some(
+                                Value::Str(
+                                    Rc::new(value)
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            option_none()
+                        ),
+                }
+            }
+
+            /*
+            * ----------------------------------------------------
+            * parent()
+            * ----------------------------------------------------
+            */
+            "parent" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                match path.parent() {
+                    Some(parent) =>
+                        Ok(
+                            option_some(
+                                Value::Path(
+                                    Rc::new(parent)
+                                )
+                            )
+                        ),
+
+                    None =>
+                        Ok(
+                            option_none()
+                        ),
+                }
+            }
+
+            /*
+            * ----------------------------------------------------
+            * join(path)
+            * ----------------------------------------------------
+            *
+            * Accept both Str and Path:
+            *
+            *     p.join("file.txt")
+            *     p.join(path("file.txt"))
+            */
+            "join" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let child =
+                    match &args[0] {
+                        Value::Str(value) => {
+                            std::path::PathBuf::from(
+                                value.as_ref()
+                            )
+                        }
+
+                        Value::Path(value) => {
+                            value.to_path_buf()
+                        }
+
+                        other => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "join() expects Str or Path, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            );
+                        }
+                    };
+
+                Ok(
+                    Value::Path(
+                        Rc::new(
+                            path.join(&child)
+                        )
+                    )
+                )
+            }
+
+            /*
+            * ----------------------------------------------------
+            * exists()
+            * ----------------------------------------------------
+            */
+            "exists" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Bool(
+                        path.exists()
+                    )
+                )
+            }
+
+            /*
+            * ----------------------------------------------------
+            * is_file()
+            * ----------------------------------------------------
+            */
+            "is_file" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Bool(
+                        path.is_file()
+                    )
+                )
+            }
+
+            /*
+            * ----------------------------------------------------
+            * is_dir()
+            * ----------------------------------------------------
+            */
+            "is_dir" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Bool(
+                        path.is_dir()
+                    )
+                )
+            }
+
+            /*
+            * ----------------------------------------------------
+            * string()
+            * ----------------------------------------------------
+            *
+            * Explicit conversion method.
+            *
+            * `str(path)` already exists, but `string()` makes
+            * Path's public API self-contained.
+            */
+            "string" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            path.to_string_lossy()
+                        )
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "Path has no method '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
     }
 
     fn invoke_enum_constructor(
