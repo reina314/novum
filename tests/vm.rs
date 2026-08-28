@@ -2215,3 +2215,39 @@ fn try_result_propagates_from_function() {
     }
 }
 
+#[test]
+fn fs_read_try_propagates_from_function() {
+    match run(
+        r#"
+        import fs
+
+        let read_file =
+            |path| {
+                fs.read(path)?
+            }
+
+        read_file(
+            "__novum_missing_file__"
+        )
+        "#
+    ) {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Err"
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Result::Err, got {other:?}"
+            );
+        }
+    }
+}
+

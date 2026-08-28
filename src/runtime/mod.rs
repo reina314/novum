@@ -14,6 +14,7 @@ pub mod r#enum;
 pub mod value;
 pub mod path;
 pub mod function;
+pub mod standard;
 
 
 pub use operator::apply_binop;
@@ -96,5 +97,8 @@ pub use function::{
     UpvalueSpec,
     RangeCursor,
 };
-
+pub use standard::{
+    option,
+    result,
+};
 

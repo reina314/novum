@@ -22,6 +22,8 @@ use crate::{
         FunctionProto,
         FunctionRef,
         ModulePath,
+        option,
+        result,
     },
     stdlib::{
         encode_class_counts,
@@ -908,63 +910,9 @@ impl Compiler {
     ) -> Result<u32> {
         let value =
             match name {
-                "Option" => {
-                    let mut definition =
-                        crate::runtime::EnumDef::new(
-                            "Option"
-                        );
+                "Option" => option(),
 
-                    definition
-                        .add_variant(
-                            "Some",
-                            1,
-                        )
-                        .expect(
-                            "valid Option"
-                        );
-
-                    definition
-                        .add_variant(
-                            "None",
-                            0,
-                        )
-                        .expect(
-                            "valid Option"
-                        );
-
-                    Value::Enum(
-                        Rc::new(definition)
-                    )
-                }
-
-                "Result" => {
-                    let mut definition =
-                        crate::runtime::EnumDef::new(
-                            "Result"
-                        );
-
-                    definition
-                        .add_variant(
-                            "Ok",
-                            1,
-                        )
-                        .expect(
-                            "valid Result"
-                        );
-
-                    definition
-                        .add_variant(
-                            "Err",
-                            1,
-                        )
-                        .expect(
-                            "valid Result"
-                        );
-
-                    Value::Enum(
-                        Rc::new(definition)
-                    )
-                }
+                "Result" => result(),
 
                 _ => {
                     return Err(

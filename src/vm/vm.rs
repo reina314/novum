@@ -2552,143 +2552,13 @@ impl Vm {
                     let value =
                         self.pop()?;
 
-                    let Value::EnumValue(
-                        enum_value
-                    ) = value.clone()
-                    else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Type,
-                                format!(
-                                    "the '?' operator requires Result or Option, got {}",
-                                    value.type_name()
-                                ),
-                                None,
-                            )
-                        );
-                    };
-
-                    let propagated =
-                        match (
-                            enum_value.enum_name(),
-                            enum_value.variant(),
-                        ) {
-                            // Option::Some(value)
-                            (
-                                "Option",
-                                "Some",
-                            ) => {
-                                let fields =
-                                    enum_value.fields();
-
-                                if fields.len() != 1 {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "Option::Some must contain one value",
-                                            None,
-                                        )
-                                    );
-                                }
-
-                                self.push(
-                                    fields[0].clone()
-                                );
-
-                                false
-                            }
-
-                            // Option::None
-                            (
-                                "Option",
-                                "None",
-                            ) => {
-                                if !enum_value
-                                    .fields()
-                                    .is_empty()
-                                {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "Option::None must not contain values",
-                                            None,
-                                        )
-                                    );
-                                }
-
-                                true
-                            }
-
-                            // Result::Ok(value)
-                            (
-                                "Result",
-                                "Ok",
-                            ) => {
-                                let fields =
-                                    enum_value.fields();
-
-                                if fields.len() != 1 {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "Result::Ok must contain one value",
-                                            None,
-                                        )
-                                    );
-                                }
-
-                                self.push(
-                                    fields[0].clone()
-                                );
-
-                                false
-                            }
-
-                            // Result::Err(error)
-                            (
-                                "Result",
-                                "Err",
-                            ) => {
-                                if enum_value
-                                    .fields()
-                                    .len() != 1
-                                {
-                                    return Err(
-                                        Error::new(
-                                            ErrorKind::Runtime,
-                                            "Result::Err must contain one value",
-                                            None,
-                                        )
-                                    );
-                                }
-
-                                true
-                            }
-
-                            _ => {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Type,
-                                        format!(
-                                            "'?' is only supported for Option or Result, got {}.{}",
-                                            enum_value.enum_name(),
-                                            enum_value.variant(),
-                                        ),
-                                        None,
-                                    )
-                                );
-                            }
-                        };
-
-                    if propagated {
-                        if let Some(execution) =
-                            self.return_from_current_frame(
-                                value,
-                                target_depth,
-                            )?
-                        {
-                            return Ok(execution);
-                        }
+                    if let Some(execution) =
+                        self.try_value(
+                            value,
+                            target_depth,
+                        )?
+                    {
+                        return Ok(execution);
                     }
                 }
 
@@ -4750,6 +4620,119 @@ impl Vm {
         frame.ip += 1;
 
         Ok(instruction)
+    }
+
+    fn try_value(
+        &mut self,
+        value: Value,
+        target_depth: usize,
+    ) -> Result<Option<ExecutionResult>> {
+        let Value::EnumValue(
+            enum_value
+        ) = value.clone()
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Type,
+                    format!(
+                        "the '?' operator requires Result or Option, got {}",
+                        value.type_name()
+                    ),
+                    None,
+                )
+            );
+        };
+
+        match (
+            enum_value.enum_name(),
+            enum_value.variant(),
+        ) {
+            ("Option", "Some") => {
+                if enum_value.fields().len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "Option::Some must contain one value",
+                            None,
+                        )
+                    );
+                }
+
+                self.push(
+                    enum_value.field(0)
+                        .expect("checked above")
+                );
+
+                Ok(None)
+            }
+
+            ("Result", "Ok") => {
+                if enum_value.fields().len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "Result::Ok must contain one value",
+                            None,
+                        )
+                    );
+                }
+
+                self.push(
+                    enum_value.field(0)
+                        .expect("checked above")
+                );
+
+                Ok(None)
+            }
+
+            ("Option", "None") => {
+                if !enum_value.fields().is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "Option::None must not contain values",
+                            None,
+                        )
+                    );
+                }
+
+                self.return_from_current_frame(
+                    value,
+                    target_depth,
+                )
+            }
+
+            ("Result", "Err") => {
+                if enum_value.fields().len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "Result::Err must contain one value",
+                            None,
+                        )
+                    );
+                }
+
+                self.return_from_current_frame(
+                    value,
+                    target_depth,
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "'?' is only supported for Option or Result, got {}.{}",
+                            enum_value.enum_name(),
+                            enum_value.variant(),
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
     }
 
     #[inline]
