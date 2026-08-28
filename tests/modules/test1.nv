@@ -1,0 +1,7 @@
+pub class Test {
+    x = 0
+
+    init = |self, x, y| {
+        self.x = x + y
+    }
+}

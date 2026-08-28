@@ -2165,6 +2165,42 @@ fn vm_pub_local_is_error() {
     );
 }
 
+#[test]
+fn imported_class_supports_named_arguments() {
+    assert_int(
+        r#"
+        import tests.modules.test1
+
+        let test =
+            tests.modules.test1.Test(
+                x = 1,
+                y = 3,
+            )
+
+        test.x
+        "#,
+        4,
+    );
+}
+
+#[test]
+fn imported_class_named_arguments_with_alias() {
+    assert_int(
+        r#"
+        import tests.modules.test1 as m
+
+        let test =
+            m.Test(
+                x = 1,
+                y = 3,
+            )
+
+        test.x
+        "#,
+        4,
+    );
+}
+
 // ============================================================
 // Stdlib
 // ============================================================
@@ -2726,3 +2762,7 @@ fn named_function_argument() {
         42,
     );
 }
+
+
+
+

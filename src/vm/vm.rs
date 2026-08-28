@@ -3895,25 +3895,28 @@ impl Vm {
         Ok(())
     }
 
-    fn call_class(
+    fn call_class_value(
         &mut self,
-        function_index: usize,
         class: ClassRef,
+        args: Vec<Value>,
         names: &[Option<String>],
-    ) -> Result<()> {
-        let args =
-            self.stack[
-                function_index + 1..
-            ]
-            .to_vec();
-
-        self.stack.truncate(
-            function_index
-        );
+    ) -> Result<Value> {
+        if names.len() != args.len() {
+            return Err(
+                Error::new(
+                    ErrorKind::Runtime,
+                    "class call-site metadata does not match arguments",
+                    None,
+                )
+            );
+        }
 
         let object =
             class.instantiate();
 
+        /*
+        * Initialize instance fields.
+        */
         for field in class.fields() {
             let value =
                 match field.default() {
@@ -3935,6 +3938,12 @@ impl Vm {
                 );
         }
 
+        /*
+        * Run init(self, ...).
+        *
+        * `self` is an implicit positional argument.
+        * User arguments keep their original named metadata.
+        */
         if let Some(constructor) =
             class.constructor()
         {
@@ -3954,7 +3963,9 @@ impl Vm {
                 )
             );
 
-            call_names.push(None);
+            call_names.push(
+                None
+            );
 
             call_args.extend(
                 args
@@ -3964,12 +3975,11 @@ impl Vm {
                 names.iter().cloned()
             );
 
-            let _ =
-                self.call_closure_sync_named(
-                    constructor,
-                    call_args,
-                    &call_names,
-                )?;
+            self.call_closure_sync_named(
+                constructor,
+                call_args,
+                &call_names,
+            )?;
         } else if !args.is_empty() {
             return Err(
                 Error::new(
@@ -3984,10 +3994,38 @@ impl Vm {
             );
         }
 
-        self.push(
+        Ok(
             Value::Object(
                 object
             )
+        )
+    }
+
+    fn call_class(
+        &mut self,
+        function_index: usize,
+        class: ClassRef,
+        names: &[Option<String>],
+    ) -> Result<()> {
+        let args =
+            self.stack[
+                function_index + 1..
+            ]
+            .to_vec();
+
+        let value =
+            self.call_class_value(
+                class,
+                args,
+                names,
+            )?;
+
+        self.stack.truncate(
+            function_index
+        );
+
+        self.push(
+            value
         );
 
         Ok(())
@@ -6270,60 +6308,12 @@ impl Vm {
             }
 
             Value::Module(module) => {
-                ensure_positional_args(
-                    names
-                )?;
-
-                let value =
-                    module
-                        .borrow()
-                        .get_field(name)
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Name,
-                                format!(
-                                    "module '{}' has no field '{}'",
-                                    module.borrow().name(),
-                                    name,
-                                ),
-                                None,
-                            )
-                        })?;
-
-                match value {
-                    Value::Builtin(function) => {
-                        function(args)
-                            .map_err(|message| {
-                                Error::new(
-                                    ErrorKind::Runtime,
-                                    message,
-                                    None,
-                                )
-                            })
-                    }
-
-                    Value::Closure(closure) => {
-                        self.call_closure_sync_named(
-                            closure,
-                            args,
-                            names,
-                        )
-                    }
-
-                    other => {
-                        Err(
-                            Error::new(
-                                ErrorKind::Type,
-                                format!(
-                                    "module field '{}' is not callable (got {})",
-                                    name,
-                                    other.type_name(),
-                                ),
-                                None,
-                            )
-                        )
-                    }
-                }
+                self.invoke_module_member(
+                    module,
+                    name,
+                    args,
+                    names,
+                )
             }
 
             Value::Object(
@@ -6344,6 +6334,77 @@ impl Vm {
                         format!(
                             "method '{}' is not supported for this value",
                             name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn invoke_module_member(
+        &mut self,
+        module: ModuleRef,
+        name: &str,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        let value =
+            module
+                .borrow()
+                .get_field(name)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "module '{}' has no field '{}'",
+                            module.borrow().name(),
+                            name,
+                        ),
+                        None,
+                    )
+                })?;
+
+        match value {
+            Value::Builtin(function) => {
+                ensure_positional_args(
+                    names
+                )?;
+
+                function(args)
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Runtime,
+                            message,
+                            None,
+                        )
+                    })
+            }
+
+            Value::Closure(closure) => {
+                self.call_closure_sync_named(
+                    closure,
+                    args,
+                    names,
+                )
+            }
+
+            Value::Class(class) => {
+                self.call_class_value(
+                    class,
+                    args,
+                    names,
+                )
+            }
+
+            other => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "module field '{}' is not callable (got {})",
+                            name,
+                            other.type_name(),
                         ),
                         None,
                     )
