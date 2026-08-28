@@ -2928,3 +2928,59 @@ fn method_result_can_be_nested_in_call() {
         30,
     );
 }
+
+// ============================================================
+// Fused pipeline
+// ============================================================
+#[test]
+fn generic_range_pipeline_falls_back() {
+    assert_list(
+        r#"
+        range(5)
+            .map(|x| x + 1)
+            .collect()
+        "#,
+        &[1, 2, 3, 4, 5],
+    );
+}
+
+#[test]
+fn list_pipeline_falls_back() {
+    assert_list(
+        r#"
+        [1, 2, 3]
+            .map(|x| x * 2)
+            .collect()
+        "#,
+        &[2, 4, 6],
+    );
+}
+
+#[test]
+fn block_lambda_pipeline_falls_back() {
+    assert_list(
+        r#"
+        range(3)
+            .map(|x| {
+                let y = x * 2
+                y + 1
+            })
+            .collect()
+        "#,
+        &[1, 3, 5],
+    );
+}
+
+#[test]
+fn call_lambda_pipeline_falls_back() {
+    assert_int(
+        r#"
+        range(3)
+            .map(|_| random())
+            .collect()
+            .len()
+        "#,
+        3,
+    );
+}
+

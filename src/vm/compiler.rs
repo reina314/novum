@@ -1213,38 +1213,56 @@ impl Compiler {
             | ExprKind::Null
             | ExprKind::Unit => true,
 
-            ExprKind::Neg(
-                expr
-            )
-            |
-            ExprKind::Not(
-                expr
-            ) => {
+            ExprKind::Neg(inner)
+            | ExprKind::Not(inner) => {
                 Self::pipeline_expr_is_fusable(
-                    expr
+                    inner
                 )
             }
 
             ExprKind::Binary(
-                _,
+                op,
                 left,
                 right,
             ) => {
-                Self::pipeline_expr_is_fusable(
-                    left
-                )
-                &&
-                Self::pipeline_expr_is_fusable(
-                    right
-                )
+                /*
+                * The set here must match exactly the set
+                * implemented by lower_pipeline_expr().
+                */
+                let supported =
+                    matches!(
+                        op,
+                        BinOp::Add
+                        | BinOp::Sub
+                        | BinOp::Mul
+                        | BinOp::Div
+                        | BinOp::Mod
+                        | BinOp::Pow
+                        | BinOp::Eq
+                        | BinOp::Neq
+                        | BinOp::Lt
+                        | BinOp::Leq
+                        | BinOp::Gt
+                        | BinOp::Geq
+                    );
+
+                supported
+                    && Self::pipeline_expr_is_fusable(left)
+                    && Self::pipeline_expr_is_fusable(right)
             }
 
             /*
-            * These require the general VM execution path.
-            * Do not put them into the fused pipeline function.
+            * The fused IR deliberately does not represent:
+            *
+            *     calls
+            *     indexing
+            *     field access
+            *     collection construction
+            *     control flow
+            *
+            * These must use the normal closure/iterator path.
             */
-            ExprKind::Lambda(..)
-            | ExprKind::Call(..)
+            ExprKind::Call(..)
             | ExprKind::Field { .. }
             | ExprKind::Index(..)
             | ExprKind::Tuple(..)
@@ -1263,6 +1281,7 @@ impl Compiler {
             | ExprKind::Continue
             | ExprKind::Return(_)
             | ExprKind::Try(_)
+            | ExprKind::Lambda(..)
             | ExprKind::StructDecl { .. }
             | ExprKind::ClassDecl { .. }
             | ExprKind::EnumDecl(_)
@@ -4992,7 +5011,22 @@ impl Compiler {
         &mut self,
         source: &Expr,
         stages: &[PipelineStageAst],
-    ) -> Result<PipelineProgram> {
+    ) -> Result<Option<PipelineProgram>> {
+        /*
+        * Fused pipeline currently has exactly one source form:
+        *
+        *     integer range expression
+        *
+        * Examples:
+        *
+        *     0..10
+        *     0..=10
+        *
+        * Anything else is NOT a compiler error.
+        * It simply means that the general iterator execution path
+        * should be used instead.
+        */
+
         let source =
             match &source.kind {
                 ExprKind::Range {
@@ -5003,25 +5037,13 @@ impl Compiler {
                     let ExprKind::Int(start) =
                         &start.kind
                     else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "fused pipeline requires integer range start",
-                                None,
-                            )
-                        );
+                        return Ok(None);
                     };
 
                     let ExprKind::Int(end) =
                         &end.kind
                     else {
-                        return Err(
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "fused pipeline requires integer range end",
-                                None,
-                            )
-                        );
+                        return Ok(None);
                     };
 
                     PipelineSource::Range {
@@ -5031,14 +5053,22 @@ impl Compiler {
                     }
                 }
 
+                /*
+                * `range(...)` is currently a builtin that materializes
+                * a List rather than a Range.
+                *
+                * Therefore it must use the normal iterator path.
+                */
+                ExprKind::Call(..) => {
+                    return Ok(None);
+                }
+
+                /*
+                * Any other expression can still be a valid iterator
+                * source, but is outside the fused-range optimizer.
+                */
                 _ => {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "unsupported fused pipeline source",
-                            None,
-                        )
-                    );
+                    return Ok(None);
                 }
             };
 
@@ -5115,11 +5145,13 @@ impl Compiler {
             );
 
         Ok(
-            PipelineProgram {
-                source,
-                stages: compiled,
-                plan,
-            }
+            Some(
+                PipelineProgram {
+                    source,
+                    stages: compiled,
+                    plan,
+                }
+            )
         )
     }
 
@@ -5128,6 +5160,9 @@ impl Compiler {
         callee: &Expr,
         args: &[CallArg],
     ) -> Result<bool> {
+        /*
+        * A fused collect currently accepts no arguments.
+        */
         if !args.is_empty() {
             return Ok(false);
         }
@@ -5135,8 +5170,7 @@ impl Compiler {
         let ExprKind::Field {
             object,
             name,
-        } =
-            &callee.kind
+        } = &callee.kind
         else {
             return Ok(false);
         };
@@ -5149,22 +5183,19 @@ impl Compiler {
             source,
             stages,
         )) =
-            self.extract_pipeline(
-                object
-            )?
+            self.extract_pipeline(object)?
         else {
             return Ok(false);
         };
 
         /*
-        * Current fused executor supports only:
+        * --------------------------------------------------------
+        * Check whether every stage is representable in the
+        * fused pipeline IR.
         *
-        *     map(|x| <simple expression>)
-        *     filter(|x| <simple expression>)
-        *
-        * If any stage is outside that subset, do not fuse.
-        * Falling back to the normal iterator implementation
-        * preserves program semantics.
+        * If not, fall back to the normal iterator implementation.
+        * This is an optimization decision, not a language error.
+        * --------------------------------------------------------
         */
         for stage in &stages {
             match stage {
@@ -5188,11 +5219,30 @@ impl Compiler {
             }
         }
 
-        let pipeline =
+        /*
+        * --------------------------------------------------------
+        * Try to construct the optimized pipeline.
+        *
+        * Unsupported sources such as:
+        *
+        *     range(n)
+        *     xs
+        *     iter(...)
+        *     some_function()
+        *
+        * simply return Ok(None).
+        *
+        * The general VM pipeline path will handle them.
+        * --------------------------------------------------------
+        */
+        let Some(pipeline) =
             self.compile_pipeline_program(
                 &source,
                 &stages,
-            )?;
+            )?
+        else {
+            return Ok(false);
+        };
 
         let pipeline_index =
             self.chunk.add_pipeline(
