@@ -4562,26 +4562,22 @@ impl Compiler {
 
             Pattern::Tuple(patterns) => {
                 /*
-                * First check tuple type and exact arity.
-                *
-                * Stack:
+                * MatchTuple consumes the candidate value and
+                * leaves only the match result.
                 *
                 *     [tuple]
-                *
-                * becomes:
-                *
-                *     [tuple, matched]
+                *        ↓
+                *     [Bool]
                 */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
                     value_slot as u32,
                 );
 
-                let match_jump =
-                    self.chunk.emit_operand(
-                        OpCode::MatchTuple,
-                        patterns.len() as u32,
-                    );
+                self.chunk.emit_operand(
+                    OpCode::MatchTuple,
+                    patterns.len() as u32,
+                );
 
                 let failure =
                     self.chunk.emit_operand(
@@ -4657,12 +4653,6 @@ impl Compiler {
                 failures.push(
                     failure
                 );
-
-                /*
-                * `match_jump` is kept named here to make the
-                * generated control flow explicit.
-                */
-                let _ = match_jump;
             }
 
             Pattern::List(patterns) => {

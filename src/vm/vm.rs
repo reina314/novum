@@ -2238,7 +2238,6 @@ impl Vm {
                                     == operand as usize
                         );
 
-                    self.push(value);
                     self.push(
                         Value::Bool(matched)
                     );
@@ -2305,8 +2304,6 @@ impl Vm {
                             _ => false,
                         };
 
-                    self.push(value);
-
                     self.push(
                         Value::Bool(
                             matched
@@ -2326,7 +2323,6 @@ impl Vm {
                                     == operand as usize
                         );
 
-                    self.push(value);
                     self.push(
                         Value::Bool(matched)
                     );
@@ -2355,8 +2351,7 @@ impl Vm {
                         match &value {
                             Value::Struct(value) => {
                                 let fields =
-                                    value
-                                        .fields();
+                                    value.fields();
 
                                 value.type_name()
                                     == name.as_str()
@@ -2366,8 +2361,6 @@ impl Vm {
 
                             _ => false,
                         };
-
-                    self.push(value);
 
                     self.push(
                         Value::Bool(matched)

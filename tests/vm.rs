@@ -2823,3 +2823,67 @@ fn nested_method_call_in_builtin() {
     }
 }
 
+#[test]
+fn tuple_pattern_result_can_be_nested_in_call() {
+    assert_int(
+        r#"
+        let f =
+            |(x, y)| {
+                x + y
+            }
+
+        let identity =
+            |value| {
+                value
+            }
+
+        identity(
+            f((10, 20))
+        )
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn method_result_can_be_nested_in_call() {
+    assert_int(
+        r#"
+        class Test {
+            predict =
+                |self, x| {
+                    zip(
+                        self.weights,
+                        x
+                    )
+                    .map(
+                        |(w, xi)| {
+                            w * xi
+                        }
+                    )
+                    .sum()
+                }
+        }
+
+        let model =
+            Test()
+
+        model.weights =
+            [1, 1]
+
+        let x =
+            [10, 20]
+
+        let identity =
+            |value| {
+                value
+            }
+
+        identity(
+            model.predict(x)
+        )
+        "#,
+        30,
+    );
+}
+
