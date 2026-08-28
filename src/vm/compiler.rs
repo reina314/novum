@@ -3467,13 +3467,11 @@ impl Compiler {
 
                 let binding_name =
                     match alias {
-                        Some(alias) => {
-                            alias.clone()
-                        }
+                        Some(alias) =>
+                            alias.clone(),
 
-                        None => {
-                            path[0].clone()
-                        }
+                        None =>
+                            path[0].clone(),
                     };
 
                 let slot =
@@ -3489,9 +3487,7 @@ impl Compiler {
                 let module_ref =
                     self.chunk.add_module_ref(
                         ModuleRefSpec {
-                            path:
-                                module_path,
-
+                            path: module_path,
                             namespace:
                                 alias.is_none(),
                         }

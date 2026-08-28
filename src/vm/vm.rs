@@ -4910,20 +4910,37 @@ impl Vm {
         }
 
         /*
-        * Load the actual leaf module.
+        * A single-component import does not need
+        * a synthetic namespace.
+        *
+        * import math
+        *
+        * becomes:
+        *
+        * math -> actual math ModuleRef
+        */
+        if parts.len() == 1 {
+            return self.load_module(path);
+        }
+
+        /*
+        * Load the actual leaf module first.
+        *
+        * a.b.c
+        *       ↓
+        * actual c ModuleRef
         */
         let leaf =
             self.load_module(path)?;
 
         /*
-        * Ensure:
+        * Ensure every synthetic namespace exists:
         *
         * a
         * a.b
-        * a.b.c
         */
         for depth in
-            0..parts.len()
+            0..parts.len() - 1
         {
             let prefix =
                 ModulePath::new(
@@ -4931,23 +4948,37 @@ impl Vm {
                         .to_vec()
                 );
 
-            self.ensure_namespace(
-                &prefix
-            );
+            if !self.module_namespaces
+                .contains_key(&prefix)
+            {
+                let module =
+                    Rc::new(
+                        RefCell::new(
+                            Module::new(
+                                prefix.name()
+                            )
+                        )
+                    );
+
+                self.module_namespaces.insert(
+                    prefix,
+                    module,
+                );
+            }
         }
 
         /*
-        * Link:
+        * Link namespaces:
         *
         * a
-        *  └─ b
-        *      └─ c
+        * └── b
         *
-        * We link from the deepest
-        * parent upward.
+        * a.b.c
+        *      ↓
+        * b exports c
         */
         for depth in
-            0..parts.len() - 1
+            0..parts.len() - 2
         {
             let parent_path =
                 ModulePath::new(
@@ -4965,40 +4996,52 @@ impl Vm {
                 self.module_namespaces
                     .get(&parent_path)
                     .cloned()
-                    .expect(
-                        "namespace must exist"
-                    );
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Import,
+                            format!(
+                                "internal error: namespace '{}' was not created",
+                                parent_path
+                            ),
+                            None,
+                        )
+                    })?;
 
             let child =
                 self.module_namespaces
                     .get(&child_path)
                     .cloned()
-                    .expect(
-                        "namespace must exist"
-                    );
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Import,
+                            format!(
+                                "internal error: namespace '{}' was not created",
+                                child_path
+                            ),
+                            None,
+                        )
+                    })?;
 
             parent
                 .borrow_mut()
                 .set_exported(
-                    parts[depth + 1]
-                        .clone(),
+                    parts[depth + 1].clone(),
                     Value::Module(child),
                 );
         }
 
         /*
-        * Replace the leaf synthetic namespace's
-        * own contents with the actual module.
+        * Attach the actual leaf module.
         *
-        * a.b.c
-        *
-        * a
-        * └─ b
-        *     └─ c -> actual c module
+        * a.b
+        *   └── c -> actual c ModuleRef
         */
+        let parent_depth =
+            parts.len() - 2;
+
         let parent_path =
             ModulePath::new(
-                parts[..parts.len() - 1]
+                parts[..=parent_depth]
                     .to_vec()
             );
 
@@ -5006,30 +5049,50 @@ impl Vm {
             self.module_namespaces
                 .get(&parent_path)
                 .cloned()
-                .expect(
-                    "parent namespace must exist"
-                );
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Import,
+                        format!(
+                            "internal error: namespace '{}' was not created",
+                            parent_path
+                        ),
+                        None,
+                    )
+                })?;
 
         parent
             .borrow_mut()
             .set_exported(
-                parts
-                    [parts.len() - 1]
-                    .clone(),
+                parts[parts.len() - 1].clone(),
                 Value::Module(leaf),
             );
 
+        /*
+        * Return the root namespace.
+        *
+        * import a.b.c
+        *
+        * binds:
+        *
+        * a -> Module("a")
+        */
+        let root_path =
+            ModulePath::new(
+                vec![
+                    parts[0].clone()
+                ]
+            );
+
         self.module_namespaces
-            .get(
-                &ModulePath::new(
-                    vec![parts[0].clone()]
-                )
-            )
+            .get(&root_path)
             .cloned()
             .ok_or_else(|| {
                 Error::new(
                     ErrorKind::Import,
-                    "failed to construct module namespace",
+                    format!(
+                        "internal error: root namespace '{}' was not created",
+                        root_path
+                    ),
                     None,
                 )
             })

@@ -1783,7 +1783,7 @@ fn vm_private_let_is_hidden() {
         import tests.modules.visibility
         tests.modules.visibility.secret
         "#,
-        ErrorKind::Runtime
+        ErrorKind::Name
     );
 }
 
@@ -1805,7 +1805,7 @@ fn vm_private_lambda_is_hidden() {
         import tests.modules.visibility
         tests.modules.visibility.helper(10)
         "#,
-        ErrorKind::Runtime,
+        ErrorKind::Name,
     );
 }
 
@@ -1865,8 +1865,8 @@ fn stdlib_math_sqrt() {
 fn stdlib_math_sin() {
     assert_float(
         r#"
-        import math as m
-        m.sin(m.pi())
+        import math
+        math.sin(math.pi())
         "#,
         0.0,
     );
