@@ -1629,13 +1629,13 @@ impl Vm {
                 }
 
                 OpCode::IndexSet => {
+                    let value =
+                        self.pop()?;
+
                     let index =
                         self.pop()?;
 
                     let object =
-                        self.pop()?;
-
-                    let value =
                         self.pop()?;
 
                     match (object, index) {

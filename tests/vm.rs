@@ -347,6 +347,20 @@ fn vm_list() {
 }
 
 #[test]
+fn list_assignment() {
+    assert_int(
+        r#"
+        let xs = [1, 2, 3]
+
+        xs[1] = 42
+
+        xs[1]
+        "#,
+        42,
+    );
+}
+
+#[test]
 fn dict_literal() {
     assert_int(
         r#"
