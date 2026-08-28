@@ -1,5 +1,13 @@
 import math
 
+print("ok1")
+
+for i in range(5) {
+    if i == 3 break
+}
+
+print("ok2")
+
 // define Perceptron class
 pub class Perceptron {
     weights = [0.0],
@@ -64,20 +72,18 @@ model_and = Perceptron(
                 learning_rate = 0.005, 
                 epochs = 20,
             )
+print("before")
 model_and.fit(X_and, y_and)
+print("after")
 
 print("Weights after fitting: " + model_and.weights)
 print("Bias after fitting: " + model_and.bias)
 
 print("\nPrediction: ")
 for (x, y) in zip(X_and, y_and) {
-    print(x)
-    print(y)
-    print(model_and.predict(x))
-    
-    //print(
-    //    "\t" + x + " -> " + model_and.predict(x) + "   Answer: " + y
-    //)
+    print(
+        "\t" + x + " -> " + model_and.predict(x) + "   Answer: " + y
+    )
 }
 
 

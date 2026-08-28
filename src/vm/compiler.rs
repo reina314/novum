@@ -84,8 +84,6 @@ enum LValue {
 struct LoopContext {
     break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
-    continue_target: Option<usize>,
-    cleanup_target: Option<usize>,
     local_slots: Vec<u16>,
 }
 
@@ -130,7 +128,6 @@ pub struct Compiler {
     scope: ScopeRef,
     next_local_slot: u16,
     loops: Vec<LoopContext>,
-    loop_local_stack: Vec<Vec<u16>>,
     function_parameters: Vec<FunctionParameter>,
 }
 
@@ -141,7 +138,6 @@ impl Compiler {
             scope: Scope::new(None, true,),
             next_local_slot: 0,
             loops: Vec::new(),
-            loop_local_stack: Vec::new(),
             function_parameters: Vec::new(),
         }
     }
@@ -183,10 +179,17 @@ impl Compiler {
                 slot,
             );
 
-        if let Some(slots) =
-            self.loop_local_stack.last_mut()
+        /*
+        * Locals declared while a loop is active belong to
+        * the current iteration and must be reset on
+        * continue/break.
+        */
+        if let Some(loop_context) =
+            self.loops.last_mut()
         {
-            slots.push(slot);
+            loop_context.local_slots.push(
+                slot
+            );
         }
 
         Ok(slot)
@@ -769,8 +772,6 @@ impl Compiler {
                 next_local_slot:
                     params.len() as u16,
                 loops: Vec::new(),
-                loop_local_stack:
-                    Vec::new(),
                 function_parameters:
                     Vec::with_capacity(
                         params.len()
@@ -919,19 +920,9 @@ impl Compiler {
                 continue_jumps:
                     Vec::new(),
 
-                continue_target:
-                    None,
-
-                cleanup_target:
-                    None,
-
                 local_slots:
                     Vec::new(),
             }
-        );
-
-        self.loop_local_stack.push(
-            Vec::new()
         );
 
         loop_index
@@ -940,11 +931,9 @@ impl Compiler {
     fn finish_loop(
         &mut self,
         loop_index: usize,
-        loop_end: usize,
+        break_target: usize,
+        continue_target: usize,
     ) {
-        /*
-        * Patch all break jumps.
-        */
         let break_jumps =
             std::mem::take(
                 &mut self.loops[loop_index]
@@ -954,61 +943,24 @@ impl Compiler {
         for jump in break_jumps {
             self.chunk.patch_operand(
                 jump,
-                loop_end as u32,
+                break_target as u32,
             );
         }
 
-        /*
-        * Recover loop-local slots.
-        */
-        let local_slots =
-            self.loop_local_stack
-                .pop()
-                .unwrap_or_default();
-
-        self.loops[loop_index]
-            .local_slots =
-            local_slots;
-
-        /*
-        * Remove the loop context.
-        */
-        self.loops.pop();
-    }
-
-    fn set_loop_cleanup(
-        &mut self,
-        loop_index: usize,
-        cleanup_target: usize,
-    ) {
-        self.loops[loop_index]
-            .cleanup_target =
-            Some(
-                cleanup_target
-            );
-    }
-
-    fn set_continue_target(
-        &mut self,
-        loop_index: usize,
-        target: usize,
-    ) {
-        self.loops[loop_index]
-            .continue_target =
-            Some(target);
-
-        let jumps =
+        let continue_jumps =
             std::mem::take(
                 &mut self.loops[loop_index]
                     .continue_jumps
             );
 
-        for jump in jumps {
+        for jump in continue_jumps {
             self.chunk.patch_operand(
                 jump,
-                target as u32,
+                continue_target as u32,
             );
         }
+
+        self.loops.pop();
     }
 
     fn add_standard_enum(
@@ -3243,8 +3195,10 @@ impl Compiler {
                 * Result slot
                 * --------------------------------------------------------
                 *
-                * A while-expression evaluates to Unit if the loop
-                * executes zero times, otherwise to the last body value.
+                * while-expression:
+                *
+                *     zero iterations -> Unit
+                *     otherwise        -> last body value
                 */
                 let result_slot =
                     self.allocate_temp_local();
@@ -3264,27 +3218,14 @@ impl Compiler {
 
                 /*
                 * --------------------------------------------------------
-                * Loop context
+                * Loop
                 * --------------------------------------------------------
                 */
                 let loop_index =
                     self.begin_loop();
 
-                /*
-                * --------------------------------------------------------
-                * Condition entry
-                * --------------------------------------------------------
-                */
                 let condition_start =
                     self.chunk.code.len();
-
-                /*
-                * `continue` jumps directly to the condition.
-                */
-                self.set_continue_target(
-                    loop_index,
-                    condition_start,
-                );
 
                 /*
                 * --------------------------------------------------------
@@ -3302,8 +3243,7 @@ impl Compiler {
                     );
 
                 /*
-                * JumpIfFalse already consumes the Bool.
-                * DO NOT emit Pop here.
+                * JumpIfFalse consumes the condition.
                 */
 
                 /*
@@ -3318,20 +3258,7 @@ impl Compiler {
                 )?;
 
                 /*
-                * Preserve the value produced by this iteration
-                * as the result of the entire while-expression.
-                *
-                * Stack:
-                *
-                *     [body_value]
-                *
-                * Dup:
-                *
-                *     [body_value, body_value]
-                *
-                * StoreLocal consumes one:
-                *
-                *     [body_value]
+                * Save last body value.
                 */
                 self.chunk.emit(
                     OpCode::Dup
@@ -3347,40 +3274,17 @@ impl Compiler {
                 );
 
                 /*
-                * Discard the remaining body value before the next
-                * iteration.
+                * Remove body value.
                 */
                 self.chunk.emit(
                     OpCode::Pop
                 );
 
-                /*
-                * --------------------------------------------------------
-                * End body scope
-                * --------------------------------------------------------
-                */
                 self.exit_scope();
 
                 /*
                 * --------------------------------------------------------
-                * Cleanup
-                * --------------------------------------------------------
-                */
-                let cleanup_target =
-                    self.chunk.code.len();
-
-                self.set_loop_cleanup(
-                    loop_index,
-                    cleanup_target,
-                );
-
-                self.emit_loop_cleanup(
-                    loop_index
-                );
-
-                /*
-                * --------------------------------------------------------
-                * Next iteration
+                * Normal next iteration
                 * --------------------------------------------------------
                 */
                 self.chunk.emit_operand(
@@ -3390,31 +3294,91 @@ impl Compiler {
 
                 /*
                 * --------------------------------------------------------
-                * Loop end
+                * Normal exit
+                * --------------------------------------------------------
+                */
+                let normal_exit =
+                    self.chunk.code.len();
+
+                self.chunk.patch_operand(
+                    exit_jump,
+                    normal_exit as u32,
+                );
+
+                /*
+                * Normal exit needs no iteration-local cleanup:
+                * the iteration scope has already ended.
+                */
+                let normal_exit_jump =
+                    self.chunk.emit_operand(
+                        OpCode::Jump,
+                        0,
+                    );
+
+                /*
+                * --------------------------------------------------------
+                * Continue cleanup
+                * --------------------------------------------------------
+                */
+                let continue_cleanup =
+                    self.chunk.code.len();
+
+                self.emit_loop_cleanup(
+                    loop_index
+                );
+
+                self.chunk.emit_operand(
+                    OpCode::Jump,
+                    condition_start as u32,
+                );
+
+                /*
+                * --------------------------------------------------------
+                * Break cleanup
+                * --------------------------------------------------------
+                */
+                let break_cleanup =
+                    self.chunk.code.len();
+
+                self.emit_loop_cleanup(
+                    loop_index
+                );
+
+                /*
+                * Jump to common exit.
+                */
+                let break_exit_jump =
+                    self.chunk.emit_operand(
+                        OpCode::Jump,
+                        0,
+                    );
+
+                /*
+                * --------------------------------------------------------
+                * Common exit
                 * --------------------------------------------------------
                 */
                 let loop_end =
                     self.chunk.code.len();
 
                 self.chunk.patch_operand(
-                    exit_jump,
+                    normal_exit_jump,
                     loop_end as u32,
                 );
 
-                /*
-                * JumpIfFalse already consumed the false condition.
-                * DO NOT emit Pop here.
-                */
+                self.chunk.patch_operand(
+                    break_exit_jump,
+                    loop_end as u32,
+                );
 
                 self.finish_loop(
                     loop_index,
-                    loop_end,
+                    break_cleanup,
+                    continue_cleanup,
                 );
 
                 /*
-                * --------------------------------------------------------
-                * Final result
-                * --------------------------------------------------------
+                * Final value.
                 */
                 self.chunk.emit_operand(
                     OpCode::LoadLocal,
@@ -3497,21 +3461,9 @@ impl Compiler {
                     );
                 };
 
-                if let Some(target) =
-                    self.loops[loop_index]
-                        .continue_target
-                {
-                    self.chunk.patch_operand(
-                        jump,
-                        target as u32,
-                    );
-                } else {
-                    self.loops[loop_index]
-                        .continue_jumps
-                        .push(
-                            jump
-                        );
-                }
+                self.loops[loop_index]
+                    .continue_jumps
+                    .push(jump);
             }
 
             ExprKind::Return(
@@ -3873,13 +3825,15 @@ impl Compiler {
             self.chunk.code.len();
 
         /*
-        * IteratorNext:
+        * --------------------------------------------------------
+        * IteratorNext
+        * --------------------------------------------------------
         *
-        *     [item, true]
+        *     success:
+        *         [item, true]
         *
-        * or
-        *
-        *     [Unit, false]
+        *     exhausted:
+        *         [Unit, false]
         */
         self.chunk.emit_operand(
             OpCode::LoadLocal,
@@ -3898,7 +3852,7 @@ impl Compiler {
 
         /*
         * --------------------------------------------------------
-        * Bind current iteration value
+        * Iteration scope
         * --------------------------------------------------------
         */
         self.enter_scope();
@@ -3915,10 +3869,48 @@ impl Compiler {
             OpCode::Pop
         );
 
-        self.compile_pattern(
-            value_slot,
-            pattern,
-        )?;
+        /*
+        * --------------------------------------------------------
+        * Pattern
+        * --------------------------------------------------------
+        */
+        let failures =
+            self.compile_pattern(
+                value_slot,
+                pattern,
+            )?;
+
+        /*
+        * A pattern mismatch in a for-loop is a runtime error.
+        * There is no alternate arm to continue to.
+        */
+        let pattern_success_jump =
+            self.chunk.emit_operand(
+                OpCode::Jump,
+                0,
+            );
+
+        let pattern_failure =
+            self.chunk.code.len();
+
+        for jump in failures {
+            self.chunk.patch_operand(
+                jump,
+                pattern_failure as u32,
+            );
+        }
+
+        self.chunk.emit(
+            OpCode::PatternFail
+        );
+
+        let pattern_success =
+            self.chunk.code.len();
+
+        self.chunk.patch_operand(
+            pattern_success_jump,
+            pattern_success as u32,
+        );
 
         /*
         * --------------------------------------------------------
@@ -3929,6 +3921,9 @@ impl Compiler {
             body
         )?;
 
+        /*
+        * Save the last body value.
+        */
         self.chunk.emit(
             OpCode::Dup
         );
@@ -3943,7 +3938,7 @@ impl Compiler {
         );
 
         /*
-        * Discard body result before leaving the iteration.
+        * Discard body result before cleanup.
         */
         self.chunk.emit(
             OpCode::Pop
@@ -3951,36 +3946,23 @@ impl Compiler {
 
         /*
         * --------------------------------------------------------
-        * Cleanup
+        * End iteration scope
         * --------------------------------------------------------
         */
         self.exit_scope();
 
-        let cleanup_target =
-            self.chunk.code.len();
-
-        self.set_loop_cleanup(
-            loop_index,
-            cleanup_target,
-        );
-
         /*
-        * For-loop continue enters cleanup first.
+        * --------------------------------------------------------
+        * Continue cleanup
+        * --------------------------------------------------------
         */
-        self.set_continue_target(
-            loop_index,
-            cleanup_target,
-        );
+        let continue_cleanup =
+            self.chunk.code.len();
 
         self.emit_loop_cleanup(
             loop_index
         );
 
-        /*
-        * --------------------------------------------------------
-        * Next iteration
-        * --------------------------------------------------------
-        */
         self.chunk.emit_operand(
             OpCode::Jump,
             loop_start as u32,
@@ -3988,35 +3970,75 @@ impl Compiler {
 
         /*
         * --------------------------------------------------------
-        * Loop end
+        * Normal exhaustion
+        * --------------------------------------------------------
+        *
+        * IteratorNext false path leaves Unit on the stack.
+        */
+        let normal_exit =
+            self.chunk.code.len();
+
+        self.chunk.patch_operand(
+            exit_jump,
+            normal_exit as u32,
+        );
+
+        self.chunk.emit(
+            OpCode::Pop
+        );
+
+        let normal_exit_jump =
+            self.chunk.emit_operand(
+                OpCode::Jump,
+                0,
+            );
+
+        /*
+        * --------------------------------------------------------
+        * Break cleanup
+        * --------------------------------------------------------
+        */
+        let break_cleanup =
+            self.chunk.code.len();
+
+        self.emit_loop_cleanup(
+            loop_index
+        );
+
+        let break_exit_jump =
+            self.chunk.emit_operand(
+                OpCode::Jump,
+                0,
+            );
+
+        /*
+        * --------------------------------------------------------
+        * Common exit
         * --------------------------------------------------------
         */
         let loop_end =
             self.chunk.code.len();
 
         self.chunk.patch_operand(
-            exit_jump,
+            normal_exit_jump,
             loop_end as u32,
         );
 
-        /*
-        * IteratorNext's false result:
-        *
-        *     [Unit, false]
-        *
-        * JumpIfFalse consumes false but Unit remains.
-        */
-        self.chunk.emit(
-            OpCode::Pop
+        self.chunk.patch_operand(
+            break_exit_jump,
+            loop_end as u32,
         );
 
         self.finish_loop(
             loop_index,
-            loop_end,
+            break_cleanup,
+            continue_cleanup,
         );
 
         /*
-        * Result of the whole for-expression.
+        * --------------------------------------------------------
+        * Final result
+        * --------------------------------------------------------
         */
         self.chunk.emit_operand(
             OpCode::LoadLocal,
@@ -4035,8 +4057,12 @@ impl Compiler {
         body: &Expr,
     ) -> Result<()> {
         /*
-        * A for-expression evaluates to Unit when it executes zero
-        * iterations, otherwise to the last evaluated body value.
+        * --------------------------------------------------------
+        * Result slot
+        * --------------------------------------------------------
+        *
+        *     empty range -> Unit
+        *     otherwise   -> last body value
         */
         let result_slot =
             self.allocate_temp_local();
@@ -4055,28 +4081,19 @@ impl Compiler {
         );
 
         /*
-        * Evaluate range bounds exactly once.
-        *
-        * RangeInit consumes:
-        *
-        *     [start, end]
-        *
-        * and initializes the runtime RangeCursor.
+        * --------------------------------------------------------
+        * Loop context
+        * --------------------------------------------------------
         */
-        self.compile_expr(
-            start
-        )?;
-
-        self.compile_expr(
-            end
-        )?;
-
         let loop_index =
             self.begin_loop();
 
         /*
-        * The iteration binding lives inside its own scope so that
-        * iteration-local variables can be reset at the cleanup point.
+        * --------------------------------------------------------
+        * Iteration scope
+        * --------------------------------------------------------
+        *
+        * RangeNext writes directly into value_slot.
         */
         self.enter_scope();
 
@@ -4095,9 +4112,6 @@ impl Compiler {
                 _ => {
                     self.exit_scope();
 
-                    self.loop_local_stack
-                        .pop();
-
                     self.loops.pop();
 
                     return Err(
@@ -4111,10 +4125,9 @@ impl Compiler {
             };
 
         /*
-        * Register compile-time metadata.
-        *
-        * The mutable range state itself is stored in the frame's
-        * range_cursors and is initialized by RangeInit.
+        * --------------------------------------------------------
+        * Range metadata
+        * --------------------------------------------------------
         */
         let range_loop_index =
             self.chunk.add_range_loop(
@@ -4126,25 +4139,43 @@ impl Compiler {
             );
 
         /*
-        * Initialize the runtime cursor once, before entering
-        * the loop.
+        * --------------------------------------------------------
+        * Initialize range
+        * --------------------------------------------------------
         */
+        self.compile_expr(
+            start
+        )?;
+
+        self.compile_expr(
+            end
+        )?;
+
         self.chunk.emit_operand(
             OpCode::RangeInit,
             range_loop_index,
         );
 
         /*
-        * RangeNext is the loop header. `continue` for a range-for
-        * must eventually land at the cleanup section immediately
-        * before this instruction.
+        * --------------------------------------------------------
+        * Loop start
+        * --------------------------------------------------------
         */
         let loop_start =
             self.chunk.code.len();
 
         /*
-        * RangeNext writes the current range value directly into
-        * value_slot. When exhausted, it redirects IP to exit_ip.
+        * --------------------------------------------------------
+        * RangeNext
+        * --------------------------------------------------------
+        *
+        * On success:
+        *
+        *     locals[value_slot] = current value
+        *
+        * On exhaustion:
+        *
+        *     ip = exit_ip
         */
         self.chunk.emit_operand(
             OpCode::RangeNext,
@@ -4152,15 +4183,16 @@ impl Compiler {
         );
 
         /*
-        * The body is compiled inside the iteration scope.
+        * --------------------------------------------------------
+        * Body
+        * --------------------------------------------------------
         */
         self.compile_expr(
             body
         )?;
 
         /*
-        * Save the last body value as the result of the whole
-        * for-expression.
+        * Save last body value.
         */
         self.chunk.emit(
             OpCode::Dup
@@ -4176,63 +4208,104 @@ impl Compiler {
         );
 
         /*
-        * The iteration-local scope ends here.
+        * Discard body result.
+        */
+        self.chunk.emit(
+            OpCode::Pop
+        );
+
+        /*
+        * --------------------------------------------------------
+        * End iteration scope
+        * --------------------------------------------------------
         */
         self.exit_scope();
 
         /*
-        * Continue jumps enter cleanup first.
+        * --------------------------------------------------------
+        * Continue cleanup
+        * --------------------------------------------------------
         */
-        let cleanup_target =
+        let continue_cleanup =
             self.chunk.code.len();
 
-        self.set_loop_cleanup(
-            loop_index,
-            cleanup_target,
-        );
-
-        self.set_continue_target(
-            loop_index,
-            cleanup_target,
-        );
-
-        /*
-        * Reset all locals introduced in the iteration scope.
-        */
         self.emit_loop_cleanup(
             loop_index
         );
 
-        /*
-        * Next iteration.
-        */
         self.chunk.emit_operand(
             OpCode::Jump,
             loop_start as u32,
         );
 
         /*
-        * The instruction immediately following the back-edge is
-        * the loop exit destination for RangeNext.
+        * --------------------------------------------------------
+        * Normal exhaustion
+        * --------------------------------------------------------
+        */
+        let normal_exit =
+            self.chunk.code.len();
+
+        let normal_exit_jump =
+            self.chunk.emit_operand(
+                OpCode::Jump,
+                0,
+            );
+
+        /*
+        * RangeNext jumps directly to normal_exit.
+        */
+        self.chunk.range_loops[
+            range_loop_index as usize
+        ].exit_ip =
+            normal_exit as u32;
+
+        /*
+        * --------------------------------------------------------
+        * Break cleanup
+        * --------------------------------------------------------
+        */
+        let break_cleanup =
+            self.chunk.code.len();
+
+        self.emit_loop_cleanup(
+            loop_index
+        );
+
+        let break_exit_jump =
+            self.chunk.emit_operand(
+                OpCode::Jump,
+                0,
+            );
+
+        /*
+        * --------------------------------------------------------
+        * Common exit
+        * --------------------------------------------------------
         */
         let loop_end =
             self.chunk.code.len();
 
-        self.chunk.range_loops[
-            range_loop_index as usize
-        ].exit_ip =
-            loop_end as u32;
+        self.chunk.patch_operand(
+            normal_exit_jump,
+            loop_end as u32,
+        );
 
-        /*
-        * Patch and destroy the loop context.
-        */
+        self.chunk.patch_operand(
+            break_exit_jump,
+            loop_end as u32,
+        );
+
         self.finish_loop(
             loop_index,
-            loop_end,
+            break_cleanup,
+            continue_cleanup,
         );
 
         /*
-        * Return the final body value, or Unit for an empty range.
+        * --------------------------------------------------------
+        * Final result
+        * --------------------------------------------------------
         */
         self.chunk.emit_operand(
             OpCode::LoadLocal,

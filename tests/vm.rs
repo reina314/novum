@@ -723,6 +723,46 @@ fn vm_control_flow() {
     );
 }
 
+#[test]
+fn break_continue_nested() {
+    assert_int(
+        r#"
+        let sum = 0
+
+        for i in range(10) {
+            if i == 2 {
+                continue
+            }
+
+            if i == 6 {
+                break
+            }
+
+            sum = sum + i
+        }
+
+        sum
+        "#,
+        13,
+    );
+}
+
+#[test]
+fn break_inside_if_does_not_corrupt_stack() {
+    assert_int(
+        r#"
+        for i in range(5) {
+            if i == 3 {
+                break
+            }
+        }
+
+        100
+        "#,
+        100,
+    );
+}
+
 // ============================================================
 // Closure / capture
 // ============================================================
