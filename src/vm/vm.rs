@@ -1,3 +1,5 @@
+use reedline::CommandLineSearch::Prefix;
+
 use crate::{
     error::{
         Error,
@@ -3070,16 +3072,7 @@ impl Vm {
             start,
             end,
             inclusive,
-        } = pipeline.source
-        else {
-            return Err(
-                Error::new(
-                    ErrorKind::Runtime,
-                    "integer pipeline requires Range source",
-                    None,
-                )
-            );
-        };
+        } = pipeline.source;
 
         if stage_captures.len() !=
             stages.len()
@@ -3470,7 +3463,7 @@ impl Vm {
             name,
             value,
         ) in names.iter()
-            .zip(values.into_iter())
+            .zip(values)
         {
             match name {
                 None => {

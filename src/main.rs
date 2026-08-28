@@ -59,11 +59,10 @@ impl Options {
         let mut options =
             Self::default();
 
-        let mut args =
+        let args =
             env::args().skip(1);
 
-        while let Some(arg) =
-            args.next()
+        for arg in args
         {
             match arg.as_str() {
                 "--version" | "-V" => {

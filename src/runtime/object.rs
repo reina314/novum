@@ -99,9 +99,8 @@ impl Object {
                 .iter()
                 .collect::<Vec<_>>();
 
-        fields.sort_unstable_by(
-            |(a, _), (b, _)|
-                a.cmp(b)
+        fields.sort_unstable_by_key(
+            |(a, _)| *a
         );
 
         for (

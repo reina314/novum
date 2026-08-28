@@ -146,8 +146,7 @@ impl<'a> Lexer<'a> {
                 '=' => {
                     if self.consume_if('=') {
                         TokenKind::DoubleEq
-                    } else 
-                    if self.consume_if('>') {
+                    } else if self.consume_if('>') {
                         TokenKind::FatArrow
                     } else {
                         TokenKind::Equals
