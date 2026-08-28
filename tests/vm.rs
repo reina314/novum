@@ -1895,10 +1895,10 @@ fn stdlib_process_cwd() {
     match run(
         r#"
         import process as p
-        p.cwd()
+        p.cwd()?
         "#
     ) {
-        Ok(Value::Str(_)) => {}
+        Ok(Value::Path(_)) => {}
 
         other => {
             panic!(
@@ -1908,5 +1908,310 @@ fn stdlib_process_cwd() {
     }
 }
 
+// ============================================================
+// Option and Result
+// ============================================================
 
+#[test]
+fn option_some() {
+    match run(
+        r#"
+        Option.Some(42)
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Some"
+            );
+
+            assert_eq!(
+                value.fields(),
+                &[Value::Int(42)]
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn option_none() {
+    match run(
+        r#"
+        Option.None
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+
+            assert!(
+                value.fields().is_empty()
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn result_ok() {
+    match run(
+        r#"
+        Result.Ok(42)
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Ok"
+            );
+
+            assert_eq!(
+                value.field(0),
+                Some(Value::Int(42))
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn result_err() {
+    match run(
+        r#"
+        Result.Err("failed")
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Err"
+            );
+
+            assert_eq!(
+                value.field(0),
+                Some(
+                    Value::Str(
+                        Rc::new(
+                            "failed"
+                                .to_string()
+                        )
+                    )
+                )
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_option_some() {
+    assert_int(
+        r#"
+        Option.Some(42)?
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn try_option_none() {
+    match run(
+        r#"
+        Option.None?
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_result_ok() {
+    assert_int(
+        r#"
+        Result.Ok(42)?
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn try_result_err() {
+    match run(
+        r#"
+        Result.Err("failed")?
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Err"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_propagates_from_function() {
+    match run(
+        r#"
+        let f = || {
+            Option.None?
+            42
+        }
+
+        f()
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Option"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "None"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_unwraps_inside_function() {
+    assert_int(
+        r#"
+        let f = || {
+            Option.Some(41)?
+                + 1
+        }
+
+        f()
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn try_result_propagates_from_function() {
+    match run(
+        r#"
+        let f = || {
+            Result.Err("failed")?
+            42
+        }
+
+        f()
+        "#
+    ) {
+        Ok(
+            Value::EnumValue(value)
+        ) => {
+            assert_eq!(
+                value.enum_name(),
+                "Result"
+            );
+
+            assert_eq!(
+                value.variant(),
+                "Err"
+            );
+        }
+
+        other => {
+            panic!(
+                "unexpected result: {other:?}"
+            );
+        }
+    }
+}
 

@@ -902,6 +902,91 @@ impl Compiler {
         self.loops.pop();
     }
 
+    fn add_standard_enum(
+        &mut self,
+        name: &str,
+    ) -> Result<u32> {
+        let value =
+            match name {
+                "Option" => {
+                    let mut definition =
+                        crate::runtime::EnumDef::new(
+                            "Option"
+                        );
+
+                    definition
+                        .add_variant(
+                            "Some",
+                            1,
+                        )
+                        .expect(
+                            "valid Option"
+                        );
+
+                    definition
+                        .add_variant(
+                            "None",
+                            0,
+                        )
+                        .expect(
+                            "valid Option"
+                        );
+
+                    Value::Enum(
+                        Rc::new(definition)
+                    )
+                }
+
+                "Result" => {
+                    let mut definition =
+                        crate::runtime::EnumDef::new(
+                            "Result"
+                        );
+
+                    definition
+                        .add_variant(
+                            "Ok",
+                            1,
+                        )
+                        .expect(
+                            "valid Result"
+                        );
+
+                    definition
+                        .add_variant(
+                            "Err",
+                            1,
+                        )
+                        .expect(
+                            "valid Result"
+                        );
+
+                    Value::Enum(
+                        Rc::new(definition)
+                    )
+                }
+
+                _ => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "'{}' is not a standard enum",
+                                name
+                            ),
+                            None,
+                        )
+                    );
+                }
+            };
+
+        Ok(
+            self.chunk.add_constant(
+                value
+            )
+        )
+    }
+
     fn add_call_site(
         &mut self,
         args: &[CallArg],
@@ -2799,6 +2884,19 @@ impl Compiler {
                     self.chunk.emit_operand(
                         OpCode::LoadUpvalue,
                         slot as u32,
+                    );
+                } else if matches!(
+                    name.as_str(),
+                    "Option" | "Result"
+                ) {
+                    let constant =
+                        self.add_standard_enum(
+                            name
+                        )?;
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        constant,
                     );
                 } else if crate::stdlib::builtin::contains(
                     name
