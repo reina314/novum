@@ -815,6 +815,9 @@ impl Compiler {
 
         /*
         * Function-entry pattern destructuring.
+        *
+        * Successful patterns continue to the next parameter/body.
+        * Failed patterns go to ParameterPatternFail.
         */
         for (
             index,
@@ -835,10 +838,22 @@ impl Compiler {
                 )?;
 
             /*
-            * There is no alternate branch for a parameter
-            * pattern, so a failed pattern means that the call
-            * is invalid.
+            * Successful pattern:
+            *
+            *     Jump -> continue_target
+            *
+            * Failed pattern:
+            *
+            *     JumpIfFalse -> failure_target
+            *                      ↓
+            *                 PatternFail
             */
+            let continue_jump =
+                compiler.chunk.emit_operand(
+                    OpCode::Jump,
+                    0,
+                );
+
             let failure_target =
                 compiler.chunk.code.len();
 
@@ -851,6 +866,14 @@ impl Compiler {
 
             compiler.chunk.emit(
                 OpCode::PatternFail
+            );
+
+            let continue_target =
+                compiler.chunk.code.len();
+
+            compiler.chunk.patch_operand(
+                continue_jump,
+                continue_target as u32,
             );
         }
 
@@ -4900,32 +4923,6 @@ impl Compiler {
         }
 
         Ok(failures)
-    }
-
-    fn compile_parameter_pattern(
-        &mut self,
-        value_slot: u16,
-        pattern: &Pattern,
-    ) -> Result<Vec<usize>> {
-        match pattern {
-            Pattern::Ident(name) => {
-                self.scope
-                    .borrow_mut()
-                    .locals
-                    .insert(
-                        name.clone(),
-                        value_slot,
-                    );
-
-                Ok(Vec::new())
-            }
-
-            _ =>
-                self.compile_pattern(
-                    value_slot,
-                    pattern,
-                ),
-        }
     }
 
     fn compile_pipeline_program(
