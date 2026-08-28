@@ -2553,10 +2553,33 @@ impl Vm {
                     )
                 })?;
 
+        /*
+        * Resolve source exactly once.
+        */
+        let (
+            start,
+            end,
+            inclusive,
+        ) =
+            self.resolve_pipeline_source(
+                &pipeline.source
+            )?;
+
+        /*
+        * Now the runtime capacity is known.
+        */
+        let capacity =
+            PipelineProgram::
+                capacity_upper_bound_for_range(
+                    start,
+                    end,
+                    inclusive,
+                    &pipeline.stages,
+                )?;
+
         let list =
             List::with_capacity(
-                pipeline
-                    .capacity_upper_bound()?
+                capacity
             );
 
         let stage_captures =
@@ -2564,42 +2587,35 @@ impl Vm {
                 &pipeline.stages
             )?;
 
-        match pipeline.source {
-            PipelineSource::Range {
-                start,
-                end,
-                inclusive,
+        match &pipeline.plan {
+            PipelinePlan::IntRange {
+                stages,
             } => {
-                match &pipeline.plan {
-                    PipelinePlan::IntRange {
-                        stages,
-                    } => {
-                        self.execute_int_range_pipeline(
-                            &pipeline,
-                            stages,
-                            &stage_captures,
-                            &list,
-                        )?;
-                    }
+                self.execute_int_range_pipeline(
+                    &pipeline,
+                    start,
+                    end,
+                    inclusive,
+                    stages,
+                    &stage_captures,
+                    &list,
+                )?;
+            }
 
-                    PipelinePlan::Generic => {
-                        self.execute_fused_range_pipeline(
-                            start,
-                            end,
-                            inclusive,
-                            &pipeline.stages,
-                            &stage_captures,
-                            &list,
-                        )?;
-                    }
-                }
+            PipelinePlan::Generic => {
+                self.execute_fused_range_pipeline(
+                    start,
+                    end,
+                    inclusive,
+                    &pipeline.stages,
+                    &stage_captures,
+                    &list,
+                )?;
             }
         }
 
         self.push(
-            Value::List(
-                list
-            )
+            Value::List(list)
         );
 
         Ok(())
@@ -2859,17 +2875,14 @@ impl Vm {
 
     fn execute_int_range_pipeline(
         &mut self,
-        pipeline: &PipelineProgram,
+        _pipeline: &PipelineProgram,
+        start: i64,
+        end: i64,
+        inclusive: bool,
         stages: &[IntPipelineStage],
         stage_captures: &[Vec<CellRef>],
         output: &List,
     ) -> Result<()> {
-        let PipelineSource::Range {
-            start,
-            end,
-            inclusive,
-        } = pipeline.source;
-
         if stage_captures.len() !=
             stages.len()
         {
@@ -3036,6 +3049,108 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    fn resolve_pipeline_source(
+        &self,
+        source: &PipelineSource,
+    ) -> Result<(i64, i64, bool)> {
+        match source {
+            PipelineSource::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                Ok((
+                    *start,
+                    *end,
+                    *inclusive,
+                ))
+            }
+
+            PipelineSource::DynamicRange {
+                start,
+                end,
+                inclusive,
+                captures,
+                require_non_negative_end,
+            } => {
+                let captures =
+                    self.resolve_pipeline_captures(
+                        captures
+                    )?;
+
+                let start =
+                    self.eval_pipeline_expr(
+                        start,
+                        Value::Unit,
+                        &captures,
+                    )?;
+
+                let end =
+                    self.eval_pipeline_expr(
+                        end,
+                        Value::Unit,
+                        &captures,
+                    )?;
+
+                let start =
+                    match start {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range start must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            );
+                        }
+                    };
+
+                let end =
+                    match end {
+                        Value::Int(value) =>
+                            value,
+
+                        other => {
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "range end must be Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            );
+                        }
+                    };
+
+                if *require_non_negative_end
+                    && end < 0
+                {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            "range() requires a non-negative argument",
+                            None,
+                        )
+                    );
+                }
+
+                Ok((
+                    start,
+                    end,
+                    *inclusive,
+                ))
+            }
+        }
     }
 
     fn resolve_pipeline_captures(

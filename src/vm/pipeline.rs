@@ -9,10 +9,38 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum PipelineSource {
+    /*
+     * Compile-time constant range.
+     */
     Range {
         start: i64,
         end: i64,
         inclusive: bool,
+    },
+
+    /*
+     * Runtime-evaluated integer range.
+     *
+     * The expressions are evaluated once, before the
+     * fused iteration begins.
+     */
+    DynamicRange {
+        start: PipelineExpr,
+        end: PipelineExpr,
+        inclusive: bool,
+
+        /*
+         * Captures belong to the source itself, rather than
+         * to an individual map/filter stage.
+         */
+        captures: Vec<UpvalueSpec>,
+
+        /*
+         * range(n) has historically rejected negative n.
+         * Keep that behavior when the source originated from
+         * the one-argument builtin.
+         */
+        require_non_negative_end: bool,
     },
 }
 
@@ -253,14 +281,38 @@ impl PipelineProgram {
     pub fn capacity_upper_bound(
         &self,
     ) -> Result<usize> {
-        let PipelineSource::Range {
-            start,
-            end,
-            inclusive,
-        } =
-            self.source;
+        match self.source {
+            PipelineSource::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                Self::capacity_upper_bound_for_range(
+                    start,
+                    end,
+                    inclusive,
+                    &self.stages,
+                )
+            }
 
-        let end =
+            PipelineSource::DynamicRange {
+                ..
+            } => {
+                /*
+                 * Bounds are not known until runtime.
+                 */
+                Ok(0)
+            }
+        }
+    }
+
+    pub fn capacity_upper_bound_for_range(
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        stages: &[PipelineStage],
+    ) -> Result<usize> {
+        let normalized_end =
             if inclusive {
                 end.checked_add(1)
                     .ok_or_else(|| {
@@ -274,12 +326,12 @@ impl PipelineProgram {
                 end
             };
 
-        if end <= start {
+        if normalized_end <= start {
             return Ok(0);
         }
 
         let count =
-            end
+            normalized_end
                 .checked_sub(start)
                 .ok_or_else(|| {
                     Error::new(
@@ -290,36 +342,28 @@ impl PipelineProgram {
                 })?;
 
         let mut capacity =
-            usize::try_from(
-                count
-            )
-            .map_err(|_| {
-                Error::new(
-                    ErrorKind::Overflow,
-                    "pipeline range is too large",
-                    None,
-                )
-            })?;
+            usize::try_from(count)
+                .map_err(|_| {
+                    Error::new(
+                        ErrorKind::Overflow,
+                        "pipeline range is too large",
+                        None,
+                    )
+                })?;
 
-        /*
-         * `take()` is an upper bound on output cardinality.
-         */
-        for stage in
-            &self.stages
-        {
+        for stage in stages {
             if let PipelineStage::Take {
                 count,
             } = stage
             {
                 capacity =
-                    capacity.min(
-                        *count
-                    );
+                    capacity.min(*count);
             }
         }
 
         Ok(capacity)
     }
+
 }
 
 #[derive(Clone, Copy)]

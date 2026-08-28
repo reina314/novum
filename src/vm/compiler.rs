@@ -1956,6 +1956,180 @@ impl Compiler {
         }
     }
 
+    fn lower_pipeline_source(
+        &mut self,
+        source: &Expr,
+    ) -> Result<Option<PipelineSource>> {
+        /*
+        * --------------------------------------------------------
+        * Helper for compiling source-bound expressions.
+        *
+        * We create a synthetic function scope so captures are
+        * represented exactly like pipeline-stage captures.
+        * No runtime closure is emitted.
+        * --------------------------------------------------------
+        */
+        fn lower_bounds(
+            compiler: &mut Compiler,
+            start: &Expr,
+            end: &Expr,
+            inclusive: bool,
+            require_non_negative_end: bool,
+        ) -> Result<Option<PipelineSource>> {
+            let parent =
+                compiler.scope.clone();
+
+            let source_scope =
+                Scope::new(
+                    Some(parent),
+                    true,
+                );
+
+            let previous_scope =
+                std::mem::replace(
+                    &mut compiler.scope,
+                    source_scope.clone(),
+                );
+
+            /*
+            * `""` cannot be a Novum identifier, so no expression
+            * can accidentally become PipelineExpr::Input.
+            */
+            let result =
+                (|| {
+                    let start_expr =
+                        compiler.lower_pipeline_expr(
+                            start,
+                            "",
+                        )?;
+
+                    let end_expr =
+                        compiler.lower_pipeline_expr(
+                            end,
+                            "",
+                        )?;
+
+                    let captures =
+                        source_scope
+                            .borrow()
+                            .upvalue_specs
+                            .clone();
+
+                    Ok(
+                        Some(
+                            PipelineSource::DynamicRange {
+                                start:
+                                    start_expr,
+                                end:
+                                    end_expr,
+                                inclusive,
+                                captures,
+                                require_non_negative_end,
+                            }
+                        )
+                    )
+                })();
+
+            compiler.scope =
+                previous_scope;
+
+            result
+        }
+
+        match &source.kind {
+            /*
+            * ----------------------------------------------------
+            * 0..10 / a..b / 0..=10
+            * ----------------------------------------------------
+            */
+            ExprKind::Range {
+                start: Some(start),
+                end: Some(end),
+                inclusive,
+            } => {
+                /*
+                * Keep the existing zero-allocation constant form.
+                */
+                if let (
+                    ExprKind::Int(start),
+                    ExprKind::Int(end),
+                ) = (
+                    &start.kind,
+                    &end.kind,
+                ) {
+                    return Ok(
+                        Some(
+                            PipelineSource::Range {
+                                start: *start,
+                                end: *end,
+                                inclusive: *inclusive,
+                            }
+                        )
+                    );
+                }
+
+                lower_bounds(
+                    self,
+                    start,
+                    end,
+                    *inclusive,
+                    false,
+                )
+            }
+
+            /*
+            * ----------------------------------------------------
+            * range(n)
+            * ----------------------------------------------------
+            */
+            ExprKind::Call(
+                callee,
+                args,
+            ) if matches!(
+                &callee.kind,
+                ExprKind::Ident(name)
+                    if name == "range"
+            ) => {
+                if args.iter()
+                    .any(|arg| arg.name.is_some())
+                {
+                    return Ok(None);
+                }
+
+                match args.len() {
+                    1 => {
+                        lower_bounds(
+                            self,
+                            &Expr::new(
+                                ExprKind::Int(0),
+                                source.span,
+                            ),
+                            &args[0].value,
+                            false,
+                            true,
+                        )
+                    }
+
+                    2 => {
+                        lower_bounds(
+                            self,
+                            &args[0].value,
+                            &args[1].value,
+                            false,
+                            false,
+                        )
+                    }
+
+                    _ => {
+                        Ok(None)
+                    }
+                }
+            }
+
+            _ => Ok(None),
+        }
+    }
+
     fn range_for_parts(
         expr: &Expr,
     ) -> Option<(
@@ -5012,76 +5186,24 @@ impl Compiler {
         source: &Expr,
         stages: &[PipelineStageAst],
     ) -> Result<Option<PipelineProgram>> {
-        /*
-        * Fused pipeline currently has exactly one source form:
-        *
-        *     integer range expression
-        *
-        * Examples:
-        *
-        *     0..10
-        *     0..=10
-        *
-        * Anything else is NOT a compiler error.
-        * It simply means that the general iterator execution path
-        * should be used instead.
-        */
-
-        let source =
-            match &source.kind {
-                ExprKind::Range {
-                    start: Some(start),
-                    end: Some(end),
-                    inclusive,
-                } => {
-                    let ExprKind::Int(start) =
-                        &start.kind
-                    else {
-                        return Ok(None);
-                    };
-
-                    let ExprKind::Int(end) =
-                        &end.kind
-                    else {
-                        return Ok(None);
-                    };
-
-                    PipelineSource::Range {
-                        start: *start,
-                        end: *end,
-                        inclusive: *inclusive,
-                    }
-                }
-
-                /*
-                * `range(...)` is currently a builtin that materializes
-                * a List rather than a Range.
-                *
-                * Therefore it must use the normal iterator path.
-                */
-                ExprKind::Call(..) => {
-                    return Ok(None);
-                }
-
-                /*
-                * Any other expression can still be a valid iterator
-                * source, but is outside the fused-range optimizer.
-                */
-                _ => {
-                    return Ok(None);
-                }
-            };
+        let Some(source) =
+            self.lower_pipeline_source(source)?
+        else {
+            return Ok(None);
+        };
 
         let mut compiled =
-            Vec::with_capacity(
-                stages.len()
-            );
+            Vec::with_capacity(stages.len());
 
         for stage in stages {
             match stage {
-                PipelineStageAst::Map(
-                    lambda
-                ) => {
+                PipelineStageAst::Map(lambda) => {
+                    if !Self::pipeline_lambda_is_fusable(
+                        lambda
+                    ) {
+                        return Ok(None);
+                    }
+
                     let (
                         expr,
                         captures,
@@ -5098,9 +5220,13 @@ impl Compiler {
                     );
                 }
 
-                PipelineStageAst::Filter(
-                    lambda
-                ) => {
+                PipelineStageAst::Filter(lambda) => {
+                    if !Self::pipeline_lambda_is_fusable(
+                        lambda
+                    ) {
+                        return Ok(None);
+                    }
+
                     let (
                         expr,
                         captures,
@@ -5117,9 +5243,7 @@ impl Compiler {
                     );
                 }
 
-                PipelineStageAst::Skip(
-                    count
-                ) => {
+                PipelineStageAst::Skip(count) => {
                     compiled.push(
                         PipelineStage::Skip {
                             count: *count,
@@ -5127,9 +5251,7 @@ impl Compiler {
                     );
                 }
 
-                PipelineStageAst::Take(
-                    count
-                ) => {
+                PipelineStageAst::Take(count) => {
                     compiled.push(
                         PipelineStage::Take {
                             count: *count,

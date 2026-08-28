@@ -697,6 +697,19 @@ fn vm_range_for_negative() {
     )
 }
 
+#[test]
+fn dynamic_range_expression_bounds() {
+    assert_list(
+        r#"
+        let n = 10
+
+        (0 + 1)..(n + 1)
+            .map(|x| x * 2)
+            .collect()
+        "#,
+        &[2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
+    );
+}
 
 // ============================================================
 // If / while / for
