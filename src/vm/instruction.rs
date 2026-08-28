@@ -50,6 +50,7 @@ pub enum OpCode {
 
     NewTuple,
     NewList,
+    NewDict,
     NewStruct,
     NewClass,
     NewRange,

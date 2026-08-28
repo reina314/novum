@@ -1163,6 +1163,20 @@ impl Vm {
                     );
                 }
 
+                OpCode::NewDict => {
+                    self.push(
+                        Value::Dict(
+                            Rc::new(
+                                RefCell::new(
+                                    HashMap::with_capacity(
+                                        operand as usize
+                                    )
+                                )
+                            )
+                        )
+                    );
+                }
+
                 OpCode::NewClass => {
                     let (
                         field_count,

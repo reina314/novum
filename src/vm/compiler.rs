@@ -2558,6 +2558,121 @@ impl Compiler {
                 }
             }
 
+            ExprKind::Dict(entries) => {
+                if entries.len() >
+                    u32::MAX as usize
+                {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Runtime,
+                            "dictionary is too large",
+                            None,
+                        )
+                    );
+                }
+
+                /*
+                * Dictionary keys are syntax-level strings,
+                * so duplicate keys can be rejected at compile time.
+                */
+                let mut keys =
+                    std::collections::HashSet::with_capacity(
+                        entries.len()
+                    );
+
+                for (
+                    key,
+                    _,
+                ) in entries {
+                    if !keys.insert(key) {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                format!(
+                                    "duplicate dictionary key: {}",
+                                    key
+                                ),
+                                None,
+                            )
+                        );
+                    }
+                }
+
+                /*
+                * Stack:
+                *
+                *     [dict]
+                */
+                self.chunk.emit_operand(
+                    OpCode::NewDict,
+                    entries.len() as u32,
+                );
+
+                for (
+                    key,
+                    value,
+                ) in entries {
+                    /*
+                    * Keep the original dict on the stack.
+                    *
+                    * before:
+                    *     [dict]
+                    *
+                    * after Dup:
+                    *     [dict, dict]
+                    */
+                    self.chunk.emit(
+                        OpCode::Dup
+                    );
+
+                    /*
+                    *     [dict, dict, key]
+                    */
+                    let key_constant =
+                        self.chunk.add_constant(
+                            Value::Str(
+                                Rc::new(
+                                    key.clone()
+                                )
+                            )
+                        );
+
+                    self.chunk.emit_operand(
+                        OpCode::Constant,
+                        key_constant,
+                    );
+
+                    /*
+                    *     [dict, dict, key, value]
+                    */
+                    self.compile_expr(
+                        value
+                    )?;
+
+                    /*
+                    * IndexSet consumes:
+                    *
+                    *     dict, key, value
+                    *
+                    * and leaves:
+                    *
+                    *     dict, value
+                    */
+                    self.chunk.emit(
+                        OpCode::IndexSet
+                    );
+
+                    /*
+                    * Remove the value produced by IndexSet.
+                    *
+                    *     [dict]
+                    */
+                    self.chunk.emit(
+                        OpCode::Pop
+                    );
+                }
+            }
+
             ExprKind::Range {
                 start,
                 end,

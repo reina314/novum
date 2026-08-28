@@ -307,7 +307,7 @@ fn vm_tuple() {
 }
 
 // ============================================================
-// List / indexing
+// List / Dict
 // ============================================================
 
 #[test]
@@ -343,6 +343,173 @@ fn vm_list() {
         [1, 2, 3]
         ",
         &[1, 2, 3],
+    );
+}
+
+#[test]
+fn dict_literal() {
+    assert_int(
+        r#"
+        let d = {
+            "value": 42
+        }
+
+        d["value"]
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn empty_dict() {
+    match run(
+        r#"
+        {}
+        "#
+    ) {
+        Ok(Value::Dict(dict)) => {
+            assert!(
+                dict.borrow().is_empty()
+            );
+        }
+
+        other => {
+            panic!(
+                "expected Dict, got {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dict_multiple_entries() {
+    assert_int(
+        r#"
+        let d = {
+            "a": 10,
+            "b": 20,
+        }
+
+        d["a"] + d["b"]
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn dict_expression_values() {
+    assert_int(
+        r#"
+        let d = {
+            "value": 10 + 20
+        }
+
+        d["value"]
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn nested_dict() {
+    assert_int(
+        r#"
+        let d = {
+            "inner": {
+                "value": 42
+            }
+        }
+
+        d["inner"]["value"]
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn dict_with_list() {
+    assert_int(
+        r#"
+        let d = {
+            "values": [10, 20, 30]
+        }
+
+        d["values"][1]
+        "#,
+        20,
+    );
+}
+
+#[test]
+fn list_with_dict() {
+    assert_int(
+        r#"
+        let xs = [
+            {
+                "value": 42
+            }
+        ]
+
+        xs[0]["value"]
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn dict_uses_local_values() {
+    assert_int(
+        r#"
+        let x = 10
+
+        let d = {
+            "x": x + 5
+        }
+
+        d["x"]
+        "#,
+        15,
+    );
+}
+
+#[test]
+fn dict_add_new_key() {
+    assert_int(
+        r#"
+        let d = {}
+
+        d["x"] = 42
+
+        d["x"]
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn dict_missing_key() {
+    assert_error_kind(
+        r#"
+        let d = {
+            "x": 1
+        }
+
+        d["y"]
+        "#,
+        ErrorKind::Index,
+    );
+}
+
+#[test]
+fn duplicate_dict_key() {
+    assert_error_kind(
+        r#"
+        {
+            "x": 1,
+            "x": 2,
+        }
+        "#,
+        ErrorKind::Runtime,
     );
 }
 
