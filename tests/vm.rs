@@ -2850,6 +2850,8 @@ fn method_result_can_be_nested_in_call() {
     assert_int(
         r#"
         class Test {
+            weights = []
+            
             predict =
                 |self, x| {
                     zip(
@@ -2886,4 +2888,3 @@ fn method_result_can_be_nested_in_call() {
         30,
     );
 }
-
