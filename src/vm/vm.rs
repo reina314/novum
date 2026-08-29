@@ -5872,15 +5872,60 @@ impl Vm {
         &mut self,
         iterator: &IteratorRef,
     ) -> Result<IterResult> {
-        match &mut *iterator.borrow_mut() {
-            IteratorObj::List {
-                data,
-                index,
-            } => {
-                let value =
-                    data.get(*index);
+        let kind =
+            {
+                let state =
+                    iterator.borrow();
 
-                match value {
+                match &*state {
+                    IteratorObj::List { .. } =>
+                        0,
+
+                    IteratorObj::Str { .. } =>
+                        1,
+
+                    IteratorObj::Vector { .. } =>
+                        2,
+
+                    IteratorObj::Series { .. } =>
+                        3,
+
+                    IteratorObj::DataFrame { .. } =>
+                        4,
+
+                    IteratorObj::Range { .. } =>
+                        5,
+
+                    _ =>
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "iterator is not a base iterator",
+                                None,
+                            )
+                        ),
+                }
+            };
+
+        match kind {
+            /*
+            * --------------------------------------------------
+            * List
+            * --------------------------------------------------
+            */
+            0 => {
+                let mut state =
+                    iterator.borrow_mut();
+
+                let IteratorObj::List {
+                    data,
+                    index,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
+                match data.get(*index) {
                     Some(value) => {
                         *index += 1;
 
@@ -5898,10 +5943,23 @@ impl Vm {
                 }
             }
 
-            IteratorObj::Str {
-                data,
-                byte_index,
-            } => {
+            /*
+            * --------------------------------------------------
+            * String
+            * --------------------------------------------------
+            */
+            1 => {
+                let mut state =
+                    iterator.borrow_mut();
+
+                let IteratorObj::Str {
+                    data,
+                    byte_index,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
                 let slice =
                     &data[*byte_index..];
 
@@ -5927,21 +5985,67 @@ impl Vm {
                 )
             }
 
-            IteratorObj::Vector {
-                data,
-                index,
-            } => {
-                let value =
-                    data.borrow()
-                        .get(*index);
+            /*
+            * --------------------------------------------------
+            * Vector
+            * --------------------------------------------------
+            */
+            2 => {
+                let mut state =
+                    iterator.borrow_mut();
 
-                match value {
+                let IteratorObj::Vector {
+                    data,
+                    index,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
+                let x = match data.borrow().get(*index) {
                     Some(value) => {
                         *index += 1;
 
                         Ok(
                             IterResult::Item(
-                                Value::Float(value)
+                                Value::Float(
+                                    value
+                                )
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }; x
+            }
+
+            /*
+            * --------------------------------------------------
+            * Series
+            * --------------------------------------------------
+            */
+            3 => {
+                let mut state =
+                    iterator.borrow_mut();
+
+                let IteratorObj::Series {
+                    data,
+                    index,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
+                match data.get(*index) {
+                    Some(value) => {
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                value
                             )
                         )
                     }
@@ -5953,10 +6057,62 @@ impl Vm {
                 }
             }
 
-            IteratorObj::Range {
-                current,
-                end,
-            } => {
+            /*
+            * --------------------------------------------------
+            * DataFrame
+            *
+            * A DataFrame iterates over rows.
+            *
+            * row(i) -> Dict
+            * --------------------------------------------------
+            */
+            4 => {
+                let mut state =
+                    iterator.borrow_mut();
+
+                let IteratorObj::DataFrame {
+                    data,
+                    index,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
+                match data.row(*index) {
+                    Some(row) => {
+                        *index += 1;
+
+                        Ok(
+                            IterResult::Item(
+                                Value::Dict(row)
+                            )
+                        )
+                    }
+
+                    None =>
+                        Ok(
+                            IterResult::End
+                        ),
+                }
+            }
+
+            /*
+            * --------------------------------------------------
+            * Range
+            * --------------------------------------------------
+            */
+            5 => {
+                let mut state =
+                    iterator.borrow_mut();
+
+                let IteratorObj::Range {
+                    current,
+                    end,
+                } = &mut *state
+                else {
+                    unreachable!();
+                };
+
                 if *current >= *end {
                     return Ok(
                         IterResult::End
@@ -5970,19 +6126,15 @@ impl Vm {
 
                 Ok(
                     IterResult::Item(
-                        Value::Int(value)
+                        Value::Int(
+                            value
+                        )
                     )
                 )
             }
 
             _ =>
-                Err(
-                    Error::new(
-                        ErrorKind::Runtime,
-                        "iterator is not a base iterator",
-                        None,
-                    )
-                ),
+                unreachable!(),
         }
     }
 
