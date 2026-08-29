@@ -1824,6 +1824,24 @@ impl Vm {
                             self.push(value);
                         }
 
+                        Value::Series(series) => {
+                            self.push(
+                                self.get_series_property(
+                                    series,
+                                    field.as_str(),
+                                )?
+                            );
+                        }
+
+                        Value::DataFrame(df) => {
+                            self.push(
+                                self.get_dataframe_property(
+                                    df,
+                                    field.as_str(),
+                                )?
+                            );
+                        }
+
                         _ => {
                             return Err(
                                 Error::new(
@@ -3035,6 +3053,110 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    fn get_series_property(
+        &self,
+        series: SeriesRef,
+        name: &str,
+    ) -> Result<Value> {
+        match name {
+            "name" => {
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            series
+                                .name()
+                                .to_owned()
+                        )
+                    )
+                )
+            }
+
+            "len" => {
+                Ok(
+                    Value::Int(
+                        series.len() as i64
+                    )
+                )
+            }
+
+            "is_empty" => {
+                Ok(
+                    Value::Bool(
+                        series.is_empty()
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "Series has no property '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn get_dataframe_property(
+        &self,
+        df: DataFrameRef,
+        name: &str,
+    ) -> Result<Value> {
+        match name {
+            "nrows" => {
+                Ok(
+                    Value::Int(
+                        df.nrows() as i64
+                    )
+                )
+            }
+
+            "ncols" => {
+                Ok(
+                    Value::Int(
+                        df.ncols() as i64
+                    )
+                )
+            }
+
+            "columns" => {
+                let values =
+                    df.columns()
+                        .into_iter()
+                        .map(|name| {
+                            Value::Str(
+                                Rc::new(name)
+                            )
+                        })
+                        .collect();
+
+                Ok(
+                    Value::List(
+                        List::new(values)
+                    )
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "DataFrame has no property '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
     }
 
     fn resolve_pipeline_source(
@@ -7108,51 +7230,6 @@ impl Vm {
         args: Vec<Value>,
     ) -> Result<Value> {
         match name {
-            "name" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                Ok(
-                    Value::Str(
-                        Rc::new(
-                            series.name()
-                                .to_owned()
-                        )
-                    )
-                )
-            }
-
-            "len" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                Ok(
-                    Value::Int(
-                        series.len() as i64
-                    )
-                )
-            }
-
-            "is_empty" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                Ok(
-                    Value::Bool(
-                        series.is_empty()
-                    )
-                )
-            }
-
             "is_null" => {
                 self.expect_arity(
                     name,
@@ -7491,58 +7568,6 @@ impl Vm {
         args: Vec<Value>,
     ) -> Result<Value> {
         match name {
-            "nrows" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                Ok(
-                    Value::Int(
-                        df.nrows() as i64
-                    )
-                )
-            }
-
-            "ncols" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                Ok(
-                    Value::Int(
-                        df.ncols() as i64
-                    )
-                )
-            }
-
-            "columns" => {
-                self.expect_arity(
-                    name,
-                    &args,
-                    0,
-                )?;
-
-                let values =
-                    df.columns()
-                        .into_iter()
-                        .map(|name| {
-                            Value::Str(
-                                Rc::new(name)
-                            )
-                        })
-                        .collect();
-
-                Ok(
-                    Value::List(
-                        List::new(values)
-                    )
-                )
-            }
-
             "column" => {
                 self.expect_arity(
                     name,

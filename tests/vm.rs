@@ -2782,7 +2782,7 @@ fn dataframe_basic() {
                 series("y", [10, 20, 30])
             ])
 
-        df.nrows()
+        df.nrows
         "#,
         3,
     );
@@ -2837,6 +2837,7 @@ fn dataframe_iteration() {
         &[1, 2, 3],
     );
 }
+
 
 
 

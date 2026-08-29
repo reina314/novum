@@ -140,7 +140,7 @@ fn vm_csv_read() {
 
         csv.read(
             "tests/data/experiment.csv"
-        ).nrows()
+        ).nrows
         "#,
         6,
     )
