@@ -3,6 +3,9 @@ use crate::{
         BuiltinFn,
         Value,
         IteratorObj,
+        Series,
+        DataFrame,
+        DataFrameRef,
         // Set,
         List,
         PathValue,
@@ -24,6 +27,8 @@ const BUILTINS: &[(
     ("typeof", r#typeof),
     ("iter", iter),
     // ("set", set),
+    ("series", series),
+    ("dataframe", dataframe),
     ("zip", zip),
     ("enumerate", enumerate),
     ("zeros", zeros),
@@ -370,6 +375,116 @@ pub fn iter(
     Ok(
         Value::Iterator(
             iterator
+        )
+    )
+}
+
+pub fn series(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "series() expects exactly 2 arguments"
+                .into()
+        );
+    }
+
+    let data =
+        match args.pop().unwrap() {
+            Value::List(list) =>
+                list.iter_cloned(),
+
+            other =>
+                return Err(
+                    format!(
+                        "series() expects List as second argument, got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    let name =
+        match args.pop().unwrap() {
+            Value::Str(name) =>
+                name.as_ref().clone(),
+
+            other =>
+                return Err(
+                    format!(
+                        "series() expects Str as first argument, got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    Ok(
+        Value::Series(
+            Rc::new(
+                Series::new(
+                    name,
+                    data,
+                )
+            )
+        )
+    )
+}
+
+pub fn dataframe(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "dataframe() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let columns =
+        match args.pop().unwrap() {
+            Value::List(list) => {
+                let mut columns =
+                    Vec::with_capacity(
+                        list.len()
+                    );
+
+                for value in
+                    list.iter_cloned()
+                {
+                    let Value::Series(
+                        series
+                    ) = value
+                    else {
+                        return Err(
+                            format!(
+                                "dataframe() expects List[Series], got {}",
+                                value.type_name()
+                            )
+                        );
+                    };
+
+                    columns.push(series);
+                }
+
+                columns
+            }
+
+            other =>
+                return Err(
+                    format!(
+                        "dataframe() expects List[Series], got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    let dataframe =
+        DataFrame::from_series(
+            columns
+        )?;
+
+    Ok(
+        Value::DataFrame(
+            Rc::new(dataframe)
         )
     )
 }

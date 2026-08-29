@@ -649,11 +649,35 @@ impl DataFrame {
         let end =
             n.min(self.nrows);
 
-        let indices =
-            (0..end)
-                .collect::<Vec<_>>();
+        let mut columns =
+            Vec::with_capacity(
+                self.columns.len()
+            );
 
-        self.take_rows(&indices)
+        for column in
+            &self.columns
+        {
+            let values =
+                column
+                    .data()
+                    .iter()
+                    .take(end)
+                    .cloned()
+                    .collect();
+
+            columns.push(
+                Rc::new(
+                    Series::new(
+                        column.name(),
+                        values,
+                    )
+                )
+            );
+        }
+
+        Self::from_series(
+            columns
+        )
     }
 
     pub fn crosstab(

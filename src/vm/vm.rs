@@ -15,6 +15,8 @@ use crate::{
         IterResult,
         StructValue,
         StructTypeRef,
+        SeriesRef,
+        DataFrameRef,
         CallFrame,
         RangeCursor,
         FunctionParameter,
@@ -1497,6 +1499,85 @@ impl Vm {
                                     })?;
 
                             self.push(value);
+                        }
+
+                        (
+                            Value::Series(series),
+                            Value::Int(index),
+                        ) => {
+                            if index < 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "Series index must be non-negative",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let value =
+                                series
+                                    .get(index as usize)
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Index,
+                                            "series index out of bounds",
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(value);
+                        }
+
+                        (
+                            Value::DataFrame(df),
+                            Value::Str(name),
+                        ) => {
+                            let column =
+                                df.column(name.as_str())
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Index,
+                                            format!(
+                                                "DataFrame column not found: '{}'",
+                                                name
+                                            ),
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(
+                                Value::Series(column)
+                            );
+                        }
+
+                        (
+                            Value::DataFrame(df),
+                            Value::Int(index),
+                        ) => {
+                            if index < 0 {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Index,
+                                        "DataFrame row index must be non-negative",
+                                        None,
+                                    )
+                                );
+                            }
+
+                            let row =
+                                df.row(index as usize)
+                                    .ok_or_else(|| {
+                                        Error::new(
+                                            ErrorKind::Index,
+                                            "DataFrame row index out of bounds",
+                                            None,
+                                        )
+                                    })?;
+
+                            self.push(
+                                Value::Object(row)
+                            );
                         }
 
                         (
@@ -5405,6 +5486,12 @@ impl Vm {
 
                     IteratorObj::Skip { .. } =>
                         9,
+
+                    IteratorObj::Series { .. } =>
+                        10,
+
+                    IteratorObj::DataFrame { .. } =>
+                        11,
                 }
             };
 
@@ -5767,6 +5854,12 @@ impl Vm {
 
                 self.iterator_next(
                     source
+                )
+            }
+
+            10 | 11 => {
+                self.iterator_next_base(
+                    &iterator
                 )
             }
 
@@ -6244,6 +6337,20 @@ impl Vm {
             Value::Str(string) =>
                 self.invoke_string_method(
                     string,
+                    name,
+                    args,
+                ),
+
+            Value::Series(series) =>
+                self.invoke_series_method(
+                    series,
+                    name,
+                    args,
+                ),
+
+            Value::DataFrame(df) =>
+                self.invoke_dataframe_method(
+                    df,
                     name,
                     args,
                 ),
@@ -6823,6 +6930,636 @@ impl Vm {
                     )
                 )
             }
+        }
+    }
+
+    fn invoke_series_method(
+        &mut self,
+        series: SeriesRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            "name" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Str(
+                        Rc::new(
+                            series.name()
+                                .to_owned()
+                        )
+                    )
+                )
+            }
+
+            "len" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Int(
+                        series.len() as i64
+                    )
+                )
+            }
+
+            "is_empty" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Bool(
+                        series.is_empty()
+                    )
+                )
+            }
+
+            "is_null" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Series(
+                        Rc::new(
+                            series.is_null()
+                        )
+                    )
+                )
+            }
+
+            "is_not_null" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Series(
+                        Rc::new(
+                            series.is_not_null()
+                        )
+                    )
+                )
+            }
+
+            "dropna" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Series(
+                        Rc::new(
+                            series.dropna()
+                        )
+                    )
+                )
+            }
+
+            "unique" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let value =
+                    series
+                        .unique()
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                Ok(
+                    Value::Series(
+                        Rc::new(value)
+                    )
+                )
+            }
+
+            "mean" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .mean()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "sum" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .sum()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "min" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .min()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "max" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .max()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "std" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .std()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "median" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                series
+                    .median()
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Type,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "quantile" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let q =
+                    match args[0] {
+                        Value::Float(q) =>
+                            q,
+
+                        Value::Int(q) =>
+                            q as f64,
+
+                        ref other =>
+                            return Err(
+                                Error::new(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "quantile() expects Float or Int, got {}",
+                                        other.type_name()
+                                    ),
+                                    None,
+                                )
+                            ),
+                    };
+
+                series
+                    .quantile(q)
+                    .map_err(
+                        |message| {
+                            Error::new(
+                                ErrorKind::Value,
+                                message,
+                                None,
+                            )
+                        }
+                    )
+            }
+
+            "with_name" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    new_name
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "with_name() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                Ok(
+                    Value::Series(
+                        Rc::new(
+                            series.with_name(
+                                new_name.as_str()
+                            )
+                        )
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let matrix =
+                    series
+                        .to_matrix()
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                Ok(
+                    Value::Matrix(
+                        Rc::new(
+                            RefCell::new(matrix)
+                        )
+                    )
+                )
+            }
+
+            "iter" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Iterator(
+                        IteratorObj::from_value(
+                            Value::Series(series)
+                        )?
+                    )
+                )
+            }
+
+            _ => Err(
+                Error::new(
+                    ErrorKind::Name,
+                    format!(
+                        "Series has no method '{}'",
+                        name
+                    ),
+                    None,
+                )
+            ),
+        }
+    }
+
+    fn invoke_dataframe_method(
+        &mut self,
+        df: DataFrameRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match name {
+            "nrows" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Int(
+                        df.nrows() as i64
+                    )
+                )
+            }
+
+            "ncols" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Int(
+                        df.ncols() as i64
+                    )
+                )
+            }
+
+            "columns" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let values =
+                    df.columns()
+                        .into_iter()
+                        .map(|name| {
+                            Value::Str(
+                                Rc::new(name)
+                            )
+                        })
+                        .collect();
+
+                Ok(
+                    Value::List(
+                        List::new(values)
+                    )
+                )
+            }
+
+            "column" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let Value::Str(
+                    name
+                ) = &args[0]
+                else {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "column() expects Str, got {}",
+                                args[0].type_name()
+                            ),
+                            None,
+                        )
+                    );
+                };
+
+                let column =
+                    df.column(
+                        name.as_str()
+                    )
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "unknown DataFrame column '{}'",
+                                name
+                            ),
+                            None,
+                        )
+                    })?;
+
+                Ok(
+                    Value::Series(
+                        column
+                    )
+                )
+            }
+
+            "row" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let index =
+                    self.expect_nonnegative_index(
+                        name,
+                        &args[0],
+                    )?;
+
+                let row =
+                    df.row(index)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Index,
+                                format!(
+                                    "DataFrame row index out of bounds: {}",
+                                    index
+                                ),
+                                None,
+                            )
+                        })?;
+
+                Ok(
+                    Value::Object(row)
+                )
+            }
+
+            "head" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let n =
+                    self.expect_nonnegative_index(
+                        name,
+                        &args[0],
+                    )?;
+
+                let result =
+                    df.head(n)
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                Ok(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                )
+            }
+
+            "describe" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let result =
+                    df.describe()
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Runtime,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                Ok(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
+                )
+            }
+
+            "to_matrix" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                let result =
+                    df.to_matrix()
+                        .map_err(
+                            |message| {
+                                Error::new(
+                                    ErrorKind::Type,
+                                    message,
+                                    None,
+                                )
+                            }
+                        )?;
+
+                Ok(
+                    Value::Matrix(
+                        Rc::new(
+                            RefCell::new(result)
+                        )
+                    )
+                )
+            }
+
+            "iter" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    0,
+                )?;
+
+                Ok(
+                    Value::Iterator(
+                        IteratorObj::from_value(
+                            Value::DataFrame(df)
+                        )?
+                    )
+                )
+            }
+
+            _ => Err(
+                Error::new(
+                    ErrorKind::Name,
+                    format!(
+                        "DataFrame has no method '{}'",
+                        name
+                    ),
+                    None,
+                )
+            ),
         }
     }
 
@@ -7754,6 +8491,70 @@ impl Vm {
                     )
                 )
         }
+    }
+
+    fn expect_index_list(
+        &self,
+        name: &str,
+        value: &Value,
+    ) -> Result<Vec<usize>> {
+        let Value::List(list) =
+            value
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Type,
+                    format!(
+                        "{}() expects List[Int]",
+                        name
+                    ),
+                    None,
+                )
+            );
+        };
+
+        let mut result =
+            Vec::with_capacity(
+                list.len()
+            );
+
+        for value in
+            list.as_vec().iter()
+        {
+            let Value::Int(index) =
+                value
+            else {
+                return Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "{}() expects List[Int]",
+                            name
+                        ),
+                        None,
+                    )
+                );
+            };
+
+            if *index < 0 {
+                return Err(
+                    Error::new(
+                        ErrorKind::Index,
+                        format!(
+                            "{}() index must be non-negative",
+                            name
+                        ),
+                        None,
+                    )
+                );
+            }
+
+            result.push(
+                *index as usize
+            );
+        }
+
+        Ok(result)
     }
 
 }

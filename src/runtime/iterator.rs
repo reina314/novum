@@ -3,11 +3,12 @@ use super::{
     Value,
     StrRef,
     VectorRef,
+    SeriesRef,
+    DataFrameRef,
     ClosureRef,
 };
 use std::{
-    rc::Rc,
-    cell::RefCell,
+    cell::RefCell, rc::Rc,
 };
 
 pub type IteratorRef = Rc<RefCell<IteratorObj>>;
@@ -26,6 +27,16 @@ pub enum IteratorObj {
 
     Vector {
         data: VectorRef,
+        index: usize,
+    },
+
+    Series {
+        data: SeriesRef,
+        index: usize,
+    },
+
+    DataFrame {
+        data: DataFrameRef,
         index: usize,
     },
 
@@ -90,7 +101,7 @@ impl IteratorObj {
                     )
                 ),
 
-            Value::Str(data) => {
+            Value::Str(data) =>
                 Ok(
                     Rc::new(
                         RefCell::new(
@@ -100,38 +111,8 @@ impl IteratorObj {
                             }
                         )
                     )
-                )
-            }
+                ),
 
-            Value::Range(
-                start,
-                end,
-                inclusive,
-            ) => {
-                let end =
-                    if inclusive {
-                        end.checked_add(1)
-                            .ok_or_else(|| {
-                                "inclusive range endpoint overflow"
-                                    .to_owned()
-                            })?
-                    } else {
-                        end
-                    };
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::Range {
-                                current: start,
-                                end,
-                            }
-                        )
-                    )
-                )
-            }
-
-            // Dict → items()
             Value::Dict(dict) => {
                 let items =
                     dict.borrow()
@@ -165,36 +146,64 @@ impl IteratorObj {
                 )
             }
 
-            Value::Set(set) => {
-                let values =
-                    set.borrow()
-                        .values()
-                        .to_vec();
-
-                let list =
-                    List::new(
-                        values
-                    );
-
-                Ok(
-                    Rc::new(
-                        RefCell::new(
-                            IteratorObj::List {
-                                data: list,
-                                index: 0,
-                            }
-                        )
-                    )
-                )
-            }
-
-            Value::Vector(vector) => {
+            Value::Vector(data) =>
                 Ok(
                     Rc::new(
                         RefCell::new(
                             IteratorObj::Vector {
-                                data: vector,
+                                data,
                                 index: 0,
+                            }
+                        )
+                    )
+                ),
+
+            Value::Series(data) =>
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Series {
+                                data,
+                                index: 0,
+                            }
+                        )
+                    )
+                ),
+
+            Value::DataFrame(data) =>
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::DataFrame {
+                                data,
+                                index: 0,
+                            }
+                        )
+                    )
+                ),
+
+            Value::Range(
+                start,
+                end,
+                inclusive,
+            ) => {
+                let end =
+                    if inclusive {
+                        end.checked_add(1)
+                            .ok_or_else(|| {
+                                "inclusive range endpoint overflow"
+                                    .to_owned()
+                            })?
+                    } else {
+                        end
+                    };
+
+                Ok(
+                    Rc::new(
+                        RefCell::new(
+                            IteratorObj::Range {
+                                current: start,
+                                end,
                             }
                         )
                     )
@@ -280,6 +289,53 @@ impl IteratorObj {
                             )
                         )
                     );
+                }
+
+                Self::Series {
+                    data,
+                    index,
+                } => {
+                    let value =
+                        data.get(*index);
+
+                    match value {
+                        Some(value) => {
+                            *index += 1;
+
+                            return Ok(
+                                IterResult::Item(
+                                    value
+                                )
+                            );
+                        }
+
+                        None =>
+                            return Ok(
+                                IterResult::End
+                            ),
+                    }
+                }
+
+                Self::DataFrame {
+                    data,
+                    index,
+                } => {
+                    match data.row(*index) {
+                        Some(row) => {
+                            *index += 1;
+
+                            return Ok(
+                                IterResult::Item(
+                                    Value::Object(row)
+                                )
+                            )
+                        }
+
+                        None =>
+                            return Ok(
+                                IterResult::End
+                            ),
+                    }
                 }
 
                 Self::Vector {
@@ -458,6 +514,8 @@ impl IteratorObj {
 
                 Self::List { .. }
                 | Self::Str { .. }
+                | Self::Series { .. }
+                | Self::DataFrame { .. }
                 | Self::Vector { .. }
                 | Self::Range { .. } => {
                     unreachable!(

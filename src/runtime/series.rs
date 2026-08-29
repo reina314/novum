@@ -199,33 +199,93 @@ impl Series {
     pub fn mean(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut sum =
+            0.0;
 
-        if values.is_empty() {
+        let mut count =
+            0usize;
+
+        for value in
+            &self.data
+        {
+            match value {
+                Value::Int(v) => {
+                    sum +=
+                        *v as f64;
+                    count += 1;
+                }
+
+                Value::Float(v) => {
+                    sum += *v;
+                    count += 1;
+                }
+
+                Value::Null => {}
+
+                other => {
+                    return Err(format!(
+                        "Series '{}' is not numeric; found {}",
+                        self.name,
+                        other.type_name()
+                    ));
+                }
+            }
+        }
+
+        if count == 0 {
             return Ok(Value::Null);
         }
 
-        let mean =
-            values.iter().sum::<f64>()
-            / values.len() as f64;
-
-        Ok(Value::Float(mean))
+        Ok(
+            Value::Float(
+                sum / count as f64
+            )
+        )
     }
 
     pub fn sum(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut sum =
+            0.0;
 
-        if values.is_empty() {
+        let mut count =
+            0usize;
+
+        for value in
+            &self.data
+        {
+            match value {
+                Value::Int(v) => {
+                    sum +=
+                        *v as f64;
+                    count += 1;
+                }
+
+                Value::Float(v) => {
+                    sum += *v;
+                    count += 1;
+                }
+
+                Value::Null => {}
+
+                other => {
+                    return Err(format!(
+                        "Series '{}' is not numeric; found {}",
+                        self.name,
+                        other.type_name()
+                    ));
+                }
+            }
+        }
+
+        if count == 0 {
             return Ok(Value::Null);
         }
 
-        Ok(Value::Float(
-            values.iter().sum()
-        ))
+        Ok(
+            Value::Float(sum)
+        )
     }
 
     pub fn min(

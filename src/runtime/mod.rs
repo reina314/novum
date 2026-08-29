@@ -4,7 +4,7 @@ pub mod iterator;
 pub mod vector;
 pub mod matrix;
 pub mod series;
-// pub mod dataframe;
+pub mod dataframe;
 // pub mod grouped_dataframe;
 pub mod module;
 pub mod object;
@@ -40,10 +40,10 @@ pub use series::{
     Series,
     SeriesRef,
 };
-// pub use dataframe::{
-//     DataFrame,
-//     DataFrameRef,
-// };
+pub use dataframe::{
+    DataFrame,
+    DataFrameRef,
+};
 // pub use grouped_dataframe::{
 //     GroupedDataFrame,
 //     GroupedDataFrameRef,

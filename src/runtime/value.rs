@@ -11,7 +11,7 @@ use super::{
     VectorRef,
     MatrixRef,
     SeriesRef,
-    // DataFrameRef,
+    DataFrameRef,
     // GroupedDataFrameRef,
     ModuleRef,
     PathRef,
@@ -250,7 +250,7 @@ pub enum Value {
     Matrix(MatrixRef),
 
     Series(SeriesRef),
-    // DataFrame(DataFrameRef),
+    DataFrame(DataFrameRef),
     // GroupedDataFrame(GroupedDataFrameRef),
 
     Module(ModuleRef),
@@ -295,7 +295,7 @@ impl Value {
             Self::Matrix(_) => "Matrix",
             
             Self::Series(_) => "Series",
-            // Self::DataFrame(_) => "DataFrame",
+            Self::DataFrame(_) => "DataFrame",
             // Self::GroupedDataFrame(_) => "GroupedDataFrame",
 
             Self::Module(_) => "Module",
@@ -460,7 +460,7 @@ impl Value {
 
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
 
-            // (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
+            (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
 
             // (Self::Object(x), Self::Object(y)) => Rc::ptr_eq(x, y),
 
@@ -573,7 +573,7 @@ impl fmt::Debug for Value {
 
             Self::Series(v) => write!(f, "{:?}", v),
 
-            // Self::DataFrame(df) => write!(f, "{:?}", df),
+            Self::DataFrame(df) => write!(f, "{:?}", df),
 
             // Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
@@ -735,8 +735,8 @@ impl fmt::Display for Value {
             Self::Series(series) => 
                 series.fmt_display(f),
 
-            // Self::DataFrame(df) =>
-            //     df.fmt_display(f),
+            Self::DataFrame(df) =>
+                df.fmt_display(f),
 
             Self::Object(object) => object.borrow().fmt_display(f),
 

@@ -3050,3 +3050,109 @@ fn call_lambda_pipeline_falls_back() {
     );
 }
 
+// ============================================================
+// Series and DataFrame
+// ============================================================
+#[test]
+fn series_basic() {
+    assert_float(
+        r#"
+        let s =
+            series(
+                "score",
+                [1.0, 2.0, 3.0]
+            )
+
+        s.mean()
+        "#,
+        2.0,
+    );
+}
+
+#[test]
+fn series_index() {
+    assert_float(
+        r#"
+        let s =
+            series(
+                "score",
+                [1.0, 2.0, 3.0]
+            )
+
+        s[1]
+        "#,
+        2.0,
+    );
+}
+
+#[test]
+fn dataframe_basic() {
+    assert_int(
+        r#"
+        let df =
+            dataframe([
+                series("x", [1, 2, 3]),
+                series("y", [10, 20, 30])
+            ])
+
+        df.nrows()
+        "#,
+        3,
+    );
+}
+
+#[test]
+fn dataframe_column() {
+    assert_float(
+        r#"
+        let df =
+            dataframe([
+                series("x", [1, 2, 3]),
+                series("y", [10, 20, 30])
+            ])
+
+        df["x"].mean()
+        "#,
+        2.0,
+    );
+}
+
+#[test]
+fn dataframe_row() {
+    assert_int(
+        r#"
+        let df =
+            dataframe([
+                series("x", [1, 2, 3]),
+                series("y", [10, 20, 30])
+            ])
+
+        df[1].x
+        "#,
+        2,
+    );
+}
+
+#[test]
+fn dataframe_iteration() {
+    assert_list(
+        r#"
+        let df =
+            dataframe([
+                series("x", [1, 2, 3]),
+                series("y", [10, 20, 30])
+            ])
+
+        df.iter()
+            .map(|row| row.x)
+            .collect()
+        "#,
+        &[1, 2, 3],
+    );
+}
+
+
+
+
+
+
