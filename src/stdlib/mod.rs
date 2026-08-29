@@ -4,9 +4,9 @@ pub mod builtin;
 pub mod fs;
 pub mod math;
 pub mod process;
+pub mod csv;
+pub mod json;
 // pub mod linalg;
-// pub mod csv;
-// pub mod json;
 // pub mod stats;
 
 // For internal use
@@ -34,11 +34,11 @@ pub fn load_module(
         "fs" => Some(fs::module()),
         "math" => Some(math::module()),
         "process" => Some(process::module()),
+        "csv" => Some(csv::module()),
+        "json" => Some(json::module()),
         
         // "stats" => Some(stats::module()),
         // "linalg" => Some(linalg::module()),
-        // "csv" => Some(csv::module()),
-        // "json" => Some(json::module()),
 
         _ => None,
     }

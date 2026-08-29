@@ -6,6 +6,7 @@ use std::{
 use serde_json::Value as JsonValue;
 
 use crate::runtime::{
+    List,
     Value,
     ModuleRef,
 };
@@ -122,25 +123,20 @@ fn from_json_value(
             Ok(Value::Bool(value)),
 
         JsonValue::Number(number) => {
-            if let Some(value) =
-                number.as_i64()
-            {
-                Ok(
-                    Value::Int(value)
-                )
-            } else if let Some(value) =
-                number.as_f64()
-            {
-                Ok(
-                    Value::Float(value)
-                )
+            if let Some(value) = number.as_i64() {
+                Ok(Value::Int(value))
+            } else if number.is_u64() {
+                Err(format!(
+                    "JSON integer is outside Novum Int range: {}",
+                    number
+                ))
+            } else if let Some(value) = number.as_f64() {
+                Ok(Value::Float(value))
             } else {
-                Err(
-                    format!(
-                        "unsupported JSON number: {}",
-                        number
-                    )
-                )
+                Err(format!(
+                    "unsupported JSON number: {}",
+                    number
+                ))
             }
         }
 
@@ -165,11 +161,7 @@ fn from_json_value(
 
             Ok(
                 Value::List(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
+                    List::new(result)
                 )
             )
         }
@@ -243,17 +235,17 @@ fn to_json_value(
             ),
 
         Value::List(list) => {
-            let list =
-                list.borrow();
+            let values =
+                list.iter_cloned();
 
             let mut result =
                 Vec::with_capacity(
-                    list.len()
+                    values.len()
                 );
 
-            for value in list.iter() {
+            for value in values {
                 result.push(
-                    to_json_value(value)?
+                    to_json_value(&value)?
                 );
             }
 
