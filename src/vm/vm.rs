@@ -1576,7 +1576,7 @@ impl Vm {
                                     })?;
 
                             self.push(
-                                Value::Object(row)
+                                Value::Dict(row)
                             );
                         }
 
@@ -6301,6 +6301,22 @@ impl Vm {
         }
     }
 
+    fn make_iterator(
+        &self,
+        value: Value,
+    ) -> Result<IteratorRef> {
+        IteratorObj::from_value(
+            value
+        )
+        .map_err(|message| {
+            Error::new(
+                ErrorKind::Type,
+                message,
+                None,
+            )
+        })
+    }
+
     /// Handles any type of method dispatches
     /// List, Struct, Object, ... etc
     fn invoke_method(
@@ -7291,11 +7307,14 @@ impl Vm {
                     0,
                 )?;
 
+                let iterator =
+                    self.make_iterator(
+                        Value::Series(series)
+                    )?;
+
                 Ok(
                     Value::Iterator(
-                        IteratorObj::from_value(
-                            Value::Series(series)
-                        )?
+                        iterator
                     )
                 )
             }
@@ -7425,7 +7444,7 @@ impl Vm {
                 )?;
 
                 let index =
-                    self.expect_nonnegative_index(
+                    self.expect_usize_index(
                         name,
                         &args[0],
                     )?;
@@ -7444,7 +7463,39 @@ impl Vm {
                         })?;
 
                 Ok(
-                    Value::Object(row)
+                    Value::Dict(row)
+                )
+            }
+
+            "take_rows" => {
+                self.expect_arity(
+                    name,
+                    &args,
+                    1,
+                )?;
+
+                let indices =
+                    self.expect_usize_indices(
+                        name,
+                        &args[0],
+                    )?;
+
+                let result =
+                    df.take_rows(
+                        &indices
+                    )
+                    .map_err(|message| {
+                        Error::new(
+                            ErrorKind::Runtime,
+                            message,
+                            None,
+                        )
+                    })?;
+
+                Ok(
+                    Value::DataFrame(
+                        Rc::new(result)
+                    )
                 )
             }
 
@@ -7456,7 +7507,7 @@ impl Vm {
                 )?;
 
                 let n =
-                    self.expect_nonnegative_index(
+                    self.expect_usize_index(
                         name,
                         &args[0],
                     )?;
@@ -7541,11 +7592,14 @@ impl Vm {
                     0,
                 )?;
 
+                let iterator =
+                    self.make_iterator(
+                        Value::DataFrame(df)
+                    )?;
+
                 Ok(
                     Value::Iterator(
-                        IteratorObj::from_value(
-                            Value::DataFrame(df)
-                        )?
+                        iterator
                     )
                 )
             }
@@ -8493,7 +8547,48 @@ impl Vm {
         }
     }
 
-    fn expect_index_list(
+    fn expect_usize_index(
+        &self,
+        name: &str,
+        value: &Value,
+    ) -> Result<usize> {
+        match value {
+            Value::Int(index)
+                if *index >= 0 =>
+            {
+                Ok(*index as usize)
+            }
+
+            Value::Int(_) => {
+                Err(
+                    Error::new(
+                        ErrorKind::Index,
+                        format!(
+                            "{}() index must be non-negative",
+                            name
+                        ),
+                        None,
+                    )
+                )
+            }
+
+            other => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        format!(
+                            "{}() expects Int, got {}",
+                            name,
+                            other.type_name()
+                        ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn expect_usize_indices(
         &self,
         name: &str,
         value: &Value,
@@ -8513,45 +8608,51 @@ impl Vm {
             );
         };
 
+        let values =
+            list.as_vec();
+
         let mut result =
             Vec::with_capacity(
-                list.len()
+                values.len()
             );
 
-        for value in
-            list.as_vec().iter()
-        {
-            let Value::Int(index) =
-                value
-            else {
-                return Err(
-                    Error::new(
-                        ErrorKind::Type,
-                        format!(
-                            "{}() expects List[Int]",
-                            name
-                        ),
-                        None,
-                    )
-                );
-            };
+        for value in values.iter() {
+            match value {
+                Value::Int(index)
+                    if *index >= 0 =>
+                {
+                    result.push(
+                        *index as usize
+                    );
+                }
 
-            if *index < 0 {
-                return Err(
-                    Error::new(
-                        ErrorKind::Index,
-                        format!(
-                            "{}() index must be non-negative",
-                            name
-                        ),
-                        None,
-                    )
-                );
+                Value::Int(_) => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Index,
+                            format!(
+                                "{}() index must be non-negative",
+                                name
+                            ),
+                            None,
+                        )
+                    );
+                }
+
+                other => {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Type,
+                            format!(
+                                "{}() expects List[Int], found {}",
+                                name,
+                                other.type_name()
+                            ),
+                            None,
+                        )
+                    );
+                }
             }
-
-            result.push(
-                *index as usize
-            );
         }
 
         Ok(result)

@@ -326,9 +326,9 @@ impl IteratorObj {
 
                             return Ok(
                                 IterResult::Item(
-                                    Value::Object(row)
+                                    Value::Dict(row)
                                 )
-                            )
+                            );
                         }
 
                         None =>

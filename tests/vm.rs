@@ -3127,7 +3127,7 @@ fn dataframe_row() {
                 series("y", [10, 20, 30])
             ])
 
-        df[1].x
+        df[1]["x"]
         "#,
         2,
     );
@@ -3144,7 +3144,7 @@ fn dataframe_iteration() {
             ])
 
         df.iter()
-            .map(|row| row.x)
+            .map(|row| row["x"])
             .collect()
         "#,
         &[1, 2, 3],
