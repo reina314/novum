@@ -17,6 +17,13 @@ pub fn module() -> ModuleRef {
         Module::new("linalg");
 
     module.set_exported(
+        "vector",
+        Value::Builtin(
+            matrix
+        ),
+    );
+
+    module.set_exported(
         "matrix",
         Value::Builtin(
             matrix
@@ -147,6 +154,86 @@ fn value_to_matrix_rows(
     }
 
     Ok(result)
+}
+
+fn value_to_vector_values(
+    value: &Value,
+) -> Result<Vec<f64>, String> {
+    let values =
+        match value {
+            Value::List(list) =>
+                list.iter_cloned(),
+
+            other => {
+                return Err(format!(
+                    "vector() expects List, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let mut result =
+        Vec::with_capacity(
+            values.len()
+        );
+
+    for value in values {
+        result.push(
+            value_to_f64(&value)?
+        );
+    }
+
+    Ok(result)
+}
+
+pub fn vector(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "vector() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let values =
+        match &args[0] {
+            Value::List(list) =>
+                list.iter_cloned(),
+
+            other => {
+                return Err(format!(
+                    "vector() expects List, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let mut data =
+        Vec::with_capacity(
+            values.len()
+        );
+
+    for value in values {
+        data.push(
+            value_to_f64(&value)?
+        );
+    }
+
+    let vector =
+        crate::runtime::Vector::new(
+            data
+        );
+
+    Ok(
+        Value::Vector(
+            Rc::new(
+                RefCell::new(
+                    vector
+                )
+            )
+        )
+    )
 }
 
 pub fn matrix(

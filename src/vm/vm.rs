@@ -5033,6 +5033,9 @@ impl Vm {
             OpCode::Geq =>
                 Some(BinOp::Geq),
 
+            OpCode::MatMul =>
+                Some(BinOp::MatMul),
+
             _ =>
                 None,
         }

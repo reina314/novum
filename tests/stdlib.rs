@@ -149,22 +149,62 @@ fn vm_csv_read() {
 }
 
 #[test]
-fn matrix_addition() {
+fn linalg_matrix() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
+        linalg.matrix([
             [1, 2],
             [3, 4]
         ])
+        "#,
+        &[
+            &[1.0, 2.0],
+            &[3.0, 4.0],
+        ],
+    );
+}
 
-        let B = matrix([
-            [5, 6],
-            [7, 8]
+#[test]
+fn linalg_vector() {
+    assert_vector(
+        r#"
+        import linalg
+
+        linalg.vector([
+            1,
+            2,
+            3
         ])
+        "#,
+        &[
+            1.0,
+            2.0,
+            3.0,
+        ],
+    );
+}
 
-        A + B
+#[test]
+fn linalg_matrix_addition() {
+    assert_matrix(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
+
+        let b =
+            linalg.matrix([
+                [5, 6],
+                [7, 8]
+            ])
+
+        a + b
         "#,
         &[
             &[6.0, 8.0],
@@ -174,22 +214,24 @@ fn matrix_addition() {
 }
 
 #[test]
-fn matrix_subtraction() {
+fn linalg_matrix_subtraction() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [5, 6],
-            [7, 8]
-        ])
+        let a =
+            linalg.matrix([
+                [5, 6],
+                [7, 8]
+            ])
 
-        let B = matrix([
-            [1, 2],
-            [3, 4]
-        ])
+        let b =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
 
-        A - B
+        a - b
         "#,
         &[
             &[4.0, 4.0],
@@ -199,62 +241,24 @@ fn matrix_subtraction() {
 }
 
 #[test]
-fn matrix_scalar_multiplication() {
+fn linalg_matrix_elementwise_multiplication() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
 
-        A * 2
-        "#,
-        &[
-            &[2.0, 4.0],
-            &[6.0, 8.0],
-        ],
-    );
-}
+        let b =
+            linalg.matrix([
+                [5, 6],
+                [7, 8]
+            ])
 
-#[test]
-fn scalar_matrix_multiplication() {
-    assert_matrix(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        3 * A
-        "#,
-        &[
-            &[3.0, 6.0],
-            &[9.0, 12.0],
-        ],
-    );
-}
-
-#[test]
-fn matrix_elementwise_multiplication() {
-    assert_matrix(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        let B = matrix([
-            [5, 6],
-            [7, 8]
-        ])
-
-        A * B
+        a * b
         "#,
         &[
             &[5.0, 12.0],
@@ -264,22 +268,66 @@ fn matrix_elementwise_multiplication() {
 }
 
 #[test]
-fn matrix_matmul_2x2() {
+fn linalg_matrix_scalar_multiplication() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
 
-        let B = matrix([
-            [5, 6],
-            [7, 8]
-        ])
+        a * 2
+        "#,
+        &[
+            &[2.0, 4.0],
+            &[6.0, 8.0],
+        ],
+    );
+}
 
-        A @ B
+#[test]
+fn linalg_scalar_matrix_multiplication() {
+    assert_matrix(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
+
+        3 * a
+        "#,
+        &[
+            &[3.0, 6.0],
+            &[9.0, 12.0],
+        ],
+    );
+}
+
+#[test]
+fn linalg_matrix_matmul() {
+    assert_matrix(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
+
+        let b =
+            linalg.matrix([
+                [5, 6],
+                [7, 8]
+            ])
+
+        a @ b
         "#,
         &[
             &[19.0, 22.0],
@@ -289,23 +337,25 @@ fn matrix_matmul_2x2() {
 }
 
 #[test]
-fn matrix_matmul_rectangular() {
+fn linalg_matrix_matmul_rectangular() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
+        let a =
+            linalg.matrix([
+                [1, 2, 3],
+                [4, 5, 6]
+            ])
 
-        let B = matrix([
-            [7, 8],
-            [9, 10],
-            [11, 12]
-        ])
+        let b =
+            linalg.matrix([
+                [7, 8],
+                [9, 10],
+                [11, 12]
+            ])
 
-        A @ B
+        a @ b
         "#,
         &[
             &[58.0, 64.0],
@@ -315,38 +365,18 @@ fn matrix_matmul_rectangular() {
 }
 
 #[test]
-fn matrix_matmul_dimension_error() {
-    assert_error_kind(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        let B = matrix([
-            [1, 2, 3]
-        ])
-
-        A @ B
-        "#,
-        ErrorKind::Runtime,
-    );
-}
-
-#[test]
-fn matrix_transpose() {
+fn linalg_matrix_transpose() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
+        let a =
+            linalg.matrix([
+                [1, 2, 3],
+                [4, 5, 6]
+            ])
 
-        A.transpose()
+        linalg.transpose(a)
         "#,
         &[
             &[1.0, 4.0],
@@ -357,157 +387,55 @@ fn matrix_transpose() {
 }
 
 #[test]
-fn matrix_transpose_module_function() {
-    assert_matrix(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        linalg.transpose(A)
-        "#,
-        &[
-            &[1.0, 3.0],
-            &[2.0, 4.0],
-        ],
-    );
-}
-
-#[test]
-fn matrix_shape() {
-    assert_list(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        linalg.shape(A)
-        "#,
-        &[2, 3],
-    );
-}
-
-#[test]
-fn matrix_rows() {
-    assert_int(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        linalg.rows(A)
-        "#,
-        2,
-    );
-}
-
-#[test]
-fn matrix_cols() {
-    assert_int(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        linalg.cols(A)
-        "#,
-        3,
-    );
-}
-
-#[test]
-fn matrix_property_rows() {
-    assert_int(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        A.rows
-        "#,
-        2,
-    );
-}
-
-#[test]
-fn matrix_property_cols() {
-    assert_int(
-        r#"
-        import linalg
-
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        A.cols
-        "#,
-        3,
-    );
-}
-
-#[test]
-fn matrix_determinant() {
+fn linalg_matrix_determinant() {
     assert_float(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
 
-        linalg.det(A)
+        linalg.det(a)
         "#,
         -2.0,
     );
 }
 
 #[test]
-fn matrix_determinant_3x3() {
+fn linalg_matrix_determinant_3x3() {
     assert_float(
         r#"
         import linalg
 
-        let A = matrix([
-            [6, 1, 1],
-            [4, -2, 5],
-            [2, 8, 7]
-        ])
+        let a =
+            linalg.matrix([
+                [6, 1, 1],
+                [4, -2, 5],
+                [2, 8, 7]
+            ])
 
-        linalg.det(A)
+        linalg.det(a)
         "#,
         -306.0,
     );
 }
 
 #[test]
-fn matrix_inverse() {
+fn linalg_matrix_inverse() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [4, 7],
-            [2, 6]
-        ])
+        let a =
+            linalg.matrix([
+                [4, 7],
+                [2, 6]
+            ])
 
-        linalg.inverse(A)
+        linalg.inverse(a)
         "#,
         &[
             &[0.6, -0.7],
@@ -517,20 +445,21 @@ fn matrix_inverse() {
 }
 
 #[test]
-fn matrix_inverse_round_trip() {
+fn linalg_matrix_inverse_round_trip() {
     assert_matrix(
         r#"
         import linalg
 
-        let A = matrix([
-            [4, 7],
-            [2, 6]
-        ])
+        let a =
+            linalg.matrix([
+                [4, 7],
+                [2, 6]
+            ])
 
         let inv =
-            linalg.inverse(A)
+            linalg.inverse(a)
 
-        A @ inv
+        a @ inv
         "#,
         &[
             &[1.0, 0.0],
@@ -540,395 +469,393 @@ fn matrix_inverse_round_trip() {
 }
 
 #[test]
-fn matrix_inverse_singular_error() {
-    assert_error_kind(
+fn linalg_matrix_shape() {
+    assert_list(
         r#"
         import linalg
 
-        let A = matrix([
-            [1, 2],
-            [2, 4]
-        ])
-
-        linalg.inverse(A)
-        "#,
-        ErrorKind::Runtime,
-    );
-}
-
-#[test]
-fn matrix_index() {
-    assert_float(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        A[1, 2]
-        "#,
-        6.0,
-    );
-}
-
-#[test]
-fn matrix_index_first_element() {
-    assert_float(
-        r#"
-        let A = matrix([
-            [10, 20],
-            [30, 40]
-        ])
-
-        A[0, 0]
-        "#,
-        10.0,
-    );
-}
-
-#[test]
-fn matrix_index_out_of_bounds() {
-    assert_error_kind(
-        r#"
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        A[2, 0]
-        "#,
-        ErrorKind::Runtime,
-    );
-}
-
-#[test]
-fn matrix_assignment() {
-    assert_float(
-        r#"
-        let A = matrix([
-            [1, 2],
-            [3, 4]
-        ])
-
-        A[1, 0] = 99
-
-        A[1, 0]
-        "#,
-        99.0,
-    );
-}
-
-#[test]
-fn matrix_slice() {
-    assert_matrix(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9]
-        ])
-
-        A[0..2, 1..3]
-        "#,
-        &[
-            &[2.0, 3.0],
-            &[5.0, 6.0],
-        ],
-    );
-}
-
-#[test]
-fn matrix_all_rows_slice() {
-    assert_matrix(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9]
-        ])
-
-        A[.., 1..3]
-        "#,
-        &[
-            &[2.0, 3.0],
-            &[5.0, 6.0],
-            &[8.0, 9.0],
-        ],
-    );
-}
-
-#[test]
-fn matrix_single_row_slice() {
-    assert_matrix(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        A[0, 1..3]
-        "#,
-        &[
-            &[2.0, 3.0],
-        ],
-    );
-}
-
-#[test]
-fn matrix_single_column_slice() {
-    assert_matrix(
-        r#"
-        let A = matrix([
-            [1, 2, 3],
-            [4, 5, 6]
-        ])
-
-        A[0..2, 1]
-        "#,
-        &[
-            &[2.0],
-            &[5.0],
-        ],
-    );
-}
-
-#[test]
-fn list_vector() {
-    assert_vector(
-        r#"
-        [1, 2, 3].vector()
-        "#,
-        &[1.0, 2.0, 3.0],
-    );
-}
-
-#[test]
-fn vector_addition() {
-    assert_vector(
-        r#"
-        [1, 2, 3].vector()
-        +
-        [4, 5, 6].vector()
-        "#,
-        &[5.0, 7.0, 9.0],
-    );
-}
-
-#[test]
-fn vector_subtraction() {
-    assert_vector(
-        r#"
-        [4, 5, 6].vector()
-        -
-        [1, 2, 3].vector()
-        "#,
-        &[3.0, 3.0, 3.0],
-    );
-}
-
-#[test]
-fn vector_scalar_multiplication() {
-    assert_vector(
-        r#"
-        [1, 2, 3].vector()
-        * 2
-        "#,
-        &[2.0, 4.0, 6.0],
-    );
-}
-
-#[test]
-fn scalar_vector_multiplication() {
-    assert_vector(
-        r#"
-        3 *
-        [1, 2, 3].vector()
-        "#,
-        &[3.0, 6.0, 9.0],
-    );
-}
-
-#[test]
-fn vector_dot() {
-    assert_float(
-        r#"
-        [1, 2, 3]
-            .vector()
-            .dot(
+        let a =
+            linalg.matrix([
+                [1, 2, 3],
                 [4, 5, 6]
-                    .vector()
-            )
+            ])
+
+        linalg.shape(a)
+        "#,
+        &[2, 3],
+    );
+}
+
+#[test]
+fn linalg_matrix_rows() {
+    assert_int(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2, 3],
+                [4, 5, 6]
+            ])
+
+        linalg.rows(a)
+        "#,
+        2,
+    );
+}
+
+#[test]
+fn linalg_matrix_cols() {
+    assert_int(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2, 3],
+                [4, 5, 6]
+            ])
+
+        linalg.cols(a)
+        "#,
+        3,
+    );
+}
+
+#[test]
+fn linalg_vector_addition() {
+    assert_vector(
+        r#"
+        import linalg
+
+        let a =
+            linalg.vector([
+                1,
+                2,
+                3
+            ])
+
+        let b =
+            linalg.vector([
+                4,
+                5,
+                6
+            ])
+
+        a + b
+        "#,
+        &[
+            5.0,
+            7.0,
+            9.0,
+        ],
+    );
+}
+
+#[test]
+fn linalg_vector_subtraction() {
+    assert_vector(
+        r#"
+        import linalg
+
+        let a =
+            linalg.vector([
+                5,
+                6,
+                7
+            ])
+
+        let b =
+            linalg.vector([
+                1,
+                2,
+                3
+            ])
+
+        a - b
+        "#,
+        &[
+            4.0,
+            4.0,
+            4.0,
+        ],
+    );
+}
+
+#[test]
+fn linalg_vector_scalar_multiplication() {
+    assert_vector(
+        r#"
+        import linalg
+
+        let a =
+            linalg.vector([
+                1,
+                2,
+                3
+            ])
+
+        a * 2
+        "#,
+        &[
+            2.0,
+            4.0,
+            6.0,
+        ],
+    );
+}
+
+#[test]
+fn linalg_vector_dot_product() {
+    assert_float(
+        r#"
+        import linalg
+
+        let a =
+            linalg.vector([
+                1,
+                2,
+                3
+            ])
+
+        let b =
+            linalg.vector([
+                4,
+                5,
+                6
+            ])
+
+        a @ b
         "#,
         32.0,
     );
 }
 
 #[test]
-fn vector_norm() {
-    assert_float(
+fn linalg_matrix_vector_multiplication() {
+    assert_vector(
         r#"
-        [3, 4]
-            .vector()
-            .norm()
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
+
+        let v =
+            linalg.vector([
+                5,
+                6
+            ])
+
+        a @ v
         "#,
-        5.0,
+        &[
+            17.0,
+            39.0,
+        ],
     );
 }
 
 #[test]
-fn vector_matrix_multiplication() {
+fn linalg_vector_matrix_multiplication() {
     assert_vector(
         r#"
-        let v =
-            [1, 2].vector()
+        import linalg
 
-        let A =
-            matrix([
+        let v =
+            linalg.vector([
+                1,
+                2
+            ])
+
+        let a =
+            linalg.matrix([
                 [3, 4],
                 [5, 6]
             ])
 
-        v @ A
+        v @ a
         "#,
-        &[13.0, 16.0],
+        &[
+            13.0,
+            16.0,
+        ],
     );
 }
 
 #[test]
-fn matrix_vector_multiplication() {
-    assert_vector(
-        r#"
-        let A =
-            matrix([
-                [1, 2],
-                [3, 4]
-            ])
-
-        let v =
-            [5, 6].vector()
-
-        A @ v
-        "#,
-        &[17.0, 39.0],
-    );
-}
-
-#[test]
-fn vector_matrix_dimension_error() {
+fn linalg_matrix_dimension_error() {
     assert_error_kind(
-        r#"
-        let v =
-            [1, 2, 3].vector()
-
-        let A =
-            matrix([
-                [1, 2],
-                [3, 4]
-            ])
-
-        v @ A
-        "#,
-        ErrorKind::Runtime,
-    );
-}
-
-#[test]
-fn matrix_vector_dimension_error() {
-    assert_error_kind(
-        r#"
-        let A =
-            matrix([
-                [1, 2, 3],
-                [4, 5, 6]
-            ])
-
-        let v =
-            [1, 2].vector()
-
-        A @ v
-        "#,
-        ErrorKind::Runtime,
-    );
-}
-
-#[test]
-fn vector_equality() {
-    common::assert_bool(
-        r#"
-        [1, 2, 3].vector()
-        ==
-        [1, 2, 3].vector()
-        "#,
-        true,
-    );
-}
-
-#[test]
-fn vector_inequality() {
-    common::assert_bool(
-        r#"
-        [1, 2, 3].vector()
-        ==
-        [1, 2, 4].vector()
-        "#,
-        false,
-    );
-}
-
-#[test]
-fn matrix_equality() {
-    common::assert_bool(
-        r#"
-        matrix([
-            [1, 2],
-            [3, 4]
-        ])
-        ==
-        matrix([
-            [1, 2],
-            [3, 4]
-        ])
-        "#,
-        true,
-    );
-}
-
-#[test]
-fn matrix_inequality() {
-    common::assert_bool(
-        r#"
-        matrix([
-            [1, 2],
-            [3, 4]
-        ])
-        ==
-        matrix([
-            [1, 2],
-            [3, 5]
-        ])
-        "#,
-        false,
-    );
-}
-
-#[test]
-fn matrix_property_shape() {
-    assert_list(
         r#"
         import linalg
 
-        let A =
-            matrix([
-                [1, 2, 3],
-                [4, 5, 6]
+        let a =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
             ])
 
-        A.shape
+        let b =
+            linalg.matrix([
+                [1, 2, 3]
+            ])
+
+        a @ b
         "#,
-        &[2, 3],
+        ErrorKind::Runtime,
     );
 }
 
+#[test]
+fn linalg_vector_dimension_error() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        let a =
+            linalg.vector([
+                1,
+                2,
+                3
+            ])
+
+        let b =
+            linalg.vector([
+                4,
+                5
+            ])
+
+        a @ b
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_matrix_addition_dimension_error() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        let a =
+            linalg.matrix([
+                [1, 2]
+            ])
+
+        let b =
+            linalg.matrix([
+                [1, 2],
+                [3, 4]
+            ])
+
+        a + b
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_vector_rejects_non_numeric_value() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        linalg.vector([
+            1,
+            "hello",
+            3
+        ])
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_vector_requires_list() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        linalg.vector(1)
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_matrix_requires_list() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        linalg.matrix(1)
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_matrix_rejects_non_numeric_value() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        linalg.matrix([
+            [1, 2],
+            [3, "hello"]
+        ])
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_matrix_rejects_ragged_rows() {
+    assert_error_kind(
+        r#"
+        import linalg
+
+        linalg.matrix([
+            [1, 2],
+            [3]
+        ])
+        "#,
+        ErrorKind::Runtime,
+    );
+}
+
+#[test]
+fn linalg_linear_regression() {
+    assert_matrix(
+        r#"
+        import linalg
+
+        let X =
+            linalg.matrix([
+                [1, 1],
+                [1, 2],
+                [1, 3],
+                [1, 4]
+            ])
+
+        let y =
+            linalg.matrix([
+                [2],
+                [4],
+                [6],
+                [8]
+            ])
+
+        linalg.linear_regression(X, y)["coefficients"]
+        "#,
+        &[
+            &[0.0],
+            &[2.0],
+        ],
+    );
+}
 
 
 
