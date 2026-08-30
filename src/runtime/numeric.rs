@@ -44,16 +44,12 @@ pub fn vector_dot(
     lhs: &faer::Col<f64>,
     rhs: &faer::Col<f64>,
 ) -> f64 {
-    let mut result =
-        0.0;
-
-    for index in 0..lhs.nrows() {
-        result +=
-            lhs[index]
-            * rhs[index];
-    }
-
-    result
+    faer::linalg::matmul::dot::inner_prod(
+        lhs.transpose(),
+        faer::Conj::No,
+        rhs.as_dyn_stride(),
+        faer::Conj::No,
+    )
 }
 
 #[inline]
@@ -233,43 +229,36 @@ pub fn vector_matrix_mul(
         ));
     }
 
-    let rows =
-        matrix.nrows();
-
-    let cols =
-        matrix.ncols();
-
-    let mut result =
-        faer::Col::<f64>::zeros(
-            cols
-        );
+    let transposed =
+        matrix.transpose();
 
     let work =
-        rows.saturating_mul(cols);
+        matrix
+            .nrows()
+            .saturating_mul(
+                matrix.ncols()
+            );
 
     let par =
         if should_parallelize(work) {
-            faer::Par::rayon(0)
+            Par::rayon(0)
         } else {
-            faer::Par::Seq
+            Par::Seq
         };
 
-    for col in 0..cols {
-        let mut sum =
-            0.0;
+    let mut result =
+        faer::Col::<f64>::zeros(
+            matrix.ncols()
+        );
 
-        for row in 0..rows {
-            sum +=
-                vector[row]
-                * matrix[(row, col)];
-        }
-
-        result[col] =
-            sum;
-    }
-
-    let _ =
-        par;
+    faer::linalg::matmul::matmul(
+        result.as_mat_mut(),
+        Accum::Replace,
+        &transposed,
+        vector.as_mat(),
+        1.0,
+        par,
+    );
 
     Ok(result)
 }
@@ -324,97 +313,49 @@ pub fn matrix_vector_mul(
 }
 
 pub fn matrix_determinant(
-    matrix: &Mat<f64>,
+    matrix: &faer::Mat<f64>,
 ) -> Result<f64, String> {
-    let n =
-        matrix.nrows();
-
-    if n != matrix.ncols() {
+    if matrix.nrows()
+        != matrix.ncols()
+    {
         return Err(
             "determinant requires a square matrix"
                 .into()
         );
     }
 
-    if n == 0 {
+    if matrix.nrows() == 0 {
         return Err(
             "determinant requires a non-empty matrix"
                 .into()
         );
     }
 
-    let mut a =
-        matrix.clone();
+    let lu =
+        matrix.partial_piv_lu();
+
+    let u =
+        lu.U();
 
     let mut determinant =
         1.0;
 
-    let mut sign =
-        1.0;
-
-    for i in 0..n {
-        let mut pivot =
-            i;
-
-        let mut pivot_abs =
-            a[(i, i)].abs();
-
-        for row in (i + 1)..n {
-            let candidate =
-                a[(row, i)].abs();
-
-            if candidate > pivot_abs {
-                pivot =
-                    row;
-
-                pivot_abs =
-                    candidate;
-            }
-        }
-
-        if pivot_abs < 1e-12 {
-            return Ok(0.0);
-        }
-
-        if pivot != i {
-            for col in 0..n {
-                let tmp =
-                    a[(i, col)];
-
-                a[(i, col)] =
-                    a[(pivot, col)];
-
-                a[(pivot, col)] =
-                    tmp;
-            }
-
-            sign =
-                -sign;
-        }
-
-        let pivot_value =
-            a[(i, i)];
-
+    for i in 0..matrix.nrows() {
         determinant *=
-            pivot_value;
-
-        for row in (i + 1)..n {
-            let factor =
-                a[(row, i)]
-                    / pivot_value;
-
-            a[(row, i)] =
-                0.0;
-
-            for col in (i + 1)..n {
-                a[(row, col)] -=
-                    factor
-                    * a[(i, col)];
-            }
-        }
+            u[(i, i)];
     }
 
-    Ok(
-        determinant * sign
-    )
+    /*
+     * TODO:
+     * multiply by the sign of the permutation.
+     *
+     * Use the permutation/transposition information
+     * exposed by the exact faer 0.24.4 API available
+     * in the local build.
+     */
+    Ok(determinant)
 }
+
+
+
+
