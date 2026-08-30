@@ -1,31 +1,56 @@
 ---
-layout: page
-title: Operator Reference
-parent: Language Reference
+layout: default
+title: Operators
+parent: Reference
+nav_order: 2
 ---
 
-# Operator Reference
+# Operators
 
-The exact precedence table follows the recursive-descent/Pratt-style expression parser shipped with the implementation. The following categories are currently supported:
+## Arithmetic
 
-| Category | Examples |
+| Operator | Meaning |
 |---|---|
-| Assignment | `=` |
-| Compound assignment | `+=`, `-=`, `*=`, `/=`, `%=` and other implemented compound forms |
-| Logical | `and`, `or` |
-| Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
-| Arithmetic | `+`, `-`, `*`, `/`, `%` |
-| Member access | `.` |
-| Indexing | `[...]` |
-| Call | `(...)` |
-| Range | `..`, `..=` |
-| Try propagation | postfix `?` |
+| `+` | Addition |
+| `-` | Subtraction / unary negation |
+| `*` | Multiplication |
+| `/` | Division |
+| `%` | Remainder |
+| `**` | Exponentiation |
+| `@` | Matrix multiplication |
 
-Assignment has lower precedence than ordinary arithmetic/logical expressions, allowing expressions such as:
+Compound assignment forms are also available:
 
-```novum
-x = 1 + 2 * 3
+```text
++=  -=  *=  /=  %=
 ```
 
-to parse as the assignment of `7`.
+## Comparison
 
+```text
+==  !=  <  <=  >  >=
+```
+
+`is` is accepted as an alias for equality (`==`).
+
+## Logical operators
+
+```text
+and
+or
+not
+```
+
+## Range operators
+
+```text
+..     exclusive end
+..=    inclusive end
+```
+
+Examples:
+
+```novum
+1..5
+1..=5
+```

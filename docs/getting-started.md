@@ -1,83 +1,118 @@
 ---
-layout: page
+layout: default
 title: Getting Started
+nav_order: 2
 ---
 
 # Getting Started
 
-## Running Novum from the repository
+This page covers the minimum workflow for running Novum programs.
 
-The normal development workflow is based on Cargo:
+## Build from source
+
+The repository contains the Novum binary as a Cargo package. From the repository root, build the optimized executable with:
+
+```bash
+cargo build --release
+```
+
+The resulting binary is `target/release/novum`. During development, `cargo run` can be used in the same way:
+
+```bash
+cargo run -- program.nv
+```
+
+## Command-line usage
+
+The executable accepts an optional source file and a small set of diagnostic flags.
 
 ```text
-cargo run
-cargo test
+novum [OPTIONS] [FILE]
 ```
 
-To execute a source file, pass it to the Novum executable. A typical project layout is:
+The currently implemented options are:
 
-```text
-project/
-├── Cargo.toml
-└── samples/
-    ├── test1.nv
-    └── test2.nv
+| Option | Meaning |
+|---|---|
+| `-h`, `--help` | Show command-line help |
+| `-V`, `--version` | Show the Novum version |
+| `-l`, `--lexer` | Show lexer output while running |
+| `-p`, `--parser` | Show parser output while running |
+| `-a`, `--all` | Show lexer and parser output |
+
+Run a file with:
+
+```bash
+novum program.nv
 ```
 
-```text
-cargo run samples/test1.nv
+Without a file, Novum starts its REPL:
+
+```bash
+novum
 ```
 
-The entry file participates in file-relative module resolution, so a file can import another `.nv` file located beside it:
+## The REPL
+
+The VM REPL provides command history and normal line editing. The implemented editing keys include:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate history |
+| `←` / `→` | Move the cursor |
+| `Home` / `End` | Move to the line boundary |
+| `Shift+Enter` | Insert a new line |
+| `Ctrl+Enter` | Insert a new line |
+| `Ctrl-C` | Cancel the current input |
+| `Ctrl-D` | Exit |
+
+The REPL also recognizes `help`, `quit`, and `exit` as interactive commands.
+
+## Your first program
+
+Create `hello.nv`:
 
 ```novum
-import test2
+let name = "Novum"
+print("Hello, " + name + "!")
 ```
 
-## REPL
+Then run it:
 
-The REPL evaluates source strings directly and supports interactive expression evaluation. The repository implementation uses the same lexer, parser, and evaluator pipeline as file execution, while file execution additionally tracks the current source path for relative imports.
+```bash
+novum hello.nv
+```
 
-## A first program
+## A small data example
 
 ```novum
-x = 10
-y = 20
+let values = [1, 2, 3, 4, 5]
 
-print(x + y)
+let doubled =
+    values
+        .map(|x| x * 2)
+        .collect()
+
+print(doubled)
 ```
 
-Variable declaration and assignment use the same basic syntax. `let` is available when explicit declaration syntax or public declaration semantics are desired, but ordinary assignment-style binding is intentionally concise.
+This example already demonstrates the central Novum workflow: create a value, transform it with a lambda, and materialize a lazy pipeline only when a final list is needed.
 
-## Functions are lambdas
+## Importing a standard library module
 
-Novum represents user-defined functions with lambda expressions:
+Standard-library modules are loaded through `import`:
 
 ```novum
-add = |x, y| x + y
+import math
 
-add(2, 3)
+print(math.sqrt(16))
 ```
 
-A lambda can have a block body:
+Aliases are supported:
 
 ```novum
-factorial = |n| {
-    if n <= 1 {
-        1
-    } else {
-        n * factorial(n - 1)
-    }
-}
+import math as m
+print(m.pi())
 ```
 
-## Errors and `?`
-
-Novum has `Option` and `Result`-style values and supports postfix `?` propagation. For example:
-
-```novum
-let text = fs.read(path("data.txt"))?
-```
-
-A `Result.Err(...)` or `Option.None` can propagate out of an expression that permits the corresponding control flow.
-
+See the [Standard Library](stdlib/index.md) reference for the complete module catalog.

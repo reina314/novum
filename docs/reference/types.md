@@ -1,41 +1,34 @@
 ---
-layout: page
-title: Runtime Types
-parent: Language Reference
+layout: default
+title: Types and Values
+parent: Reference
+nav_order: 1
 ---
 
-# Runtime Types
+# Types and Values
 
-The evaluator operates on a `Value` enum containing the language's runtime value categories. A parallel `Type` representation is used for expected-type helpers and diagnostics.
+Novum is dynamically evaluated. The runtime still distinguishes values by explicit type categories.
 
-Important runtime distinctions include:
+| Type | Typical construction |
+|---|---|
+| `Int` | `42` |
+| `Float` | `3.14` |
+| `Bool` | `true`, `false` |
+| `Str` | `"hello"` |
+| `List` | `[1, 2, 3]` |
+| `Dict` | `{ "key": value }` |
+| `Tuple` | `(x, y)` |
+| `Range` | `1..5`, `1..=5` |
+| `Vector` | `linalg.vector([...])` or list `.vector()` |
+| `Matrix` | `linalg.matrix([[...]])` |
+| `Series` | `series(name, list)` |
+| `DataFrame` | `dataframe([series, ...])` |
+| `Iterator` | `iter(value)` or iterator methods |
+| `Option` | `Option.Some(...)`, `Option.None` |
+| `Result` | `Result.Ok(...)`, `Result.Err(...)` |
+| `Object` | struct/class construction |
+| `Path` | `path(string)` |
+| `Null` | `null` |
+| `Unit` | operations with no useful value |
 
-```text
-Int
-Float
-Bool
-Str
-List
-Dict
-Tuple
-Range
-Vector
-Matrix
-Iterator
-Object
-Class
-Module
-Function
-Builtin
-EnumValue
-EnumConstructor
-Option / Result representations
-Path
-Unit
-Null
-```
-
-Lists, vectors, and matrices use value-based equality. Objects are reference-backed runtime values and use their object semantics rather than collection pointer identity.
-
-The exact `Type` enum should be kept synchronized with `Value`; helper APIs should prefer generic type conversion (`FromValue` / the generic expectation layer) over a separate hand-written helper for every type.
-
+Use `typeof(value)` when runtime inspection is needed.
