@@ -295,7 +295,8 @@ impl Vm {
             );
         }
 
-        let module = self.repl_module.clone();
+        let module =
+            self.repl_module.clone();
 
         self.frames.push(
             CallFrame {
@@ -326,8 +327,26 @@ impl Vm {
                 Ok(value)
             }
 
-            Err(error) =>
-                Err(error),
+            Err(error) => {
+                /*
+                * Preserve the REPL frame even when execution fails.
+                *
+                * The current execution environment belongs to the
+                * REPL and must survive ordinary expression errors.
+                */
+                if let Some(frame) =
+                    self.frames.pop()
+                {
+                    self.repl_locals =
+                        frame.locals;
+
+                    self.repl_cells =
+                        frame.cells
+                            .unwrap_or_default();
+                }
+
+                Err(error)
+            }
         }
     }
 

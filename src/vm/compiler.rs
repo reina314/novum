@@ -81,6 +81,13 @@ enum LValue {
     },
 }
 
+pub struct CompilerCheckpoint {
+    next_local_slot: u16,
+    locals: HashMap<String, u16>,
+    upvalues: HashMap<String, u16>,
+    upvalue_specs: Vec<UpvalueSpec>,
+}
+
 struct LoopContext {
     break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
@@ -140,6 +147,47 @@ impl Compiler {
             loops: Vec::new(),
             function_parameters: Vec::new(),
         }
+    }
+
+    pub fn checkpoint(
+        &self,
+    ) -> CompilerCheckpoint {
+        let scope =
+            self.scope.borrow();
+
+        CompilerCheckpoint {
+            next_local_slot:
+                self.next_local_slot,
+
+            locals:
+                scope.locals.clone(),
+
+            upvalues:
+                scope.upvalues.clone(),
+
+            upvalue_specs:
+                scope.upvalue_specs.clone(),
+        }
+    }
+
+    pub fn rollback(
+        &mut self,
+        checkpoint: CompilerCheckpoint,
+    ) {
+        self.next_local_slot =
+            checkpoint.next_local_slot;
+
+        let mut scope =
+            self.scope.borrow_mut();
+
+        scope.locals =
+            checkpoint.locals;
+
+        scope.upvalues =
+            checkpoint.upvalues;
+
+        scope.upvalue_specs =
+            checkpoint.upvalue_specs;
     }
 
     fn declare_local(

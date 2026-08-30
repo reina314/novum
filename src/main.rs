@@ -546,6 +546,18 @@ fn run_repl_line(
         );
     }
 
+    /*
+     * ------------------------------------------------------------
+     * REPL compiler transaction
+     * ------------------------------------------------------------
+     *
+     * Compilation mutates the Compiler's lexical environment.
+     * A later runtime error must therefore be able to restore
+     * that environment.
+     */
+    let checkpoint =
+        compiler.checkpoint();
+
     let chunk =
         match compiler
             .compile_program(
@@ -556,6 +568,10 @@ fn run_repl_line(
                 Rc::new(chunk),
 
             Err(error) => {
+                compiler.rollback(
+                    checkpoint
+                );
+
                 error.display(
                     source
                 );
@@ -580,6 +596,16 @@ fn run_repl_line(
         Ok(_) => {}
 
         Err(error) => {
+            /*
+             * Compilation succeeded, but execution failed.
+             *
+             * The runtime environment must not commit the
+             * bindings introduced by this failed REPL line.
+             */
+            compiler.rollback(
+                checkpoint
+            );
+
             error.display(
                 source
             );
