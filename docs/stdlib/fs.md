@@ -95,6 +95,6 @@ let entries = fs.list_dir("data")
 
 On success the result is `Result.Ok(List[Str])`, containing entry names rather than full paths.
 
-{% callout warning %}
-The filesystem module performs real I/O. Paths and contents are interpreted by the operating system running Novum.
-{% endcallout %}
+> **Warning**
+>
+> The filesystem module performs real I/O. Paths and contents are interpreted by the operating system running Novum.
