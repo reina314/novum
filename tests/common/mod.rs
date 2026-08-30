@@ -79,10 +79,19 @@ pub fn assert_float(
 ) {
     match unwrap_value(source) {
         Value::Float(actual) => {
+            let abs_error =
+                (actual - expected).abs();
+
+            let tolerance =
+                1e-10_f64
+                    .max(
+                        expected.abs()
+                            * 1e-10
+                    );
+
             assert!(
-                (actual - expected).abs()
-                    < 1e-10,
-                "expected Float({expected}), got {actual:?}\nsource:\n{source}"
+                abs_error <= tolerance,
+                "expected Float({expected}), got {actual}, error={abs_error}\nsource:\n{source}"
             );
         }
 

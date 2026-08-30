@@ -324,7 +324,10 @@ pub fn matrix_determinant(
         );
     }
 
-    if matrix.nrows() == 0 {
+    let n =
+        matrix.nrows();
+
+    if n == 0 {
         return Err(
             "determinant requires a non-empty matrix"
                 .into()
@@ -340,22 +343,64 @@ pub fn matrix_determinant(
     let mut determinant =
         1.0;
 
-    for i in 0..matrix.nrows() {
+    for i in 0..n {
         determinant *=
             u[(i, i)];
     }
 
     /*
-     * TODO:
-     * multiply by the sign of the permutation.
+     * faer returns P such that:
      *
-     * Use the permutation/transposition information
-     * exposed by the exact faer 0.24.4 API available
-     * in the local build.
+     *     P A = L U
+     *
+     * Therefore:
+     *
+     *     det(A) = det(P) * det(U)
+     *
+     * because det(P) = det(P^-1) = ±1.
+     *
+     * The permutation sign is:
+     *
+     *     (-1)^(n - number_of_cycles)
      */
+    let permutation =
+        lu.P();
+
+    let (forward, _) =
+        permutation.arrays();
+
+    let mut visited =
+        vec![false; n];
+
+    let mut cycles =
+        0usize;
+
+    for start in 0..n {
+        if visited[start] {
+            continue;
+        }
+
+        cycles += 1;
+
+        let mut current =
+            start;
+
+        while !visited[current] {
+            visited[current] =
+                true;
+
+            current =
+                forward[current];
+        }
+    }
+
+    if (n - cycles) % 2 == 1 {
+        determinant =
+            -determinant;
+    }
+
     Ok(determinant)
 }
-
 
 
 
