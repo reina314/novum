@@ -903,10 +903,6 @@ impl Vm {
                     let names =
                         metadata.names.clone();
 
-                    self.stack.truncate(
-                        receiver_index
-                    );
-
                     let result =
                         self.invoke_method(
                             receiver,
@@ -914,6 +910,10 @@ impl Vm {
                             args,
                             &names,
                         )?;
+
+                    self.stack.truncate(
+                        receiver_index
+                    );
 
                     self.push(result);
                 }
@@ -970,16 +970,16 @@ impl Vm {
                     let names =
                         metadata.names.clone();
 
-                    self.stack.truncate(
-                        function_index
-                    );
-
                     let result =
                         self.call_value(
                             callable,
                             args,
                             &names,
                         )?;
+
+                    self.stack.truncate(
+                        function_index
+                    );
 
                     self.push(result);
                 }
@@ -1620,20 +1620,52 @@ impl Vm {
                     *
                     *     [object, index, value]
                     *
-                    * IndexSet consumes all three values and leaves the
-                    * assigned value on the stack.
+                    * IndexSet must not mutate the stack until the assignment
+                    * itself has succeeded. This guarantees that a failed
+                    * indexed assignment does not corrupt the VM stack.
                     */
-                    
-                    let value =
-                        self.pop()?;
 
-                    let index =
-                        self.pop()?;
+                    if self.stack.len() < 3 {
+                        return Err(
+                            Error::new(
+                                ErrorKind::Runtime,
+                                "indexed assignment stack underflow",
+                                None,
+                            )
+                        );
+                    }
+
+                    let object_index =
+                        self.stack.len() - 3;
+
+                    let index_index =
+                        self.stack.len() - 2;
+
+                    let value_index =
+                        self.stack.len() - 1;
 
                     let object =
-                        self.pop()?;
+                        self.stack[
+                            object_index
+                        ]
+                        .clone();
 
-                    match (object, index) {
+                    let index =
+                        self.stack[
+                            index_index
+                        ]
+                        .clone();
+
+                    let value =
+                        self.stack[
+                            value_index
+                        ]
+                        .clone();
+
+                    match (
+                        object,
+                        index,
+                    ) {
                         (
                             Value::List(list),
                             Value::Int(index),
@@ -1648,6 +1680,10 @@ impl Vm {
                                 );
                             }
 
+                            /*
+                            * Perform the fallible mutation first.
+                            * The stack remains unchanged if set() fails.
+                            */
                             list.set(
                                 index as usize,
                                 value.clone(),
@@ -1660,22 +1696,56 @@ impl Vm {
                                 )
                             })?;
 
-                            self.push(value);
+                            /*
+                            * Assignment succeeded.
+                            *
+                            * [object, index, value]
+                            *        ↓
+                            *        [value]
+                            */
+                            self.stack.truncate(
+                                object_index
+                            );
+
+                            self.push(
+                                value
+                            );
                         }
 
                         (
                             Value::Dict(dict),
                             Value::Str(key),
                         ) => {
+                            /*
+                            * HashMap::insert() itself cannot fail here,
+                            * so the mutation can be committed directly.
+                            */
                             dict.borrow_mut().insert(
                                 key.as_str().to_owned(),
                                 value.clone(),
                             );
 
-                            self.push(value);
+                            /*
+                            * [object, index, value]
+                            *        ↓
+                            *        [value]
+                            */
+                            self.stack.truncate(
+                                object_index
+                            );
+
+                            self.push(
+                                value
+                            );
                         }
 
-                        _ => {
+                        (
+                            _,
+                            _,
+                        ) => {
+                            /*
+                            * No stack mutation has occurred.
+                            */
                             return Err(
                                 Error::new(
                                     ErrorKind::Type,
@@ -1688,170 +1758,50 @@ impl Vm {
                 }
 
                 OpCode::FieldGet => {
-                    let field =
-                        self.pop()?;
-
-                    let object =
-                        self.pop()?;
-
-                    let Value::Str(
-                        field
-                    ) = field
-                    else {
+                    if self.stack.len() < 2 {
                         return Err(
                             Error::new(
-                                ErrorKind::Type,
-                                "field name must be Str",
+                                ErrorKind::Runtime,
+                                "field access stack underflow",
                                 None,
                             )
                         );
-                    };
+                    }
 
-                    match object {
-                        Value::Enum(
-                            enum_def
-                        ) => {
-                            let variant =
-                                enum_def
-                                    .variant(
-                                        field.as_str()
-                                    )
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            ErrorKind::Name,
-                                            format!(
-                                                "enum '{}' has no variant '{}'",
-                                                enum_def.name(),
-                                                field,
-                                            ),
-                                            None,
-                                        )
-                                    })?;
+                    let field =
+                        match self.stack[
+                            self.stack.len() - 1
+                        ].clone() {
+                            Value::Str(field) =>
+                                field,
 
-                            let arity =
-                                variant.arity();
-
-                            if arity == 0 {
-                                self.push(
-                                    Value::EnumValue(
-                                        Rc::new(
-                                            EnumValue::new(
-                                                enum_def.name(),
-                                                field.as_str(),
-                                                Vec::new(),
-                                            )
-                                        )
-                                    )
-                                );
-                            } else {
-                                self.push(
-                                    Value::EnumConstructor(
-                                        EnumConstructor::new(
-                                            enum_def,
-                                            field.as_str(),
-                                        )
+                            _ => {
+                                return Err(
+                                    Error::new(
+                                        ErrorKind::Type,
+                                        "field name must be Str",
+                                        None,
                                     )
                                 );
                             }
-                        }
+                        };
 
-                        Value::Struct(
-                            value
-                        ) => {
-                            let field =
-                                value
-                                    .get_field(
-                                        field.as_str()
-                                    )
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            ErrorKind::Name,
-                                            format!(
-                                                "{} has no field '{}'",
-                                                value.type_name(),
-                                                field,
-                                            ),
-                                            None,
-                                        )
-                                    })?;
+                    let object =
+                        self.stack[
+                            self.stack.len() - 2
+                        ].clone();
 
-                            self.push(field);
-                        }
+                    let value =
+                        self.resolve_field(
+                            object,
+                            field.as_str(),
+                        )?;
 
-                        Value::Object(
-                            object
-                        ) => {
-                            let value =
-                                object
-                                    .borrow()
-                                    .get_field(
-                                        field.as_str()
-                                    )
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            ErrorKind::Name,
-                                            format!(
-                                                "{} has no field '{}'",
-                                                object.borrow().type_name(),
-                                                field,
-                                            ),
-                                            None,
-                                        )
-                                    })?;
+                    self.stack.truncate(
+                        self.stack.len() - 2
+                    );
 
-                            self.push(value);
-                        }
-
-                        Value::Module(module) => {
-                            let value =
-                                module
-                                    .borrow()
-                                    .get_field(
-                                        field.as_str()
-                                    )
-                                    .ok_or_else(|| {
-                                        Error::new(
-                                            ErrorKind::Name,
-                                            format!(
-                                                "{} has no field '{}'",
-                                                module.borrow().name(),
-                                                field,
-                                            ),
-                                            None,
-                                        )
-                                    })?;
-
-                            self.push(value);
-                        }
-
-                        Value::Series(series) => {
-                            self.push(
-                                self.get_series_property(
-                                    series,
-                                    field.as_str(),
-                                )?
-                            );
-                        }
-
-                        Value::DataFrame(df) => {
-                            self.push(
-                                self.get_dataframe_property(
-                                    df,
-                                    field.as_str(),
-                                )?
-                            );
-                        }
-
-                        _ => {
-                            return Err(
-                                Error::new(
-                                    ErrorKind::Type,
-                                    "unsupported field access",
-                                    None,
-                                )
-                            );
-                        }
-                    }
+                    self.push(value);
                 }
 
                 OpCode::FieldSet => {
@@ -3152,6 +3102,135 @@ impl Vm {
                             "DataFrame has no property '{}'",
                             name
                         ),
+                        None,
+                    )
+                )
+            }
+        }
+    }
+
+    fn resolve_field(
+        &self,
+        object: Value,
+        field: &str,
+    ) -> Result<Value> {
+        match object {
+            Value::Enum(enum_def) => {
+                let variant =
+                    enum_def
+                        .variant(field)
+                        .ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::Name,
+                                format!(
+                                    "enum '{}' has no variant '{}'",
+                                    enum_def.name(),
+                                    field,
+                                ),
+                                None,
+                            )
+                        })?;
+
+                let arity =
+                    variant.arity();
+
+                if arity == 0 {
+                    Ok(
+                        Value::EnumValue(
+                            Rc::new(
+                                EnumValue::new(
+                                    enum_def.name(),
+                                    field,
+                                    Vec::new(),
+                                )
+                            )
+                        )
+                    )
+                } else {
+                    Ok(
+                        Value::EnumConstructor(
+                            EnumConstructor::new(
+                                enum_def,
+                                field,
+                            )
+                        )
+                    )
+                }
+            }
+
+            Value::Struct(value) => {
+                value
+                    .get_field(field)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "{} has no field '{}'",
+                                value.type_name(),
+                                field,
+                            ),
+                            None,
+                        )
+                    })
+            }
+
+            Value::Object(object) => {
+                let object_ref =
+                    object.borrow();
+
+                object_ref
+                    .get_field(field)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "{} has no field '{}'",
+                                object_ref.type_name(),
+                                field,
+                            ),
+                            None,
+                        )
+                    })
+            }
+
+            Value::Module(module) => {
+                let module_ref =
+                    module.borrow();
+
+                module_ref
+                    .get_field(field)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Name,
+                            format!(
+                                "{} has no field '{}'",
+                                module_ref.name(),
+                                field,
+                            ),
+                            None,
+                        )
+                    })
+            }
+
+            Value::Series(series) => {
+                self.get_series_property(
+                    series,
+                    field,
+                )
+            }
+
+            Value::DataFrame(df) => {
+                self.get_dataframe_property(
+                    df,
+                    field,
+                )
+            }
+
+            _ => {
+                Err(
+                    Error::new(
+                        ErrorKind::Type,
+                        "unsupported field access",
                         None,
                     )
                 )
