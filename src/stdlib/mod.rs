@@ -7,7 +7,7 @@ pub mod process;
 pub mod csv;
 pub mod json;
 pub mod linalg;
-// pub mod stats;
+pub mod stats;
 
 // For internal use
 pub mod util;
@@ -37,8 +37,7 @@ pub fn load_module(
         "csv" => Some(csv::module()),
         "json" => Some(json::module()),
         "linalg" => Some(linalg::module()),
-
-        // "stats" => Some(stats::module()),
+        "stats" => Some(stats::module()),
 
         _ => None,
     }

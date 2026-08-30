@@ -54,6 +54,12 @@ impl Series {
     fn ensure_numeric(
         &self,
     ) -> Result<Vec<f64>, String> {
+        self.numeric_values()
+    }
+
+    pub fn numeric_values(
+        &self,
+    ) -> Result<Vec<f64>, String> {
         let mut values =
             Vec::with_capacity(
                 self.data.len()
@@ -61,11 +67,17 @@ impl Series {
 
         for value in &self.data {
             match value {
-                Value::Int(v) =>
-                    values.push(*v as f64),
+                Value::Int(v) => {
+                    values.push(
+                        *v as f64
+                    );
+                }
 
-                Value::Float(v) =>
-                    values.push(*v),
+                Value::Float(v) => {
+                    values.push(
+                        *v
+                    );
+                }
 
                 Value::Null => {
                     // Missing values are omitted.
@@ -580,68 +592,6 @@ impl Series {
             )
         )
     }
-
-    // pub fn value_counts(
-    //     &self,
-    // ) -> Result<DataFrame, String> {
-    //     let mut values =
-    //         Vec::<Value>::new();
-
-    //     let mut counts =
-    //         Vec::<Value>::new();
-
-    //     for value in &self.data {
-    //         let mut found =
-    //             None;
-
-    //         for i in 0..values.len() {
-    //             if Value::eq_values(
-    //                 value,
-    //                 &values[i],
-    //             )? {
-    //                 found = Some(i);
-    //                 break;
-    //             }
-    //         }
-
-    //         match found {
-    //             Some(index) => {
-    //                 if let Value::Int(count) =
-    //                     &mut counts[index]
-    //                 {
-    //                     *count += 1;
-    //                 }
-    //             }
-
-    //             None => {
-    //                 values.push(
-    //                     value.clone()
-    //                 );
-
-    //                 counts.push(
-    //                     Value::Int(1)
-    //                 );
-    //             }
-    //         }
-    //     }
-
-    //     DataFrame::from_series(
-    //         vec![
-    //             Rc::new(
-    //                 Series::new(
-    //                     "value",
-    //                     values,
-    //                 )
-    //             ),
-    //             Rc::new(
-    //                 Series::new(
-    //                     "count",
-    //                     counts,
-    //                 )
-    //             ),
-    //         ]
-    //     )
-    // }
 
     pub fn fmt_display(
         &self,
