@@ -3,6 +3,10 @@ use faer::{
     Mat,
     Par,
     Scale,
+    linalg::solvers::{
+        Solve,
+        SolveLstsq,
+    },
 };
 
 pub const PARALLEL_THRESHOLD: usize =
@@ -401,6 +405,69 @@ pub fn matrix_determinant(
 
     Ok(determinant)
 }
+
+pub fn matrix_solve(
+    lhs: &faer::Mat<f64>,
+    rhs: &faer::Mat<f64>,
+) -> Result<faer::Mat<f64>, String> {
+    if lhs.nrows()
+        != lhs.ncols()
+    {
+        return Err(
+            "solve requires a square coefficient matrix"
+                .into()
+        );
+    }
+
+    if lhs.nrows()
+        != rhs.nrows()
+    {
+        return Err(format!(
+            "solve dimension mismatch: A has {} rows, rhs has {} rows",
+            lhs.nrows(),
+            rhs.nrows(),
+        ));
+    }
+
+    let lu =
+        lhs.partial_piv_lu();
+
+    Ok(
+        lu.solve(rhs)
+    )
+}
+
+pub fn matrix_solve_lstsq(
+    lhs: &faer::Mat<f64>,
+    rhs: &faer::Mat<f64>,
+) -> Result<faer::Mat<f64>, String> {
+    if lhs.nrows()
+        != rhs.nrows()
+    {
+        return Err(format!(
+            "least-squares dimension mismatch: A has {} rows, rhs has {} rows",
+            lhs.nrows(),
+            rhs.nrows(),
+        ));
+    }
+
+    if lhs.nrows() == 0
+        || lhs.ncols() == 0
+    {
+        return Err(
+            "least-squares solve requires a non-empty matrix"
+                .into()
+        );
+    }
+
+    let qr =
+        lhs.col_piv_qr();
+
+    Ok(
+        qr.solve_lstsq(rhs)
+    )
+}
+
 
 
 

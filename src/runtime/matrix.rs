@@ -5,7 +5,11 @@ use std::{
 };
 
 use faer::{
-    linalg::solvers::DenseSolveCore,
+    linalg::solvers::{
+        DenseSolveCore,
+        Solve,
+        SolveLstsq,
+    },
     Mat,
 };
 
@@ -555,6 +559,34 @@ impl Matrix {
                 data:
                     lu.inverse(),
             }
+        )
+    }
+
+    pub fn solve(
+        &self,
+        rhs: &Self,
+    ) -> Result<Self, String> {
+        Ok(
+            Self::from_faer(
+                crate::runtime::numeric::matrix_solve(
+                    &self.data,
+                    &rhs.data,
+                )?
+            )
+        )
+    }
+
+    pub fn solve_lstsq(
+        &self,
+        rhs: &Self,
+    ) -> Result<Self, String> {
+        Ok(
+            Self::from_faer(
+                crate::runtime::numeric::matrix_solve_lstsq(
+                    &self.data,
+                    &rhs.data,
+                )?
+            )
         )
     }
 
