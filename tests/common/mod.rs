@@ -340,7 +340,10 @@ pub fn assert_vector(
                         });
 
                 assert!(
-                    (actual - expected_value).abs()
+                    (
+                        actual
+                        - expected_value
+                    ).abs()
                         < 1e-10,
                     "vector element {index}: expected {expected_value}, got {actual}\nsource:\n{source}"
                 );
