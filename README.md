@@ -1,4 +1,4 @@
-# Novum v0.17.0-beta.3
+# Novum v0.17.0
 
 ### For quick ideas, quick experiments, and quick results.
 
