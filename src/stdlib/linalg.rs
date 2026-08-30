@@ -19,7 +19,7 @@ pub fn module() -> ModuleRef {
     module.set_exported(
         "vector",
         Value::Builtin(
-            matrix
+            vector
         ),
     );
 
@@ -150,36 +150,6 @@ fn value_to_matrix_rows(
 
         result.push(
             converted
-        );
-    }
-
-    Ok(result)
-}
-
-fn value_to_vector_values(
-    value: &Value,
-) -> Result<Vec<f64>, String> {
-    let values =
-        match value {
-            Value::List(list) =>
-                list.iter_cloned(),
-
-            other => {
-                return Err(format!(
-                    "vector() expects List, got {}",
-                    other.type_name()
-                ));
-            }
-        };
-
-    let mut result =
-        Vec::with_capacity(
-            values.len()
-        );
-
-    for value in values {
-        result.push(
-            value_to_f64(&value)?
         );
     }
 
