@@ -1,79 +1,103 @@
 use super::Matrix;
 
 use std::{
+    cell::RefCell,
     fmt,
     rc::Rc,
-    cell::RefCell,
 };
 
-pub type VectorRef = Rc<RefCell<Vector>>;
+pub type VectorRef =
+    Rc<RefCell<Vector>>;
 
 #[derive(Clone)]
 pub struct Vector {
-    data: Vec<f64>,
+    data: faer::Col<f64>,
 }
 
 impl Vector {
     pub fn new(
         data: Vec<f64>,
     ) -> Self {
-        Self { data }
+        Self {
+            data:
+                faer::Col::from_fn(
+                    data.len(),
+                    |i| data[i],
+                ),
+        }
     }
 
     pub fn from_slice(
         data: &[f64],
     ) -> Self {
-        Self {
-            data: data.to_vec(),
-        }
+        Self::new(
+            data.to_vec()
+        )
     }
 
     pub fn shape(
         &self,
     ) -> (usize, usize) {
-        (self.len(), 1)
+        (
+            self.len(),
+            1,
+        )
     }
 
     pub fn len(
         &self,
     ) -> usize {
-        self.data.len()
+        self.data.nrows()
     }
 
     pub fn get(
         &self,
         index: usize,
     ) -> Option<f64> {
-        self.data.get(index).copied()
+        if index >= self.data.nrows() {
+            return None;
+        }
+
+        Some(
+            self.data[index]
+        )
     }
 
     pub fn as_slice(
         &self,
     ) -> &[f64] {
-        &self.data
+        self.data
+            .try_as_col_major()
+            .expect(
+                "Vector must be contiguous",
+            )
+            .as_slice()
     }
 
     pub fn into_vec(
         self,
     ) -> Vec<f64> {
         self.data
+            .iter()
+            .copied()
+            .collect()
     }
 
     pub fn norm(
         &self,
     ) -> f64 {
-        self.data
-            .iter()
-            .map(|x| x * x)
-            .sum::<f64>()
-            .sqrt()
+        crate::runtime::numeric::vector_norm(
+            &self.data
+        )
     }
 
     pub fn dot(
         &self,
         other: &Self,
     ) -> Result<f64, String> {
-        if self.len() != other.len() {
+        if self.len()
+            != other.len()
+        {
             return Err(format!(
                 "dot product requires vectors of equal length, got {} and {}",
                 self.len(),
@@ -82,11 +106,10 @@ impl Vector {
         }
 
         Ok(
-            self.data
-                .iter()
-                .zip(other.data.iter())
-                .map(|(a, b)| a * b)
-                .sum()
+            crate::runtime::numeric::vector_dot(
+                &self.data,
+                &other.data,
+            )
         )
     }
 
@@ -94,7 +117,9 @@ impl Vector {
         &self,
         other: &Self,
     ) -> Result<Self, String> {
-        if self.len() != other.len() {
+        if self.len()
+            != other.len()
+        {
             return Err(format!(
                 "vector addition requires equal lengths, got {} and {}",
                 self.len(),
@@ -103,13 +128,13 @@ impl Vector {
         }
 
         Ok(
-            Self::new(
-                self.data
-                    .iter()
-                    .zip(other.data.iter())
-                    .map(|(a, b)| a + b)
-                    .collect()
-            )
+            Self {
+                data:
+                    crate::runtime::numeric::vector_add(
+                        &self.data,
+                        &other.data,
+                    ),
+            }
         )
     }
 
@@ -117,7 +142,9 @@ impl Vector {
         &self,
         other: &Self,
     ) -> Result<Self, String> {
-        if self.len() != other.len() {
+        if self.len()
+            != other.len()
+        {
             return Err(format!(
                 "vector subtraction requires equal lengths, got {} and {}",
                 self.len(),
@@ -126,13 +153,13 @@ impl Vector {
         }
 
         Ok(
-            Self::new(
-                self.data
-                    .iter()
-                    .zip(other.data.iter())
-                    .map(|(a, b)| a - b)
-                    .collect()
-            )
+            Self {
+                data:
+                    crate::runtime::numeric::vector_sub(
+                        &self.data,
+                        &other.data,
+                    ),
+            }
         )
     }
 
@@ -140,34 +167,29 @@ impl Vector {
         &self,
         scalar: f64,
     ) -> Self {
-        Self::new(
-            self.data
-                .iter()
-                .map(|x| x * scalar)
-                .collect()
-        )
+        Self {
+            data:
+                crate::runtime::numeric::vector_scale(
+                    &self.data,
+                    scalar,
+                ),
+        }
     }
 
     pub fn to_column_matrix(
         &self,
     ) -> Matrix {
-        Matrix::from_vec(
-            self.len(),
-            1,
-            self.data.clone(),
+        Matrix::from_column_vector(
+            &self.data
         )
-        .expect("vector has valid matrix shape")
     }
 
     pub fn to_row_matrix(
         &self,
     ) -> Matrix {
-        Matrix::from_vec(
-            1,
-            self.len(),
-            self.data.clone(),
+        Matrix::from_row_vector(
+            &self.data
         )
-        .expect("vector has valid matrix shape")
     }
 
     pub fn from_matrix_column(
@@ -181,23 +203,19 @@ impl Vector {
             ));
         }
 
-        let mut data =
-            Vec::with_capacity(
-                matrix.rows()
-            );
-
-        for row in 0..matrix.rows() {
-            let value =
-                matrix
-                    .get(row, 0)
-                    .ok_or_else(|| {
-                        "matrix index out of bounds".to_owned()
-                    })?;
-
-            data.push(value);
-        }
-
-        Ok(Self::new(data))
+        Ok(
+            Self {
+                data:
+                    faer::Col::from_fn(
+                        matrix.rows(),
+                        |row| {
+                            matrix
+                                .as_faer()
+                                [(row, 0)]
+                        },
+                    ),
+            }
+        )
     }
 
     pub fn from_matrix_row(
@@ -211,23 +229,33 @@ impl Vector {
             ));
         }
 
-        let mut data =
-            Vec::with_capacity(
-                matrix.cols()
-            );
+        Ok(
+            Self {
+                data:
+                    faer::Col::from_fn(
+                        matrix.cols(),
+                        |col| {
+                            matrix
+                                .as_faer()
+                                [(0, col)]
+                        },
+                    ),
+            }
+        )
+    }
 
-        for col in 0..matrix.cols() {
-            let value =
-                matrix
-                    .get(0, col)
-                    .ok_or_else(|| {
-                        "matrix index out of bounds".to_owned()
-                    })?;
+    pub(crate) fn as_faer(
+        &self,
+    ) -> &faer::Col<f64> {
+        &self.data
+    }
 
-            data.push(value);
+    pub(crate) fn from_faer(
+        data: faer::Col<f64>,
+    ) -> Self {
+        Self {
+            data,
         }
-
-        Ok(Self::new(data))
     }
 
     pub fn fmt_display(
@@ -236,12 +264,22 @@ impl Vector {
     ) -> fmt::Result {
         write!(f, "(")?;
 
-        for (i, value) in self.as_slice().iter().enumerate() {
+        for (
+            i,
+            value,
+        ) in self.data.iter().enumerate()
+        {
             if i > 0 {
-                write!(f, ", ")?;
+                write!(
+                    f,
+                    ", "
+                )?;
             }
 
-            write!(f, "{value}")?;
+            write!(
+                f,
+                "{value}"
+            )?;
         }
 
         write!(f, ")")
@@ -253,8 +291,16 @@ impl fmt::Debug for Vector {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        f.debug_tuple("Vector")
-            .field(&self.data)
-            .finish()
+        f.debug_tuple(
+            "Vector"
+        )
+        .field(
+            &self
+                .data
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        )
+        .finish()
     }
 }

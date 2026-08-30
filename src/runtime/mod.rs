@@ -15,6 +15,7 @@ pub mod value;
 pub mod path;
 pub mod function;
 pub mod standard;
+pub mod numeric;
 
 
 pub use operator::apply_binop;

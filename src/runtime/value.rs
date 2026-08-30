@@ -446,16 +446,33 @@ impl Value {
                 a.as_slice() == b.as_slice()
             },
 
-            (// recursive element-wise
+            (// element-wise
                 Self::Matrix(a),
                 Self::Matrix(b)
             ) => {
-                let a = a.borrow();
-                let b = b.borrow();
+                let a =
+                    a.borrow();
 
-                a.rows() == b.rows()
-                    && a.cols() == b.cols()
-                    && a.as_slice() == b.as_slice()
+                let b =
+                    b.borrow();
+
+                if a.rows() != b.rows()
+                    || a.cols() != b.cols()
+                {
+                    false
+                } else {
+                    for row in 0..a.rows() {
+                        for col in 0..a.cols() {
+                            if a.get(row, col)
+                                != b.get(row, col)
+                            {
+                                return Ok(false);
+                            }
+                        }
+                    }
+
+                    true
+                }
             },
 
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
