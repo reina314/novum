@@ -1,13 +1,18 @@
 ---
-layout: page
-title: Language Reference
+layout: default
+title: Reference
+nav_order: 5
+has_children: true
+permalink: /reference/
 ---
 
-# Language Reference
+# Reference
 
-- [Grammar-Oriented Summary](grammar.md)
-- [Operator Reference](operators.md)
-- [Callable Semantics](callables.md)
-- [Module Semantics](modules.md)
-- [Runtime Types](types.md)
+The reference section collects compact language facts that are useful while writing programs.
 
+- [Types and runtime values](types.md)
+- [Operators](operators.md)
+- [Calling conventions and named arguments](calls.md)
+- [Iteration at a glance](iteration.md)
+
+For a progressive introduction, start with the [Tutorial](../tutorial/).

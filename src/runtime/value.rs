@@ -1,9 +1,10 @@
 use super::{
     SetRef,
-    FuncRef,
     IteratorRef,
     ObjectRef,
     ClassRef,
+    StructTypeRef,
+    StructValueRef,
     EnumRef,
     EnumValueRef,
     EnumConstructor,
@@ -11,25 +12,221 @@ use super::{
     MatrixRef,
     SeriesRef,
     DataFrameRef,
-    GroupedDataFrameRef,
+    // GroupedDataFrameRef,
     ModuleRef,
     PathRef,
-    BoundMethod,
-    Type,
+    ClosureRef,
+    FunctionRef,
 };
 
 use std::{
     fmt, 
     rc::Rc,
-    cell::RefCell, 
+    cell::{
+        Ref,
+        RefMut,
+        RefCell,
+    }, 
     collections::HashMap, 
 };
 
 pub type StrRef = Rc<String>;
 pub type Tuple = Rc<Vec<Value>>;
-pub type List = Rc<RefCell<Vec<Value>>>;
 pub type Dict = Rc<RefCell<HashMap<String, Value>>>;
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, String>;
+
+#[derive(Debug, Clone)]
+pub struct List {
+    elements:
+        Rc<RefCell<Vec<Value>>>,
+}
+
+impl List {
+    #[inline]
+    pub fn new(
+        elements: Vec<Value>,
+    ) -> Self {
+        Self {
+            elements:
+                Rc::new(
+                    RefCell::new(
+                        elements
+                    )
+                ),
+        }
+    }
+
+    #[inline]
+    pub fn with_capacity(
+        capacity: usize,
+    ) -> Self {
+        Self {
+            elements:
+                Rc::new(
+                    RefCell::new(
+                        Vec::with_capacity(
+                            capacity
+                        )
+                    )
+                ),
+        }
+    }
+
+    #[inline]
+    pub fn len(
+        &self,
+    ) -> usize {
+        self.elements
+            .borrow()
+            .len()
+    }
+
+    #[inline]
+    pub fn is_empty(
+        &self,
+    ) -> bool {
+        self.elements
+            .borrow()
+            .is_empty()
+    }
+
+    #[inline]
+    pub fn get(
+        &self,
+        index: usize,
+    ) -> Option<Value> {
+        self.elements
+            .borrow()
+            .get(index)
+            .cloned()
+    }
+
+    #[inline]
+    pub fn set(
+        &self,
+        index: usize,
+        value: Value,
+    ) -> Result<(), String> {
+        let mut elements =
+            self.elements
+                .borrow_mut();
+
+        let slot =
+            elements
+                .get_mut(index)
+                .ok_or_else(|| {
+                    format!(
+                        "list index out of bounds: {}",
+                        index
+                    )
+                })?;
+
+        *slot =
+            value;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn push(
+        &self,
+        value: Value,
+    ) {
+        self.elements
+            .borrow_mut()
+            .push(value);
+    }
+
+    #[inline]
+    pub fn append(
+        &self,
+        mut values: Vec<Value>,
+    ) {
+        self.elements
+            .borrow_mut()
+            .append(
+                &mut values
+            );
+    }
+
+    #[inline]
+    pub fn extend(
+        &self,
+        values: impl IntoIterator<Item = Value>,
+    ) {
+        self.elements
+            .borrow_mut()
+            .extend(values);
+    }
+
+    #[inline]
+    pub fn iter_cloned(
+        &self,
+    ) -> Vec<Value> {
+        self.elements
+            .borrow()
+            .clone()
+    }
+
+    #[inline]
+    pub fn as_vec(
+        &self,
+    ) -> Ref<'_, Vec<Value>> {
+        self.elements
+            .borrow()
+    }
+
+    #[inline]
+    pub fn as_vec_mut(
+        &self,
+    ) -> RefMut<'_, Vec<Value>> {
+        self.elements
+            .borrow_mut()
+    }
+
+    pub fn repeat(
+        &self,
+        count: usize,
+    ) -> Result<Self, String> {
+        if count == 0 {
+            return Ok(
+                Self::new(
+                    Vec::new()
+                )
+            );
+        }
+
+        let elements =
+            self.elements
+                .borrow();
+
+        let capacity =
+            elements
+                .len()
+                .checked_mul(count)
+                .ok_or_else(|| {
+                    "list repetition size overflow"
+                        .to_string()
+                })?;
+
+        let mut result =
+            Vec::with_capacity(
+                capacity
+            );
+
+        for _ in 0..count {
+            result.extend(
+                elements.iter().cloned()
+            );
+        }
+
+        Ok(
+            Self::new(
+                result
+            )
+        )
+    }
+}
 
 #[derive(Clone)]
 pub enum Value {
@@ -43,15 +240,19 @@ pub enum Value {
     Set(SetRef),
     Dict(Dict),
 
+    StructType(StructTypeRef),
+    Struct(StructValueRef),
+
+    Object(ObjectRef),
+    Class(ClassRef),
+
     Vector(VectorRef),
     Matrix(MatrixRef),
 
     Series(SeriesRef),
     DataFrame(DataFrameRef),
-    GroupedDataFrame(GroupedDataFrameRef),
+    // GroupedDataFrame(GroupedDataFrameRef),
 
-    Object(ObjectRef),
-    Class(ClassRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -62,64 +263,59 @@ pub enum Value {
 
     Range(i64, i64, bool),
     
-    Func(FuncRef),
+    FunctionProto(FunctionRef),
+    Closure(ClosureRef),
     Iterator(IteratorRef),
     Builtin(BuiltinFn),
-
-    BoundMethod(BoundMethod),
     
     Unit,
     Null,
 }
 
 impl Value {
-    pub fn value_type(&self) -> Type {
-        match self {
-            Self::Unit => Type::Unit,
-            Self::Null => Type::Null,
-
-            Self::Int(_) => Type::Int,
-            Self::Float(_) => Type::Float,
-            Self::Bool(_) => Type::Bool,
-            Self::Str(_) => Type::Str,
-
-            Self::Tuple(_) => Type::Tuple,
-            Self::List(_) => Type::List,
-            Self::Set(_) => Type::Set,
-            Self::Dict(_) => Type::Dict,
-
-            Self::Vector(_) => Type::Vector,
-            Self::Matrix(_) => Type::Matrix,
-
-            Self::Series(_) => Type::Series,
-            Self::DataFrame(_) => Type::DataFrame,
-            Self::GroupedDataFrame(_) => Type::GroupedDataFrame,
-
-            Self::Object(_) => Type::Object,
-            Self::Class(_) => Type::Class,
-            Self::Module(_) => Type::Module,
-
-            Self::Enum(_) => Type::Enum,
-            Self::EnumValue(_) => Type::EnumValue,
-            Self::EnumConstructor(_) => Type::EnumConstructor,
-
-            Self::Path(_) => Type::Path,
-            
-            Self::Range(..) => Type::Range,
-
-            Self::Func(_) => Type::Function,
-            Self::Builtin(_) => Type::Builtin,
-            Self::Iterator(_) => Type::Iterator,
-            Self::BoundMethod(_) => Type::BoundMethod,
-        }
-    }
-
     pub fn type_name(&self) -> &'static str {
-        self.value_type().name()
-    }
+        match self {
+            Self::Int(_) => "Int",
+            Self::Float(_) => "Float",
+            Self::Bool(_) => "Bool",
+            Self::Str(_) => "Str",
 
-    pub fn truthy_bool(&self) -> Option<bool> {
-        match self { Self::Bool(v) => Some(*v), _ => None }
+            Self::Tuple(_) => "Tuple",
+            Self::List(_) => "List",
+            Self::Set(_) => "Set",
+            Self::Dict(_) => "Dict",
+
+            Self::StructType(_) => "StructType",
+            Self::Struct(_) => "Struct",
+
+            Self::Object(_) => "Object",
+            Self::Class(_) => "Class",
+
+            Self::Vector(_) => "Vector",
+            Self::Matrix(_) => "Matrix",
+            
+            Self::Series(_) => "Series",
+            Self::DataFrame(_) => "DataFrame",
+            // Self::GroupedDataFrame(_) => "GroupedDataFrame",
+
+            Self::Module(_) => "Module",
+
+            Self::Enum(_) => "Enum",
+            Self::EnumValue(_) => "EnumValue",
+            Self::EnumConstructor(_) => "EnumConstructor",
+
+            Self::Path(_) => "Path",
+
+            Self::Range(..) => "Range",
+
+            Self::FunctionProto(_) => "Function",
+            Self::Closure(_) => "Closure",
+            Self::Builtin(_) => "Builtin",
+            Self::Iterator(_) => "Iterator",
+
+            Self::Unit => "Unit",
+            Self::Null => "Null",
+        }
     }
 
     pub fn negate(self) -> Result<Self, String> {
@@ -141,7 +337,10 @@ impl Value {
         }
     }
 
-    pub fn eq_values(a: &Self, b: &Self) -> Result<bool, String> {
+    pub fn eq_values(
+        a: &Self,
+        b: &Self
+    ) -> Result<bool, String> {
         Ok(match (a, b) {
             (
                 Self::Int(x),
@@ -179,8 +378,10 @@ impl Value {
                 Self::List(x),
                 Self::List(y)
             ) => {
-                let x = x.borrow();
-                let y = y.borrow();
+                let x 
+                    = x.as_vec();
+                let y 
+                    = y.as_vec();
 
                 Self::eq_slices(
                     &x,
@@ -245,30 +446,44 @@ impl Value {
                 a.as_slice() == b.as_slice()
             },
 
-            (// recursive element-wise
+            (// element-wise
                 Self::Matrix(a),
                 Self::Matrix(b)
             ) => {
-                let a = a.borrow();
-                let b = b.borrow();
+                let a =
+                    a.borrow();
 
-                a.rows() == b.rows()
-                    && a.cols() == b.cols()
-                    && a.as_slice() == b.as_slice()
+                let b =
+                    b.borrow();
+
+                if a.rows() != b.rows()
+                    || a.cols() != b.cols()
+                {
+                    false
+                } else {
+                    for row in 0..a.rows() {
+                        for col in 0..a.cols() {
+                            if a.get(row, col)
+                                != b.get(row, col)
+                            {
+                                return Ok(false);
+                            }
+                        }
+                    }
+
+                    true
+                }
             },
 
             (Self::Series(a),Self::Series(b)) => Rc::ptr_eq(a, b),
+
             (Self::DataFrame(a),Self::DataFrame(b),) => Rc::ptr_eq(a, b),
 
-            (Self::Object(x), Self::Object(y)) => Rc::ptr_eq(x, y),
-
-            (Self::Func(x), Self::Func(y)) => Rc::ptr_eq(x, y),
+            // (Self::Object(x), Self::Object(y)) => Rc::ptr_eq(x, y),
 
             (Self::Iterator(_), Self::Iterator(_)) => false,
 
             (Self::Builtin(a), Self::Builtin(b)) => *a as usize == *b as usize,
-            
-            (Self::BoundMethod(_), Self::BoundMethod(_),) => false,
 
             (Self::Range(a1,b1,c1), Self::Range(a2,b2,c2)) => (a1,b1,c1)==(a2,b2,c2),
 
@@ -358,12 +573,16 @@ impl fmt::Debug for Value {
                 write!(f, ")")
             }
 
-            Self::List(v) => write!(f, "{:?}", v.borrow()),
+            Self::List(v) => write!(f, "{:?}", v),
 
             Self::Set(set) => 
             write!(f, "{:?}", set.borrow().values()),
 
             Self::Dict(v) => write!(f, "{:?}", v.borrow()),
+
+            Self::StructType(v) => write!(f, "{}", v),
+
+            Self::Struct(v) => write!(f, "{}", v),
 
             Self::Vector(v) => write!(f, "{:?}", v.borrow()),
 
@@ -373,12 +592,11 @@ impl fmt::Debug for Value {
 
             Self::DataFrame(df) => write!(f, "{:?}", df),
 
-            Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
+            // Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
 
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
 
-            Self::Class(class) => 
-            write!(f, "<class {}>", class.name()),
+            Self::Class(class) => write!(f, "<class {}>", class.name()),
 
             Self::Module(module) => write!(f,"<module {}>",module.borrow().name()),
 
@@ -391,14 +609,14 @@ impl fmt::Debug for Value {
             Self::Path(path) => write!(f, "{:?}", path),
 
             Self::Range(a,b,inclusive) => if *inclusive { write!(f,"{a}..={b}") } else { write!(f,"{a}..{b}") },
-            
-            Self::Func(v) => write!(f, "{v}"),
+
+            Self::FunctionProto(function) => write!(f, "<function arity={}>", function.arity),
+
+            Self::Closure(v) => write!(f, "<closure arity={}>", v.function.arity),
 
             Self::Iterator(_) => write!(f, "<iterator>"),
 
             Self::Builtin(_) => write!(f, "<builtin>"),
-
-            Self::BoundMethod(method) => write!(f, "{:?}", method),
 
             Self::Unit => write!(f, "<unit>"),
             Self::Null => write!(f, "<null>"),
@@ -446,12 +664,17 @@ impl fmt::Display for Value {
             }
 
             Self::List(list) => {
-                let list = list.borrow();
+                let elements =
+                    list.as_vec();
 
                 write!(f, "[")?;
 
-                for (i, value) in list.iter().enumerate() {
-                    if i > 0 {
+                for (
+                    index,
+                    value,
+                ) in elements.iter().enumerate()
+                {
+                    if index > 0 {
                         write!(f, ", ")?;
                     }
 
@@ -517,6 +740,12 @@ impl fmt::Display for Value {
                 write!(f, "}}")
             }
 
+            Self::StructType(v) => 
+                write!(f, "{}", v),
+
+            Self::Struct(v) => 
+                write!(f, "{}", v),
+
             Self::Matrix(matrix) => 
                 matrix.borrow().fmt_display(f),
 
@@ -526,14 +755,12 @@ impl fmt::Display for Value {
             Self::DataFrame(df) =>
                 df.fmt_display(f),
 
-            Self::Object(object) => 
-                object.borrow().fmt_display(f),
+            Self::Object(object) => object.borrow().fmt_display(f),
 
             Self::Class(class) => 
             write!(f, "<class {}>", class.name()),
 
-            Self::Module(module) =>
-                write!(f, "<module {}>", module.borrow().name()),
+            Self::Module(module) => write!(f, "<module {}>", module.borrow().name()),
 
             Self::Enum(definition) =>
                 write!(f, "<enum {}>", definition.name()),
@@ -569,17 +796,15 @@ impl fmt::Display for Value {
                 }
             }
 
-            Self::Func(_) =>
-                write!(f, "<function>"),
+            Self::FunctionProto(function) => write!(f, "<function arity={}", function.arity),
+
+            Self::Closure(v) => write!(f, "<closure arity={}>", v.function.arity),
 
             Self::Builtin(_) =>
                 write!(f, "<builtin>"),
 
             Self::Iterator(_) =>
                 write!(f, "<iterator>"),
-
-            Self::BoundMethod(method) =>
-                write!(f, "{}", method),
 
             _ => write!(f, "{:?}", self),
         }
@@ -608,191 +833,3 @@ fn format_float(value: f64) -> String {
     }
 }
 
-
-pub trait FromValue: Sized {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value>;
-
-    fn expected_type() -> Type;
-}
-
-impl FromValue for i64 {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Int(v) =>
-                Ok(v),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Int
-    }
-}
-
-impl FromValue for bool {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Bool(b) =>
-                Ok(b),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Bool
-    }
-}
-
-impl FromValue for List {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::List(list) =>
-                Ok(list),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::List
-    }
-}
-
-impl FromValue for ClassRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Class(class) =>
-                Ok(class),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Class
-    }
-}
-
-impl FromValue for SetRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Set(value) =>
-                Ok(value),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Set
-    }
-}
-
-impl FromValue for StrRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Str(value) =>
-                Ok(value),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Str
-    }
-}
-
-impl FromValue for VectorRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Vector(vector) =>
-                Ok(vector),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Vector
-    }
-}
-
-impl FromValue for MatrixRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Matrix(matrix) =>
-                Ok(matrix),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Matrix
-    }
-}
-
-impl FromValue for IteratorRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Iterator(iterator) =>
-                Ok(iterator),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Iterator
-    }
-}
-
-impl FromValue for PathRef {
-    fn from_value(
-        value: Value,
-    ) -> Result<Self, Value> {
-        match value {
-            Value::Path(path) =>
-                Ok(path),
-
-            other =>
-                Err(other),
-        }
-    }
-
-    fn expected_type() -> Type {
-        Type::Path
-    }
-}

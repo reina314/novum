@@ -1,9 +1,9 @@
 use crate::{
     runtime::{
         Value,
-        Vector,
         Series,
         SeriesRef,
+        Vector,
     },
     syntax::BinOp,
 };
@@ -583,86 +583,42 @@ fn mul(
             ))
         }
 
-        (// [0] * 5 = [0, 0, 0, 0, 0]
+        (
             Value::List(list),
             Value::Int(count),
         ) => {
             if count < 0 {
                 return Err(
-                    "cannot repeat a list a negative number of times".into()
-                );
-            }
-
-            let list =
-                list.borrow();
-
-            let count =
-                count as usize;
-
-            let mut result =
-                Vec::with_capacity(
-                    list.len()
-                        .checked_mul(count)
-                        .ok_or_else(|| {
-                            "list repetition size overflow"
-                        })?
-                );
-
-            for _ in 0..count {
-                result.extend(
-                    list.iter().cloned()
+                    "cannot repeat a list a negative number of times"
+                        .into()
                 );
             }
 
             Ok(
                 Value::List(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
+                    list.repeat(
+                        count as usize
+                    )?
                 )
             )
         }
 
-        (// 5 * [0] = [0, 0, 0, 0, 0] 
+        (
             Value::Int(count),
             Value::List(list),
         ) => {
             if count < 0 {
                 return Err(
-                    "cannot repeat a list a negative number of times".into()
-                );
-            }
-
-            let list =
-                list.borrow();
-
-            let count =
-                count as usize;
-
-            let mut result =
-                Vec::with_capacity(
-                    list.len()
-                        .checked_mul(count)
-                        .ok_or_else(|| {
-                            "list repetition size overflow"
-                        })?
-                );
-
-            for _ in 0..count {
-                result.extend(
-                    list.iter().cloned()
+                    "cannot repeat a list a negative number of times"
+                        .into()
                 );
             }
 
             Ok(
                 Value::List(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
+                    list.repeat(
+                        count as usize
+                    )?
                 )
             )
         }
@@ -1107,95 +1063,40 @@ fn matmul(
 ) -> Result<Value, String> {
     match (lhs, rhs) {
         (
-            Value::Vector(a),
-            Value::Vector(b),
+            Value::Vector(lhs),
+            Value::Vector(rhs),
         ) => {
+            let lhs =
+                lhs.borrow();
+
+            let rhs =
+                rhs.borrow();
+
             let result =
-                a.borrow()
-                    .dot(
-                        &b.borrow()
-                    )?;
+                lhs.dot(&rhs)?;
 
             Ok(
                 Value::Float(result)
             )
         }
-        
+
         (
-            Value::Matrix(a),
-            Value::Matrix(b),
+            Value::Matrix(lhs),
+            Value::Matrix(rhs),
         ) => {
-            let a = a.borrow();
-            let b = b.borrow();
+            let lhs =
+                lhs.borrow();
+
+            let rhs =
+                rhs.borrow();
 
             let result =
-                a.matmul(&b)?;
-
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
-
-        (
-            Value::Vector(vector),
-            Value::Matrix(matrix),
-        ) => {
-            let vector =
-                vector.borrow();
-
-            let matrix =
-                matrix.borrow();
-
-            if vector.len()
-                != matrix.rows()
-            {
-                return Err(format!(
-                    "vector-matrix multiplication dimension mismatch: vector length {}, matrix shape ({}, {})",
-                    vector.len(),
-                    matrix.rows(),
-                    matrix.cols(),
-                ));
-            }
-
-            let mut result =
-                vec![
-                    0.0;
-                    matrix.cols()
-                ];
-
-            for c in 0..matrix.cols() {
-                let mut sum =
-                    0.0;
-
-                for r in 0..matrix.rows() {
-                    let v =
-                        vector
-                            .get(r)
-                            .expect(
-                                "vector index out of bounds"
-                            );
-
-                    let m =
-                        matrix
-                            .get(r, c)
-                            .expect(
-                                "matrix index out of bounds"
-                            );
-
-                    sum += v * m;
-                }
-
-                result[c] = sum;
-            }
+                lhs.matmul(&rhs)?;
 
             Ok(
-                Value::Vector(
+                Value::Matrix(
                     Rc::new(
-                        RefCell::new(
-                            Vector::new(result)
-                        )
+                        RefCell::new(result)
                     )
                 )
             )
@@ -1211,64 +1112,61 @@ fn matmul(
             let vector =
                 vector.borrow();
 
-            if matrix.cols()
-                != vector.len()
-            {
-                return Err(format!(
-                    "matrix-vector multiplication dimension mismatch: matrix shape ({}, {}), vector length {}",
-                    matrix.rows(),
-                    matrix.cols(),
-                    vector.len(),
-                ));
-            }
-
-            let mut result =
-                vec![
-                    0.0;
-                    matrix.rows()
-                ];
-
-            for r in 0..matrix.rows() {
-                let mut sum =
-                    0.0;
-
-                for c in 0..matrix.cols() {
-                    let m =
-                        matrix
-                            .get(r, c)
-                            .expect(
-                                "matrix index out of bounds"
-                            );
-
-                    let v =
-                        vector
-                            .get(c)
-                            .expect(
-                                "vector index out of bounds"
-                            );
-
-                    sum += m * v;
-                }
-
-                result[r] = sum;
-            }
+            let result =
+                crate::runtime::numeric::
+                    matrix_vector_mul(
+                        matrix.as_faer(),
+                        vector.as_faer(),
+                    )?;
 
             Ok(
                 Value::Vector(
                     Rc::new(
                         RefCell::new(
-                            Vector::new(result)
+                            Vector::from_faer(
+                                result
+                            )
                         )
                     )
                 )
             )
         }
 
-        (a, b) => {
+        (
+            Value::Vector(vector),
+            Value::Matrix(matrix),
+        ) => {
+            let vector =
+                vector.borrow();
+
+            let matrix =
+                matrix.borrow();
+
+            let result =
+                crate::runtime::numeric::
+                    vector_matrix_mul(
+                        vector.as_faer(),
+                        matrix.as_faer(),
+                    )?;
+
+            Ok(
+                Value::Vector(
+                    Rc::new(
+                        RefCell::new(
+                            Vector::from_faer(
+                                result
+                            )
+                        )
+                    )
+                )
+            )
+        }
+
+        (lhs, rhs) => {
             Err(format!(
                 "'@' expects Matrix or Vector, got {} and {}",
-                a.type_name(),
-                b.type_name()
+                lhs.type_name(),
+                rhs.type_name(),
             ))
         }
     }

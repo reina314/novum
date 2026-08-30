@@ -1,16 +1,24 @@
 use std::{
+    cell::RefCell,
     fmt,
     rc::Rc,
-    cell::RefCell,
 };
 
-pub type MatrixRef = Rc<RefCell<Matrix>>;
+use faer::{
+    linalg::solvers::{
+        DenseSolveCore,
+        Solve,
+        SolveLstsq,
+    },
+    Mat,
+};
 
-#[derive(Clone)]
+pub type MatrixRef =
+    Rc<RefCell<Matrix>>;
+
+#[derive(Clone, Debug)]
 pub struct Matrix {
-    rows: usize,
-    cols: usize,
-    data: Vec<f64>,
+    data: Mat<f64>,
 }
 
 impl Matrix {
@@ -19,26 +27,48 @@ impl Matrix {
         cols: usize,
         data: Vec<f64>,
     ) -> Result<Self, String> {
-        if rows == 0 || cols == 0 {
+        if rows == 0
+            || cols == 0
+        {
             return Err(
                 "matrix dimensions must be non-zero"
                     .into()
             );
         }
 
-        if data.len() != rows * cols {
+        let expected =
+            rows.checked_mul(cols)
+                .ok_or_else(|| {
+                    "matrix dimensions overflow"
+                        .to_string()
+                })?;
+
+        if data.len()
+            != expected
+        {
             return Err(format!(
                 "invalid matrix data length: expected {}, got {}",
-                rows * cols,
+                expected,
                 data.len()
             ));
         }
 
-        Ok(Self {
-            rows,
-            cols,
-            data,
-        })
+        let matrix =
+            Mat::from_fn(
+                rows,
+                cols,
+                |row, col| {
+                    data[
+                        row * cols + col
+                    ]
+                },
+            );
+
+        Ok(
+            Self {
+                data: matrix,
+            }
+        )
     }
 
     pub fn from_rows(
@@ -46,11 +76,13 @@ impl Matrix {
     ) -> Result<Self, String> {
         if rows.is_empty() {
             return Err(
-                "matrix must not be empty".into()
+                "matrix must not be empty"
+                    .into()
             );
         }
 
-        let cols = rows[0].len();
+        let cols =
+            rows[0].len();
 
         if cols == 0 {
             return Err(
@@ -60,7 +92,9 @@ impl Matrix {
         }
 
         if rows.iter()
-            .any(|row| row.len() != cols)
+            .any(|row| {
+                row.len() != cols
+            })
         {
             return Err(
                 "matrix must be rectangular"
@@ -68,15 +102,22 @@ impl Matrix {
             );
         }
 
-        let data: Vec<f64> =
-            rows.into_iter()
-                .flatten()
-                .collect();
+        let nrows =
+            rows.len();
 
-        Self::new(
-            data.len() / cols,
-            cols,
-            data,
+        let data =
+            Mat::from_fn(
+                nrows,
+                cols,
+                |row, col| {
+                    rows[row][col]
+                },
+            );
+
+        Ok(
+            Self {
+                data,
+            }
         )
     }
 
@@ -85,41 +126,153 @@ impl Matrix {
         cols: usize,
         data: Vec<f64>,
     ) -> Result<Self, String> {
-        if rows.checked_mul(cols) != Some(data.len()) {
+        let expected =
+            rows.checked_mul(cols)
+                .ok_or_else(|| {
+                    "matrix dimensions overflow"
+                        .to_string()
+                })?;
+
+        if expected != data.len() {
             return Err(format!(
                 "matrix data length mismatch: shape ({}, {}) requires {} elements, got {}",
                 rows,
                 cols,
-                rows.saturating_mul(cols),
+                expected,
                 data.len(),
             ));
         }
 
-        Ok(
-            Self {
+        let matrix =
+            Mat::from_fn(
                 rows,
                 cols,
-                data,
+                |row, col| {
+                    data[
+                        row * cols + col
+                    ]
+                },
+            );
+
+        Ok(
+            Self {
+                data: matrix,
             }
         )
     }
 
-    pub fn rows(&self) -> usize {
-        self.rows
+    pub(crate) fn from_faer(
+        data: Mat<f64>,
+    ) -> Self {
+        Self {
+            data,
+        }
     }
 
-    pub fn cols(&self) -> usize {
-        self.cols
+    pub(crate) fn from_column_vector(
+        vector: &faer::Col<f64>,
+    ) -> Self {
+        Self {
+            data:
+                Mat::from_fn(
+                    vector.nrows(),
+                    1,
+                    |row, _| {
+                        vector[row]
+                    },
+                ),
+        }
     }
 
-    pub fn shape(&self) -> (usize, usize) {
-        (self.rows, self.cols)
+    pub(crate) fn from_row_vector(
+        vector: &faer::Col<f64>,
+    ) -> Self {
+        Self {
+            data:
+                Mat::from_fn(
+                    1,
+                    vector.nrows(),
+                    |_, col| {
+                        vector[col]
+                    },
+                ),
+        }
+    }
+
+    pub(crate) fn as_faer(
+        &self,
+    ) -> &Mat<f64> {
+        &self.data
+    }
+
+    pub fn rows(
+        &self,
+    ) -> usize {
+        self.data.nrows()
+    }
+
+    pub fn cols(
+        &self,
+    ) -> usize {
+        self.data.ncols()
+    }
+
+    pub fn shape(
+        &self,
+    ) -> (usize, usize) {
+        (
+            self.rows(),
+            self.cols(),
+        )
+    }
+
+    pub fn get(
+        &self,
+        row: usize,
+        col: usize,
+    ) -> Option<f64> {
+        if row >= self.rows()
+            || col >= self.cols()
+        {
+            return None;
+        }
+
+        Some(
+            self.data[
+                (row, col)
+            ]
+        )
+    }
+
+    pub fn set(
+        &mut self,
+        row: usize,
+        col: usize,
+        value: f64,
+    ) -> Result<(), String> {
+        if row >= self.rows()
+            || col >= self.cols()
+        {
+            return Err(format!(
+                "matrix index out of bounds: ({}, {})",
+                row,
+                col
+            ));
+        }
+
+        self.data[
+            (row, col)
+        ] = value;
+
+        Ok(())
     }
 
     pub fn trace(
         &self,
     ) -> Result<f64, String> {
-        if self.rows() != self.cols() {
+        if self.rows()
+            != self.cols()
+        {
             return Err(format!(
                 "trace requires a square matrix, got shape ({}, {})",
                 self.rows(),
@@ -132,17 +285,51 @@ impl Matrix {
 
         for i in 0..self.rows() {
             result +=
-                self.get(i, i)
-                    .expect(
-                        "matrix index out of bounds"
-                    );
+                self.data[
+                    (i, i)
+                ];
         }
 
         Ok(result)
     }
 
-    pub fn as_slice(&self) -> &[f64] {
-        &self.data
+    pub fn approx_eq(
+        &self,
+        rhs: &Self,
+        abs_tol: f64,
+        rel_tol: f64,
+    ) -> bool {
+        if self.shape()
+            != rhs.shape()
+        {
+            return false;
+        }
+
+        for row in 0..self.rows() {
+            for col in 0..self.cols() {
+                let a =
+                    self.data[
+                        (row, col)
+                    ];
+
+                let b =
+                    rhs.data[
+                        (row, col)
+                    ];
+
+                let diff =
+                    (a - b).abs();
+
+                if diff >
+                    abs_tol
+                        + rel_tol * b.abs()
+                {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     pub fn slice(
@@ -156,12 +343,13 @@ impl Matrix {
             || col_start > col_end
         {
             return Err(
-                "invalid matrix slice range".into()
+                "invalid matrix slice range"
+                    .into()
             );
         }
 
-        if row_end > self.rows
-            || col_end > self.cols
+        if row_end > self.rows()
+            || col_end > self.cols()
         {
             return Err(format!(
                 "matrix slice out of bounds: rows {}..{}, cols {}..{} for shape {:?}",
@@ -177,7 +365,8 @@ impl Matrix {
             || col_start == col_end
         {
             return Err(
-                "matrix slice must not be empty".into()
+                "matrix slice must not be empty"
+                    .into()
             );
         }
 
@@ -187,94 +376,34 @@ impl Matrix {
         let cols =
             col_end - col_start;
 
-        let mut data =
-            Vec::with_capacity(rows * cols);
-
-        for r in row_start..row_end {
-            for c in col_start..col_end {
-                data.push(
+        let data =
+            Mat::from_fn(
+                rows,
+                cols,
+                |row, col| {
                     self.data[
-                        r * self.cols + c
+                        (
+                            row_start + row,
+                            col_start + col,
+                        )
                     ]
-                );
+                },
+            );
+
+        Ok(
+            Self {
+                data,
             }
-        }
-
-        Ok(Self {
-            rows,
-            cols,
-            data,
-        })
-    }
-
-    pub fn get(
-        &self,
-        row: usize,
-        col: usize,
-    ) -> Option<f64> {
-        if row >= self.rows
-            || col >= self.cols
-        {
-            return None;
-        }
-
-        Some(
-            self.data[
-                row * self.cols + col
-            ]
         )
-    }
-
-    pub fn set(
-        &mut self,
-        row: usize,
-        col: usize,
-        value: f64,
-    ) -> Result<(), String> {
-        if row >= self.rows
-            || col >= self.cols
-        {
-            return Err(format!(
-                "matrix index out of bounds: ({}, {})",
-                row,
-                col
-            ));
-        }
-
-        self.data[
-            row * self.cols + col
-        ] = value;
-
-        Ok(())
-    }
-
-    pub fn approx_eq(
-        &self,
-        rhs: &Self,
-        abs_tol: f64,
-        rel_tol: f64,
-    ) -> bool {
-        if self.shape() != rhs.shape() {
-            return false;
-        }
-
-        self.data
-            .iter()
-            .zip(rhs.data.iter())
-            .all(|(a, b)| {
-                let diff = (a - b).abs();
-
-                diff <=
-                    abs_tol
-                    + rel_tol * b.abs()
-            })
     }
 
     pub fn add(
         &self,
         rhs: &Self,
     ) -> Result<Self, String> {
-        if self.shape() != rhs.shape() {
+        if self.shape()
+            != rhs.shape()
+        {
             return Err(format!(
                 "cannot add matrices with shapes {:?} and {:?}",
                 self.shape(),
@@ -282,25 +411,24 @@ impl Matrix {
             ));
         }
 
-        let data =
-            self.data
-                .iter()
-                .zip(rhs.data.iter())
-                .map(|(a, b)| a + b)
-                .collect();
-
-        Ok(Self {
-            rows: self.rows,
-            cols: self.cols,
-            data,
-        })
+        Ok(
+            Self {
+                data:
+                    crate::runtime::numeric::matrix_add(
+                        &self.data,
+                        &rhs.data,
+                    )?,
+            }
+        )
     }
 
     pub fn sub(
         &self,
         rhs: &Self,
     ) -> Result<Self, String> {
-        if self.shape() != rhs.shape() {
+        if self.shape()
+            != rhs.shape()
+        {
             return Err(format!(
                 "cannot subtract matrices with shapes {:?} and {:?}",
                 self.shape(),
@@ -308,25 +436,24 @@ impl Matrix {
             ));
         }
 
-        let data =
-            self.data
-                .iter()
-                .zip(rhs.data.iter())
-                .map(|(a, b)| a - b)
-                .collect();
-
-        Ok(Self {
-            rows: self.rows,
-            cols: self.cols,
-            data,
-        })
+        Ok(
+            Self {
+                data:
+                    crate::runtime::numeric::matrix_sub(
+                        &self.data,
+                        &rhs.data,
+                    )?,
+            }
+        )
     }
 
     pub fn elementwise_mul(
         &self,
         rhs: &Self,
     ) -> Result<Self, String> {
-        if self.shape() != rhs.shape() {
+        if self.shape()
+            != rhs.shape()
+        {
             return Err(format!(
                 "element-wise multiplication requires equal shapes: {:?} and {:?}",
                 self.shape(),
@@ -334,18 +461,15 @@ impl Matrix {
             ));
         }
 
-        let data =
-            self.data
-                .iter()
-                .zip(rhs.data.iter())
-                .map(|(a, b)| a * b)
-                .collect();
-
-        Ok(Self {
-            rows: self.rows,
-            cols: self.cols,
-            data,
-        })
+        Ok(
+            Self {
+                data:
+                    crate::runtime::numeric::matrix_elementwise_mul(
+                        &self.data,
+                        &rhs.data,
+                    ),
+            }
+        )
     }
 
     pub fn scalar_mul(
@@ -353,13 +477,11 @@ impl Matrix {
         scalar: f64,
     ) -> Self {
         Self {
-            rows: self.rows,
-            cols: self.cols,
-
-            data: self.data
-                .iter()
-                .map(|x| x * scalar)
-                .collect(),
+            data:
+                crate::runtime::numeric::matrix_scale(
+                    &self.data,
+                    scalar,
+                ),
         }
     }
 
@@ -367,7 +489,9 @@ impl Matrix {
         &self,
         rhs: &Self,
     ) -> Result<Self, String> {
-        if self.cols != rhs.rows {
+        if self.cols()
+            != rhs.rows()
+        {
             return Err(format!(
                 "cannot matrix-multiply shapes {:?} and {:?}",
                 self.shape(),
@@ -375,255 +499,106 @@ impl Matrix {
             ));
         }
 
-        let mut data =
-            vec![
-                0.0;
-                self.rows * rhs.cols
-            ];
-
-        for i in 0..self.rows {
-            for k in 0..self.cols {
-                let a =
-                    self.data[
-                        i * self.cols + k
-                    ];
-
-                for j in 0..rhs.cols {
-                    data[
-                        i * rhs.cols + j
-                    ] += a * rhs.data[
-                        k * rhs.cols + j
-                    ];
-                }
+        Ok(
+            Self {
+                data:
+                    crate::runtime::numeric::matrix_matmul(
+                        &self.data,
+                        &rhs.data,
+                    )?,
             }
-        }
-
-        Ok(Self {
-            rows: self.rows,
-            cols: rhs.cols,
-            data,
-        })
+        )
     }
 
-    pub fn transpose(&self) -> Self {
-        let mut data =
-            vec![
-                0.0;
-                self.rows * self.cols
-            ];
-
-        for r in 0..self.rows {
-            for c in 0..self.cols {
-                data[
-                    c * self.rows + r
-                ] =
-                    self.data[
-                        r * self.cols + c
-                    ];
-            }
-        }
-
+    pub fn transpose(
+        &self,
+    ) -> Self {
         Self {
-            rows: self.cols,
-            cols: self.rows,
-            data,
+            data:
+                self.data
+                    .transpose()
+                    .to_owned(),
         }
     }
 
     pub fn determinant(
         &self,
     ) -> Result<f64, String> {
-        if self.rows != self.cols {
+        if self.rows()
+            != self.cols()
+        {
             return Err(
                 "determinant requires a square matrix"
                     .into()
             );
         }
 
-        let n = self.rows;
-        let mut a = self.data.clone();
-
-        let mut determinant = 1.0;
-
-        for i in 0..n {
-            let mut pivot = i;
-
-            for r in (i + 1)..n {
-                if a[
-                    r * n + i
-                ].abs()
-                    > a[
-                        pivot * n + i
-                    ].abs()
-                {
-                    pivot = r;
-                }
-            }
-
-            let pivot_value =
-                a[pivot * n + i];
-
-            if pivot_value.abs() < 1e-12 {
-                return Ok(0.0);
-            }
-
-            if pivot != i {
-                for c in 0..n {
-                    a.swap(
-                        i * n + c,
-                        pivot * n + c,
-                    );
-                }
-
-                determinant = -determinant;
-            }
-
-            let pivot_value =
-                a[i * n + i];
-
-            determinant *= pivot_value;
-
-            for r in (i + 1)..n {
-                let factor =
-                    a[r * n + i]
-                    / pivot_value;
-
-                for c in i..n {
-                    a[r * n + c]
-                        -= factor
-                            * a[
-                                i * n + c
-                            ];
-                }
-            }
-        }
-
-        Ok(determinant)
+        crate::runtime::numeric::matrix_determinant(
+            &self.data
+        )
     }
 
     pub fn inverse(
         &self,
     ) -> Result<Self, String> {
-        if self.rows != self.cols {
+        if self.rows()
+            != self.cols()
+        {
             return Err(
                 "inverse requires a square matrix"
                     .into()
             );
         }
 
-        let n = self.rows;
-        let width = n * 2;
+        let lu =
+            self.data
+                .partial_piv_lu();
 
-        let mut a =
-            vec![0.0; n * width];
-
-        for r in 0..n {
-            for c in 0..n {
-                a[r * width + c] =
-                    self.data[
-                        r * n + c
-                    ];
-
-                a[
-                    r * width + n + c
-                ] =
-                    if r == c {
-                        1.0
-                    } else {
-                        0.0
-                    };
+        Ok(
+            Self {
+                data:
+                    lu.inverse(),
             }
-        }
+        )
+    }
 
-        for i in 0..n {
-            let mut pivot = i;
+    pub fn solve(
+        &self,
+        rhs: &Self,
+    ) -> Result<Self, String> {
+        Ok(
+            Self::from_faer(
+                crate::runtime::numeric::matrix_solve(
+                    &self.data,
+                    &rhs.data,
+                )?
+            )
+        )
+    }
 
-            for r in (i + 1)..n {
-                if a[
-                    r * width + i
-                ].abs()
-                    > a[
-                        pivot * width + i
-                    ].abs()
-                {
-                    pivot = r;
-                }
-            }
-
-            if a[
-                pivot * width + i
-            ].abs() < 1e-12 {
-                return Err(
-                    "matrix is singular and cannot be inverted"
-                        .into()
-                );
-            }
-
-            if pivot != i {
-                for c in 0..width {
-                    a.swap(
-                        i * width + c,
-                        pivot * width + c,
-                    );
-                }
-            }
-
-            let pivot_value =
-                a[i * width + i];
-
-            for c in 0..width {
-                a[i * width + c]
-                    /= pivot_value;
-            }
-
-            for r in 0..n {
-                if r == i {
-                    continue;
-                }
-
-                let factor =
-                    a[r * width + i];
-
-                for c in 0..width {
-                    a[r * width + c]
-                        -= factor
-                            * a[
-                                i * width + c
-                            ];
-                }
-            }
-        }
-
-        let mut data =
-            vec![0.0; n * n];
-
-        for r in 0..n {
-            for c in 0..n {
-                data[
-                    r * n + c
-                ] =
-                    a[
-                        r * width + n + c
-                    ];
-            }
-        }
-
-        Ok(Self {
-            rows: n,
-            cols: n,
-            data,
-        })
+    pub fn solve_lstsq(
+        &self,
+        rhs: &Self,
+    ) -> Result<Self, String> {
+        Ok(
+            Self::from_faer(
+                crate::runtime::numeric::matrix_solve_lstsq(
+                    &self.data,
+                    &rhs.data,
+                )?
+            )
+        )
     }
 
     pub fn to_rows(
         &self,
     ) -> Vec<Vec<f64>> {
-        (0..self.rows)
-            .map(|r| {
-                (0..self.cols)
-                    .map(|c| {
+        (0..self.rows())
+            .map(|row| {
+                (0..self.cols())
+                    .map(|col| {
                         self.data[
-                            r * self.cols + c
+                            (row, col)
                         ]
                     })
                     .collect()
@@ -641,10 +616,6 @@ impl Matrix {
         let cols =
             self.cols();
 
-        // --------------------------------------------------
-        // Empty matrix
-        // --------------------------------------------------
-
         if rows == 0 {
             return write!(
                 f,
@@ -652,68 +623,54 @@ impl Matrix {
             );
         }
 
-        // --------------------------------------------------
-        // Convert values to strings
-        // --------------------------------------------------
-
         let mut values =
             Vec::with_capacity(rows);
 
-        for r in 0..rows {
-            let mut row =
+        for row in 0..rows {
+            let mut values_row =
                 Vec::with_capacity(cols);
 
-            for c in 0..cols {
-                let value =
-                    self.get(r, c)
-                        .expect(
-                            "matrix index out of bounds"
-                        );
-
-                row.push(
-                    value.to_string()
+            for col in 0..cols {
+                values_row.push(
+                    self.data[
+                        (row, col)
+                    ]
+                    .to_string()
                 );
             }
 
-            values.push(row);
+            values.push(
+                values_row
+            );
         }
-
-        // --------------------------------------------------
-        // Calculate column widths
-        // --------------------------------------------------
 
         let mut widths =
             vec![0usize; cols];
 
-        for c in 0..cols {
-            for r in 0..rows {
-                widths[c] =
-                    widths[c]
+        for col in 0..cols {
+            for row in 0..rows {
+                widths[col] =
+                    widths[col]
                         .max(
-                            values[r][c].len()
+                            values[row][col]
+                                .len()
                         );
             }
         }
 
-        // --------------------------------------------------
-        // Outer structure
-        //
-        // (
-        //     [ 1,  2 ],
-        //     [ 30, 4 ],
-        // )
-        // --------------------------------------------------
+        writeln!(
+            f,
+            "("
+        )?;
 
-        writeln!(f, "(")?;
-
-        for r in 0..rows {
+        for row in 0..rows {
             write!(
                 f,
-                "    ["
+                "    [ "
             )?;
 
-            for c in 0..cols {
-                if c > 0 {
+            for col in 0..cols {
+                if col > 0 {
                     write!(
                         f,
                         ", "
@@ -723,20 +680,21 @@ impl Matrix {
                 write!(
                     f,
                     "{:>width$}",
-                    values[r][c],
-                    width = widths[c],
+                    values[row][col],
+                    width = widths[col],
                 )?;
             }
 
-            write!(
-                f,
-                "]"
-            )?;
-
-            if r + 1 < rows {
-                writeln!(f, ",")?;
+            if row + 1 == rows {
+                writeln!(
+                    f,
+                    " ]"
+                )?;
             } else {
-                writeln!(f)?;
+                writeln!(
+                    f,
+                    " ],"
+                )?;
             }
         }
 
@@ -744,18 +702,5 @@ impl Matrix {
             f,
             ")"
         )
-    }
-
-}
-
-impl fmt::Debug for Matrix {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        f.debug_struct("Matrix")
-            .field("shape", &self.shape())
-            .field("data", &self.to_rows())
-            .finish()
     }
 }

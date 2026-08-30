@@ -1,27 +1,41 @@
 title: Novum
-description: A concise, practical programming language for research, data manipulation, and general-purpose scripting.
+description: A concise programming language for research, data manipulation, experimentation, and scripting.
 baseurl: "/novum"
 url: "https://reina314.github.io"
-theme: minima
-markdown: kramdown
-kramdown:
-  input: GFM
-  syntax_highlighter_opts:
-    block:
-      line_numbers: false
+remote_theme: just-the-docs/just-the-docs
 plugins:
-  - jekyll-feed
-header_pages:
-  - getting-started.md
-  - language/index.md
-  - reference/index.md
-  - std/index.md
-  - guide/index.md
-exclude:
-  - README.md
-  - Gemfile
-  - Gemfile.lock
-  - vendor/
-minima:
-  skin: classic
-show_excerpts: false
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+search_enabled: true
+heading_anchors: true
+color_scheme: dark
+logo: "/novum/assets/images/novum-mark.svg"
+aux_links:
+  "Novum on GitHub": "https://github.com/reina314/novum/tree/vm"
+aux_links_new_tab: true
+nav_external_links:
+  - title: GitHub repository
+    url: https://github.com/reina314/novum/tree/vm
+    opens_in_new_tab: true
+back_to_top: true
+back_to_top_text: "Back to top"
+last_edit_timestamp: false
+footer_content: "Novum is an experimental language under active development."
+mermaid: false
+compress_html:
+  clippings: all
+  comments: all
+  endings: all
+  startings: [head, body]
+  blanklines: false
+  profile: false
+callouts:
+  note:
+    title: Note
+    color: blue
+  warning:
+    title: Warning
+    color: yellow
+  important:
+    title: Important
+    color: purple

@@ -1,9 +1,8 @@
 use super::{
+    Dict,
     Matrix,
     Series,
     SeriesRef,
-    Object,
-    ObjectRef,
     Value,
 };
 
@@ -128,19 +127,21 @@ impl DataFrame {
     pub fn row(
         &self,
         index: usize,
-    ) -> Option<ObjectRef> {
+    ) -> Option<Dict> {
         if index >= self.nrows {
             return None;
         }
 
-        let mut object =
-            Object::new();
+        let mut values =
+            HashMap::with_capacity(
+                self.columns.len()
+            );
 
         for column in &self.columns {
             let value =
                 column.get(index)?;
 
-            object.set_field(
+            values.insert(
                 column.name().to_owned(),
                 value,
             );
@@ -148,7 +149,9 @@ impl DataFrame {
 
         Some(
             Rc::new(
-                RefCell::new(object)
+                RefCell::new(
+                    values
+                )
             )
         )
     }
@@ -649,11 +652,33 @@ impl DataFrame {
         let end =
             n.min(self.nrows);
 
-        let indices =
-            (0..end)
-                .collect::<Vec<_>>();
+        let mut columns =
+            Vec::with_capacity(
+                self.columns.len()
+            );
 
-        self.take_rows(&indices)
+        for column in &self.columns {
+            let values =
+                column
+                    .data()
+                    .iter()
+                    .take(end)
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+            columns.push(
+                Rc::new(
+                    Series::new(
+                        column.name(),
+                        values,
+                    )
+                )
+            );
+        }
+
+        Self::from_series(
+            columns
+        )
     }
 
     pub fn crosstab(

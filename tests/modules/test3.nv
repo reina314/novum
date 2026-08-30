@@ -1,0 +1,14 @@
+pub class Test {
+    x = 0
+
+    init = |self, x, y| {
+        self.x = x + y
+    }
+}
+
+test = Test(
+            x = 1,
+            y = 3,
+        )
+
+print(test)

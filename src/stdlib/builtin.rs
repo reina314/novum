@@ -1,9 +1,12 @@
 use crate::{
     runtime::{
+        BuiltinFn,
         Value,
         IteratorObj,
-        Env,
-        Set,
+        Series,
+        DataFrame,
+        // Set,
+        List,
         PathValue,
     }
 };
@@ -13,135 +16,62 @@ use std::{
     cell::RefCell,
     io::{self, Write},
     time::Duration,
-    collections::HashMap,
 };
 
-pub fn install_builtins(
-    env: &Env
-) {
-    for (name, value) 
-        in builtins() {
-        env.define(name, value);
-    }
+const BUILTINS: &[(
+    &str,
+    BuiltinFn,
+)] = &[
+    ("print", print),
+    ("typeof", r#typeof),
+    ("iter", iter),
+    // ("set", set),
+    ("series", series),
+    ("dataframe", dataframe),
+    ("zip", zip),
+    ("enumerate", enumerate),
+    ("zeros", zeros),
+    ("range", range),
+    ("len", len),
+    ("is_null", is_null),
+    ("is_type", is_type),
+    ("assert", assert),
+    ("panic", panic),
+    ("input", input),
+    ("str", str),
+    ("int", int),
+    ("float", float),
+    ("bool", bool),
+    ("path", path),
+    ("sleep", sleep),
+    ("random", random),
+    ("randint", randint),
+];
+
+pub fn get(
+    name: &str,
+) -> Option<Value> {
+    BUILTINS
+        .iter()
+        .find(|(builtin_name, _)| {
+            *builtin_name == name
+        })
+        .map(|(_, function)| {
+            Value::Builtin(*function)
+        })
 }
 
-fn builtins()
-    -> HashMap<String, Value>
-{
-    let mut map = HashMap::new();
-
-    map.insert(
-        "print".into(),
-        Value::Builtin(print),
-    );
-
-    map.insert(
-        "typeof".into(),
-        Value::Builtin(r#typeof),
-    );
-
-    map.insert(
-        "iter".into(),
-        Value::Builtin(iter),
-    );
-
-    map.insert(
-        "set".into(),
-        Value::Builtin(set),
-    );
-
-    map.insert(
-        "zip".into(),
-        Value::Builtin(zip),
-    );
-
-    map.insert(
-        "enumerate".into(),
-        Value::Builtin(enumerate),
-    );
-
-    map.insert(
-        "zeros".into(),
-        Value::Builtin(zeros),
-    );
-
-    map.insert(
-        "range".into(),
-        Value::Builtin(range),
-    );
-
-    map.insert(
-        "len".into(),
-        Value::Builtin(len),
-    );
-
-    map.insert(
-        "is_null".into(),
-        Value::Builtin(is_null),
-    );
-
-    map.insert(
-        "is_type".into(),
-        Value::Builtin(is_type),
-    );
-
-    map.insert(
-        "assert".into(),
-        Value::Builtin(assert),
-    );
-
-    map.insert(
-        "panic".into(),
-        Value::Builtin(panic),
-    );
-
-    map.insert(
-        "input".into(),
-        Value::Builtin(input),
-    );
-
-    map.insert(
-        "str".into(),
-        Value::Builtin(str),
-    );
-
-    map.insert(
-        "int".into(),
-        Value::Builtin(int),
-    );
-
-    map.insert(
-        "float".into(),
-        Value::Builtin(float),
-    );
-
-    map.insert(
-        "bool".into(),
-        Value::Builtin(bool),
-    );
-
-    map.insert(
-        "path".into(),
-        Value::Builtin(path),
-    );
-
-    map.insert(
-        "sleep".into(),
-        Value::Builtin(sleep),
-    );
-
-    map.insert(
-        "random".into(),
-        Value::Builtin(random),
-    );
-
-    map.insert(
-        "randint".into(),
-        Value::Builtin(randint),
-    );
-
-    map
+pub fn contains(
+    name: &str,
+) -> bool {
+    BUILTINS
+        .iter()
+        .any(|(builtin_name, _)| {
+            *builtin_name == name
+        })
 }
+
+
 
 fn expect_args(
     args: &[Value],
@@ -171,7 +101,6 @@ fn expect_string(
         )),
     }
 }
-
 
 pub fn print(args: Vec<Value>) -> Result<Value,String> {
     for value in args { println!("{}", value); }
@@ -449,43 +378,153 @@ pub fn iter(
     )
 }
 
-pub fn set(
-    args: Vec<Value>,
+pub fn series(
+    mut args: Vec<Value>,
 ) -> Result<Value, String> {
-    if args.len() != 1 {
+    if args.len() != 2 {
         return Err(
-            "set() expects exactly 1 argument"
+            "series() expects exactly 2 arguments"
                 .into()
         );
     }
 
-    let list =
-        match &args[0] {
+    let data =
+        match args.pop().unwrap() {
             Value::List(list) =>
-                list.borrow(),
+                list.iter_cloned(),
 
             other =>
-                return Err(format!(
-                    "set() expects List, got {}",
-                    other.type_name()
-                )),
+                return Err(
+                    format!(
+                        "series() expects List as second argument, got {}",
+                        other.type_name()
+                    )
+                ),
         };
 
-    let set =
-        Set::from_values(
-            list.clone()
-        )?;
+    let name =
+        match args.pop().unwrap() {
+            Value::Str(name) =>
+                name.as_ref().clone(),
+
+            other =>
+                return Err(
+                    format!(
+                        "series() expects Str as first argument, got {}",
+                        other.type_name()
+                    )
+                ),
+        };
 
     Ok(
-        Value::Set(
+        Value::Series(
             Rc::new(
-                RefCell::new(
-                    set
+                Series::new(
+                    name,
+                    data,
                 )
             )
         )
     )
 }
+
+pub fn dataframe(
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err(
+            "dataframe() expects exactly 1 argument"
+                .into()
+        );
+    }
+
+    let columns =
+        match args.pop().unwrap() {
+            Value::List(list) => {
+                let mut columns =
+                    Vec::with_capacity(
+                        list.len()
+                    );
+
+                for value in
+                    list.iter_cloned()
+                {
+                    let Value::Series(
+                        series
+                    ) = value
+                    else {
+                        return Err(
+                            format!(
+                                "dataframe() expects List[Series], got {}",
+                                value.type_name()
+                            )
+                        );
+                    };
+
+                    columns.push(series);
+                }
+
+                columns
+            }
+
+            other =>
+                return Err(
+                    format!(
+                        "dataframe() expects List[Series], got {}",
+                        other.type_name()
+                    )
+                ),
+        };
+
+    let dataframe =
+        DataFrame::from_series(
+            columns
+        )?;
+
+    Ok(
+        Value::DataFrame(
+            Rc::new(dataframe)
+        )
+    )
+}
+
+// pub fn set(
+//     args: Vec<Value>,
+// ) -> Result<Value, String> {
+//     if args.len() != 1 {
+//         return Err(
+//             "set() expects exactly 1 argument"
+//                 .into()
+//         );
+//     }
+
+//     let list =
+//         match &args[0] {
+//             Value::List(list) =>
+//                 list.borrow(),
+
+//             other =>
+//                 return Err(format!(
+//                     "set() expects List, got {}",
+//                     other.type_name()
+//                 )),
+//         };
+
+//     let set =
+//         Set::from_values(
+//             list.clone()
+//         )?;
+
+//     Ok(
+//         Value::Set(
+//             Rc::new(
+//                 RefCell::new(
+//                     set
+//                 )
+//             )
+//         )
+//     )
+// }
 
 pub fn zip(
     mut args: Vec<Value>,
@@ -583,13 +622,11 @@ pub fn zeros(
 
     Ok(
         Value::List(
-            Rc::new(
-                RefCell::new(
-                    vec![
-                        Value::Int(0);
-                        count
-                    ]
-                )
+            List::new(
+                vec![
+                    Value::Int(0);
+                    count
+                ]
             )
         )
     )
@@ -620,7 +657,7 @@ pub fn range(args: Vec<Value>) -> Result<Value, String> {
                 .map(Value::Int)
                 .collect::<Vec<_>>();
 
-            Ok(Value::List(Rc::new(RefCell::new(values))))
+            Ok(Value::List(List::new(values)))
         }
 
         2 => {
@@ -650,7 +687,7 @@ pub fn range(args: Vec<Value>) -> Result<Value, String> {
                 .map(Value::Int)
                 .collect::<Vec<_>>();
 
-            Ok(Value::List(Rc::new(RefCell::new(values))))
+            Ok(Value::List(List::new(values)))
         }
 
         _ => Err(
@@ -663,7 +700,7 @@ pub fn len(args: Vec<Value>) -> Result<Value, String> {
     expect_args(&args, 1, "len")?;
 
     let length = match &args[0] {
-        Value::List(data) => data.borrow().len(),
+        Value::List(data) => data.len(),
 
         Value::Str(s) => s.chars().count(),
 

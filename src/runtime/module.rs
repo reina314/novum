@@ -8,10 +8,15 @@ use std::{
 
 use super::Value;
 
-pub type ModuleRef =
-    Rc<RefCell<Module>>;
+pub type ModuleRef = Rc<RefCell<Module>>;
 
-#[derive(Clone, Debug)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+)]
 pub struct ModulePath {
     parts: Vec<String>,
 }

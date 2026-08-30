@@ -1,0 +1,10 @@
+let xs =
+    (0..1000000)
+        .map(|x| x * 2)
+        .filter(|x| x % 3 == 0)
+        .collect()
+
+// ________________________________________________________
+// Executed in  459.92 millis    fish           external
+//    usr time  447.47 millis    0.35 millis  447.12 millis
+//    sys time   10.82 millis    1.94 millis    8.88 millis

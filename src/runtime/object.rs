@@ -1,6 +1,5 @@
 use super::{
     ClassRef,
-    FuncRef,
     Value,
 };
 
@@ -11,51 +10,41 @@ use std::{
     rc::Rc,
 };
 
-pub type ObjectRef = Rc<RefCell<Object>>;
+pub type ObjectRef =
+    Rc<RefCell<Object>>;
 
 #[derive(Clone)]
 pub struct Object {
-    class: Option<ClassRef>,
+    class: ClassRef,
     fields: HashMap<String, Value>,
 }
 
 impl Object {
-    pub fn new() -> Self {
-        Self {
-            class: None,
-            fields:
-                HashMap::new(),
-        }
-    }
-
-    pub fn with_class(
+    pub fn new(
         class: ClassRef,
     ) -> Self {
         Self {
-            class: Some(class),
+            class,
             fields:
                 HashMap::new(),
         }
     }
 
+    #[inline]
     pub fn class(
         &self,
-    ) -> Option<ClassRef> {
+    ) -> ClassRef {
         self.class.clone()
     }
 
+    #[inline]
     pub fn type_name(
         &self,
     ) -> &str {
-        match &self.class {
-            Some(class) =>
-                class.name(),
-
-            None =>
-                "Object",
-        }
+        self.class.name()
     }
 
+    #[inline]
     pub fn get_field(
         &self,
         name: &str,
@@ -65,6 +54,7 @@ impl Object {
             .cloned()
     }
 
+    #[inline]
     pub fn set_field(
         &mut self,
         name: impl Into<String>,
@@ -76,6 +66,7 @@ impl Object {
         );
     }
 
+    #[inline]
     pub fn has_field(
         &self,
         name: &str,
@@ -85,17 +76,12 @@ impl Object {
         )
     }
 
-    pub fn get_method(
+    pub fn field_names(
         &self,
-        name: &str,
-    ) -> Option<FuncRef> {
-        self.class
-            .as_ref()
-            .and_then(|class| {
-                class.get_method(
-                    name
-                )
-            })
+    ) -> impl Iterator<Item = &str> {
+        self.fields
+            .keys()
+            .map(String::as_str)
     }
 
     pub fn fmt_display(
@@ -113,18 +99,20 @@ impl Object {
                 .iter()
                 .collect::<Vec<_>>();
 
-        fields.sort_by(
-            |(a, _), (b, _)|
-                a.cmp(b)
+        fields.sort_unstable_by_key(
+            |(a, _)| *a
         );
 
         for (
             index,
-            (name, value)
+            (name, value),
         ) in fields.iter().enumerate()
         {
             if index > 0 {
-                write!(f, ", ")?;
+                write!(
+                    f,
+                    ", "
+                )?;
             }
 
             write!(
@@ -135,13 +123,10 @@ impl Object {
             )?;
         }
 
-        write!(f, "}}")
-    }
-}
-
-impl Default for Object {
-    fn default() -> Self {
-        Self::new()
+        write!(
+            f,
+            "}}"
+        )
     }
 }
 

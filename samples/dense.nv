@@ -1,3 +1,5 @@
+import math
+
 pub class Dense {
     input_dim,
     output_dim,

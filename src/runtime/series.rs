@@ -1,7 +1,7 @@
 use super::{
     Value,
     Matrix,
-    DataFrame,
+    // DataFrame,
 };
 
 use std::{
@@ -199,45 +199,119 @@ impl Series {
     pub fn mean(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut sum = 0.0;
+        let mut count = 0usize;
 
-        if values.is_empty() {
+        for value in &self.data {
+            match value {
+                Value::Int(v) => {
+                    sum += *v as f64;
+                    count += 1;
+                }
+
+                Value::Float(v) => {
+                    sum += *v;
+                    count += 1;
+                }
+
+                Value::Null => {
+                    // Ignore missing values.
+                }
+
+                other => {
+                    return Err(format!(
+                        "Series '{}' is not numeric; found {}",
+                        self.name,
+                        other.type_name()
+                    ));
+                }
+            }
+        }
+
+        if count == 0 {
             return Ok(Value::Null);
         }
 
-        let mean =
-            values.iter().sum::<f64>()
-            / values.len() as f64;
-
-        Ok(Value::Float(mean))
+        Ok(Value::Float(
+            sum / count as f64
+        ))
     }
 
     pub fn sum(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut sum = 0.0;
+        let mut count = 0usize;
 
-        if values.is_empty() {
+        for value in &self.data {
+            match value {
+                Value::Int(v) => {
+                    sum += *v as f64;
+                    count += 1;
+                }
+
+                Value::Float(v) => {
+                    sum += *v;
+                    count += 1;
+                }
+
+                Value::Null => {}
+
+                other => {
+                    return Err(format!(
+                        "Series '{}' is not numeric; found {}",
+                        self.name,
+                        other.type_name()
+                    ));
+                }
+            }
+        }
+
+        if count == 0 {
             return Ok(Value::Null);
         }
 
-        Ok(Value::Float(
-            values.iter().sum()
-        ))
+        Ok(Value::Float(sum))
     }
 
     pub fn min(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut result: Option<f64> =
+            None;
 
-        let result =
-            values
-                .into_iter()
-                .reduce(f64::min);
+        for value in &self.data {
+            let current =
+                match value {
+                    Value::Int(v) =>
+                        *v as f64,
+
+                    Value::Float(v) =>
+                        *v,
+
+                    Value::Null =>
+                        continue,
+
+                    other => {
+                        return Err(format!(
+                            "Series '{}' is not numeric; found {}",
+                            self.name,
+                            other.type_name()
+                        ));
+                    }
+                };
+
+            result =
+                Some(
+                    match result {
+                        Some(current_min) =>
+                            current_min.min(current),
+
+                        None =>
+                            current,
+                    }
+                );
+        }
 
         Ok(
             result
@@ -249,13 +323,41 @@ impl Series {
     pub fn max(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut result: Option<f64> =
+            None;
 
-        let result =
-            values
-                .into_iter()
-                .reduce(f64::max);
+        for value in &self.data {
+            let current =
+                match value {
+                    Value::Int(v) =>
+                        *v as f64,
+
+                    Value::Float(v) =>
+                        *v,
+
+                    Value::Null =>
+                        continue,
+
+                    other => {
+                        return Err(format!(
+                            "Series '{}' is not numeric; found {}",
+                            self.name,
+                            other.type_name()
+                        ));
+                    }
+                };
+
+            result =
+                Some(
+                    match result {
+                        Some(current_max) =>
+                            current_max.max(current),
+
+                        None =>
+                            current,
+                    }
+                );
+        }
 
         Ok(
             result
@@ -267,35 +369,76 @@ impl Series {
     pub fn std(
         &self,
     ) -> Result<Value, String> {
-        let values =
-            self.ensure_numeric()?;
+        let mut sum = 0.0;
+        let mut count = 0usize;
 
-        if values.len() < 2 {
+        for value in &self.data {
+            match value {
+                Value::Int(v) => {
+                    sum += *v as f64;
+                    count += 1;
+                }
+
+                Value::Float(v) => {
+                    sum += *v;
+                    count += 1;
+                }
+
+                Value::Null => {}
+
+                other => {
+                    return Err(format!(
+                        "Series '{}' is not numeric; found {}",
+                        self.name,
+                        other.type_name()
+                    ));
+                }
+            }
+        }
+
+        if count < 2 {
             return Ok(Value::Null);
         }
 
         let mean =
-            values.iter().sum::<f64>()
-            / values.len() as f64;
+            sum / count as f64;
 
-        let sum_squared =
-            values
-                .iter()
-                .map(|x| {
-                    let diff =
-                        *x - mean;
+        let mut sum_squared = 0.0;
 
-                    diff * diff
-                })
-                .sum::<f64>();
+        for value in &self.data {
+            let x =
+                match value {
+                    Value::Int(v) =>
+                        *v as f64,
+
+                    Value::Float(v) =>
+                        *v,
+
+                    Value::Null =>
+                        continue,
+
+                    _ =>
+                        unreachable!(
+                            "numeric validation must have succeeded"
+                        ),
+                };
+
+            let diff =
+                x - mean;
+
+            sum_squared +=
+                diff * diff;
+        }
 
         let variance =
             sum_squared
-            / (values.len() - 1) as f64;
+            / (count - 1) as f64;
 
-        Ok(Value::Float(
-            variance.sqrt()
-        ))
+        Ok(
+            Value::Float(
+                variance.sqrt()
+            )
+        )
     }
 
     pub fn median(
@@ -438,67 +581,67 @@ impl Series {
         )
     }
 
-    pub fn value_counts(
-        &self,
-    ) -> Result<DataFrame, String> {
-        let mut values =
-            Vec::<Value>::new();
+    // pub fn value_counts(
+    //     &self,
+    // ) -> Result<DataFrame, String> {
+    //     let mut values =
+    //         Vec::<Value>::new();
 
-        let mut counts =
-            Vec::<Value>::new();
+    //     let mut counts =
+    //         Vec::<Value>::new();
 
-        for value in &self.data {
-            let mut found =
-                None;
+    //     for value in &self.data {
+    //         let mut found =
+    //             None;
 
-            for i in 0..values.len() {
-                if Value::eq_values(
-                    value,
-                    &values[i],
-                )? {
-                    found = Some(i);
-                    break;
-                }
-            }
+    //         for i in 0..values.len() {
+    //             if Value::eq_values(
+    //                 value,
+    //                 &values[i],
+    //             )? {
+    //                 found = Some(i);
+    //                 break;
+    //             }
+    //         }
 
-            match found {
-                Some(index) => {
-                    if let Value::Int(count) =
-                        &mut counts[index]
-                    {
-                        *count += 1;
-                    }
-                }
+    //         match found {
+    //             Some(index) => {
+    //                 if let Value::Int(count) =
+    //                     &mut counts[index]
+    //                 {
+    //                     *count += 1;
+    //                 }
+    //             }
 
-                None => {
-                    values.push(
-                        value.clone()
-                    );
+    //             None => {
+    //                 values.push(
+    //                     value.clone()
+    //                 );
 
-                    counts.push(
-                        Value::Int(1)
-                    );
-                }
-            }
-        }
+    //                 counts.push(
+    //                     Value::Int(1)
+    //                 );
+    //             }
+    //         }
+    //     }
 
-        DataFrame::from_series(
-            vec![
-                Rc::new(
-                    Series::new(
-                        "value",
-                        values,
-                    )
-                ),
-                Rc::new(
-                    Series::new(
-                        "count",
-                        counts,
-                    )
-                ),
-            ]
-        )
-    }
+    //     DataFrame::from_series(
+    //         vec![
+    //             Rc::new(
+    //                 Series::new(
+    //                     "value",
+    //                     values,
+    //                 )
+    //             ),
+    //             Rc::new(
+    //                 Series::new(
+    //                     "count",
+    //                     counts,
+    //                 )
+    //             ),
+    //         ]
+    //     )
+    // }
 
     pub fn fmt_display(
         &self,

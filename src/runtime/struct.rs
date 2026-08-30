@@ -1,86 +1,159 @@
-use super::{
-    FuncRef,
-    Class,
-    ClassRef,
-    ObjectRef,
-};
+use super::Value;
+
 use std::{
     fmt,
     rc::Rc,
-    collections::HashMap,
 };
 
-pub type StructRef = Rc<StructDefinition>;
-
-pub struct StructDefinition {
+#[derive(Clone)]
+pub struct StructType {
     name: String,
     fields: Vec<String>,
-    methods: HashMap<String, FuncRef>,
 }
 
-impl StructDefinition {
+pub type StructTypeRef = Rc<StructType>;
+
+impl StructType {
     pub fn new(
         name: impl Into<String>,
         fields: Vec<String>,
-        methods: HashMap<String, FuncRef>,
     ) -> Self {
         Self {
             name: name.into(),
             fields,
-            methods,
         }
     }
 
-    pub fn to_class(
-        &self,
-    ) -> ClassRef {
-        let mut class =
-            Class::new(
-                self.name.clone()
-            );
-
-        for (name, function)
-            in &self.methods
-        {
-            if name == "init" {
-                class.set_constructor(
-                    function.clone()
-                );
-            } else {
-                class.add_method(
-                    name.clone(),
-                    function.clone(),
-                );
-            }
-        }
-
-        Rc::new(class)
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    pub fn instantiate(
-        &self,
-    ) -> Result<ObjectRef, String> {
-        let class =
-            self.to_class();
+    pub fn fields(&self) -> &[String] {
+        &self.fields
+    }
 
-        Ok(
-            class.instantiate()
-        )
+    pub fn field_index(
+        &self,
+        name: &str,
+    ) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|field| field == name)
     }
 }
 
-impl fmt::Debug for StructDefinition {
+impl fmt::Display for StructType {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        f.debug_struct("StructDefinition")
-            .field("name", &self.name)
-            .field("fields", &self.fields)
-            .field(
-                "methods",
-                &self.methods.keys().collect::<Vec<_>>(),
-            )
-            .finish()
+        write!(
+            f,
+            "<struct {}>",
+            self.name
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct StructValue {
+    ty: StructTypeRef,
+    fields: Vec<Value>,
+}
+
+pub type StructValueRef = Rc<StructValue>;
+
+impl StructValue {
+    pub fn new(
+        ty: StructTypeRef,
+        fields: Vec<Value>,
+    ) -> Result<Self, String> {
+        if fields.len()
+            != ty.fields().len()
+        {
+            return Err(
+                format!(
+                    "struct '{}' expects {} fields, got {}",
+                    ty.name(),
+                    ty.fields().len(),
+                    fields.len(),
+                )
+            );
+        }
+
+        Ok(Self {
+            ty,
+            fields,
+        })
+    }
+
+    pub fn ty(&self) -> StructTypeRef {
+        self.ty.clone()
+    }
+
+    pub fn type_name(&self) -> &str {
+        self.ty.name()
+    }
+
+    pub fn fields(&self) -> &[Value] {
+        &self.fields
+    }
+
+    pub fn field(
+        &self,
+        index: usize,
+    ) -> Option<Value> {
+        self.fields
+            .get(index)
+            .cloned()
+    }
+
+    pub fn get_field(
+        &self,
+        name: &str,
+    ) -> Option<Value> {
+        let index =
+            self.ty.field_index(name)?;
+
+        self.field(index)
+    }
+}
+
+impl fmt::Display for StructValue {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "{} {{",
+            self.type_name()
+        )?;
+
+        for (
+            index,
+            name,
+        ) in self.ty.fields().iter().enumerate()
+        {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+
+            let value =
+                self.fields
+                    .get(index)
+                    .expect(
+                        "StructValue field count invariant violated"
+                    );
+
+            write!(
+                f,
+                "{}: {}",
+                name,
+                value,
+            )?;
+        }
+
+        write!(f, "}}")
     }
 }

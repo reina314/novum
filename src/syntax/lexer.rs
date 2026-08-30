@@ -146,8 +146,7 @@ impl<'a> Lexer<'a> {
                 '=' => {
                     if self.consume_if('=') {
                         TokenKind::DoubleEq
-                    } else 
-                    if self.consume_if('>') {
+                    } else if self.consume_if('>') {
                         TokenKind::FatArrow
                     } else {
                         TokenKind::Equals
@@ -276,17 +275,73 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_number(&mut self, first: char) -> Result<TokenKind> {
-        let mut digits = String::new();
+    fn lex_number(
+        &mut self,
+        first: char,
+    ) -> Result<TokenKind> {
+        let start =
+            self.pos.saturating_sub(
+                first.len_utf8()
+            );
+
+        let mut digits =
+            String::new();
+
         digits.push(first);
 
-        while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
-            digits.push(self.consume().unwrap());
+        let mut previous_was_underscore =
+            false;
+
+        while let Some(c) =
+            self.peek()
+        {
+            if c.is_ascii_digit() {
+                digits.push(
+                    self.consume().unwrap()
+                );
+
+                previous_was_underscore =
+                    false;
+            } else if c == '_' {
+                if previous_was_underscore {
+                    return Err(
+                        Error::lex(
+                            "consecutive underscores in numeric literal",
+                            Span::new(
+                                start,
+                                self.pos + 1,
+                            ),
+                        )
+                    );
+                }
+
+                previous_was_underscore =
+                    true;
+
+                self.consume();
+
+                digits.push('_');
+            } else {
+                break;
+            }
         }
 
-        // float
+        if previous_was_underscore {
+            return Err(
+                Error::lex(
+                    "numeric literal cannot end with '_'",
+                    Span::new(
+                        start,
+                        self.pos,
+                    ),
+                )
+            );
+        }
+
+        // Float
         if self.peek() == Some('.') {
-            let mut look = self.chars.clone();
+            let mut look =
+                self.chars.clone();
 
             if look
                 .next()
@@ -294,32 +349,105 @@ impl<'a> Lexer<'a> {
                 .unwrap_or(false)
             {
                 self.consume();
+
                 digits.push('.');
 
-                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
-                    digits.push(self.consume().unwrap());
+                let mut previous_was_underscore =
+                    false;
+
+                while let Some(c) =
+                    self.peek()
+                {
+                    if c.is_ascii_digit() {
+                        digits.push(
+                            self.consume().unwrap()
+                        );
+
+                        previous_was_underscore =
+                            false;
+                    } else if c == '_' {
+                        if previous_was_underscore {
+                            return Err(
+                                Error::lex(
+                                    "consecutive underscores in numeric literal",
+                                    Span::new(
+                                        start,
+                                        self.pos + 1,
+                                    ),
+                                )
+                            );
+                        }
+
+                        previous_was_underscore =
+                            true;
+
+                        self.consume();
+
+                        digits.push('_');
+                    } else {
+                        break;
+                    }
                 }
 
-                let value = digits.parse::<f64>().map_err(|_| {
-                    Error::lex(
-                        "invalid float literal",
-                        Span::new(self.pos - digits.len(), self.pos),
-                    )
-                })?;
+                if previous_was_underscore {
+                    return Err(
+                        Error::lex(
+                            "numeric literal cannot end with '_'",
+                            Span::new(
+                                start,
+                                self.pos,
+                            ),
+                        )
+                    );
+                }
 
-                return Ok(TokenKind::Float(value));
+                let normalized =
+                    digits.replace(
+                        '_',
+                        "",
+                    );
+
+                let value =
+                    normalized
+                        .parse::<f64>()
+                        .map_err(|_| {
+                            Error::lex(
+                                "invalid float literal",
+                                Span::new(
+                                    start,
+                                    self.pos,
+                                ),
+                            )
+                        })?;
+
+                return Ok(
+                    TokenKind::Float(value)
+                );
             }
         }
 
-        // integer
-        let value = digits.parse::<i64>().map_err(|_| {
-            Error::lex(
-                "integer literal overflow",
-                Span::new(self.pos - digits.len(), self.pos),
-            )
-        })?;
+        let normalized =
+            digits.replace(
+                '_',
+                "",
+            );
 
-        Ok(TokenKind::Int(value))
+        let value =
+            normalized
+                .parse::<i64>()
+                .map_err(|_| {
+                    Error::lex(
+                        "integer literal overflow",
+                        Span::new(
+                            start,
+                            self.pos,
+                        ),
+                    )
+                })?;
+
+        Ok(
+            TokenKind::Int(value)
+        )
     }
 
     fn lex_string(&mut self, quote: char) -> Result<TokenKind> {

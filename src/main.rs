@@ -1,7 +1,8 @@
 use novum::{
-    runtime::{ControlFlow, Value},
+    runtime::{Value},
     syntax::TokenKind,
-    Interpreter, Lexer, Parser,
+    vm::{Vm, Compiler},
+    Lexer, Parser,
 };
 
 use reedline::{
@@ -25,10 +26,11 @@ use nu_ansi_term::{Color, Style};
 
 use std::{
     borrow::Cow,
+    rc::Rc,
+    cell::RefCell,
     env,
     fs,
     path::{
-        Path,
         PathBuf,
     },
 };
@@ -54,12 +56,19 @@ enum Command {
 
 impl Options {
     fn parse() -> Result<Command, String> {
-        let mut options = Self::default();
+        let mut options =
+            Self::default();
 
-        for arg in env::args().skip(1) {
+        let args =
+            env::args().skip(1);
+
+        for arg in args
+        {
             match arg.as_str() {
                 "--version" | "-V" => {
-                    return Ok(Command::Version);
+                    return Ok(
+                        Command::Version
+                    );
                 }
 
                 "-l" | "--lexer" => {
@@ -75,27 +84,41 @@ impl Options {
                     options.display_parser = true;
                 }
 
-                "help" | "--help" | "-h" => {
-                    return Ok(Command::Help);
+                "help"
+                | "--help"
+                | "-h" => {
+                    return Ok(
+                        Command::Help
+                    );
                 }
 
                 _ if arg.starts_with('-') => {
-                    return Err(format!("unknown option: {arg}"));
+                    return Err(
+                        format!(
+                            "unknown option: {arg}"
+                        )
+                    );
                 }
 
                 _ => {
                     if options.file.is_some() {
                         return Err(
-                            "only one input file is allowed".into()
+                            "only one input file is allowed"
+                                .into()
                         );
                     }
 
-                    options.file = Some(arg);
+                    options.file =
+                        Some(arg);
                 }
             }
         }
 
-        Ok(Command::Run(options))
+        Ok(
+            Command::Run(
+                options
+            )
+        )
     }
 
     fn print_help() {
@@ -114,6 +137,7 @@ OPTIONS:
     -V, --version    Show version information
 
 REPL:
+    novum            Start the Novum VM REPL
     help             Show REPL commands
     quit, exit       Exit the REPL
 
@@ -135,21 +159,29 @@ KEYS:
 // ============================================================
 
 fn main() {
-    let command = match Options::parse() {
-        Ok(command) => command,
+    let command =
+        match Options::parse() {
+            Ok(command) =>
+                command,
 
-        Err(message) => {
-            eprintln!("error: {message}");
-            eprintln!(
-                "try 'novum --help' for usage information"
-            );
-            std::process::exit(1);
-        }
-    };
+            Err(message) => {
+                eprintln!(
+                    "error: {message}"
+                );
+
+                eprintln!(
+                    "try 'novum --help' for usage information"
+                );
+
+                std::process::exit(1);
+            }
+        };
 
     match command {
         Command::Version => {
-            println!("novum v{VERSION}");
+            println!(
+                "novum v{VERSION}"
+            );
         }
 
         Command::Help => {
@@ -157,26 +189,17 @@ fn main() {
         }
 
         Command::Run(options) => {
-            let mut interpreter = Interpreter::new();
-
             match options.file {
                 Some(path) => {
-                    if let Err(error) = run_file(
-                        &mut interpreter,
-                        &path,
+                    run_file(
+                        path,
                         options.display_lexer,
                         options.display_parser,
-                    ) {
-                        eprintln!("{error}");
-                        std::process::exit(1);
-                    }
+                    );
                 }
 
                 None => {
-                    println!("novum v{VERSION}\n");
-
                     repl(
-                        &mut interpreter,
                         options.display_lexer,
                         options.display_parser,
                     );
@@ -191,24 +214,45 @@ fn main() {
 // ============================================================
 
 fn run_file(
-    interpreter: &mut Interpreter,
-    path: &str,
+    path: String,
     display_lexer: bool,
     display_parser: bool,
-) -> Result<(), String> {
+) {
     let source =
-        fs::read_to_string(path)
-            .map_err(|e| {
-                format!(
-                    "failed to read '{path}': {e}"
-                )
-            })?;
+        match fs::read_to_string(
+            &path
+        ) {
+            Ok(source) =>
+                source,
 
-    let mut lexer =
-        Lexer::new(&source);
+            Err(error) => {
+                eprintln!(
+                    "failed to read '{}': {}",
+                    path,
+                    error
+                );
+
+                std::process::exit(1);
+            }
+        };
+
+    let source_path =
+        match fs::canonicalize(&path) {
+            Ok(path) => path,
+
+            Err(error) => {
+                eprintln!(
+                    "failed to resolve '{}': {}",
+                    path,
+                    error
+                );
+
+                std::process::exit(1);
+            }
+        };
 
     let tokens =
-        match lexer.lex() {
+        match Lexer::new(&source).lex() {
             Ok(tokens) =>
                 tokens,
 
@@ -217,7 +261,7 @@ fn run_file(
                     &source
                 );
 
-                return Ok(());
+                std::process::exit(1);
             }
         };
 
@@ -240,7 +284,7 @@ fn run_file(
                     &source
                 );
 
-                return Ok(());
+                std::process::exit(1);
             }
         };
 
@@ -250,19 +294,286 @@ fn run_file(
         );
     }
 
-    match interpreter
-        .eval_program_from_file(
-            &program,
-            Path::new(path),
-        )
-    {
-        Ok(
-            ControlFlow::Value(value)
-        ) if value != Value::Unit => {
+    let chunk =
+        match Compiler::new()
+            .compile(&program)
+        {
+            Ok(chunk) =>
+                Rc::new(chunk),
+
+            Err(error) => {
+                error.display(
+                    &source
+                );
+
+                std::process::exit(1);
+            }
+        };
+
+    let module =
+        Rc::new(
+            RefCell::new(
+                novum::runtime::Module::new(
+                    "<main>"
+                )
+            )
+        );
+
+    let mut vm =
+        Vm::new();
+
+    match vm.run_with_module_and_path(
+        chunk,
+        module,
+        Some(&source_path),
+    ) {
+        Ok(Value::Unit) => {}
+
+        Ok(value) => {
+            println!("{value}");
+        }
+
+        Err(error) => {
+            error.display(&source);
+            std::process::exit(1);
+        }
+    }
+}
+
+// ============================================================
+// REPL
+// ============================================================
+
+fn repl(
+    display_lexer: bool,
+    display_parser: bool,
+) {
+    let history =
+        match FileBackedHistory::with_file(
+            1000,
+            history_path(),
+        ) {
+            Ok(history) => {
+                Box::new(history)
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "warning: failed to initialize history: {error}"
+                );
+
+                Box::new(
+                    FileBackedHistory::default()
+                )
+            }
+        };
+
+    let keybindings =
+        configure_keybindings();
+
+    let edit_mode =
+        Box::new(
+            Emacs::new(
+                keybindings
+            )
+        );
+
+    let mut editor =
+        Reedline::create()
+            .with_history(history)
+            .with_edit_mode(edit_mode)
+            .with_validator(
+                Box::new(
+                    NovumValidator
+                )
+            )
+            .with_highlighter(
+                Box::new(
+                    NovumHighlighter
+                )
+            )
+            .use_kitty_keyboard_enhancement(
+                true
+            )
+            .with_ansi_colors(
+                true
+            );
+
+    let mut compiler =
+        Compiler::new();
+
+    let mut vm =
+        Vm::new();
+
+    let mut line_index =
+        0usize;
+
+    loop {
+        println!();
+
+        let prompt =
+            NovumPrompt::new(
+                line_index
+            );
+
+        match editor.read_line(
+            &prompt
+        ) {
+            Ok(
+                Signal::Success(line)
+            ) => {
+                let command =
+                    line.trim();
+
+                if command.is_empty() {
+                    continue;
+                }
+
+                match command {
+                    "quit"
+                    | "exit" => {
+                        println!(
+                            "\nBye!"
+                        );
+
+                        break;
+                    }
+
+                    "help" => {
+                        print_repl_help();
+                        continue;
+                    }
+
+                    _ => {}
+                }
+
+                run_repl_line(
+                    &mut compiler,
+                    &mut vm,
+                    &line,
+                    display_lexer,
+                    display_parser,
+                    line_index,
+                );
+
+                line_index += 1;
+            }
+
+            Ok(
+                Signal::CtrlC
+            ) => {
+                println!("^C");
+            }
+
+            Ok(
+                Signal::CtrlD
+            ) => {
+                println!(
+                    "\nBye!"
+                );
+
+                break;
+            }
+
+            Ok(signal) => {
+                eprintln!(
+                    "REPL event: {signal:?}"
+                );
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "REPL error: {error}"
+                );
+
+                break;
+            }
+        }
+    }
+}
+
+fn run_repl_line(
+    compiler: &mut Compiler,
+    vm: &mut Vm,
+    source: &str,
+    display_lexer: bool,
+    display_parser: bool,
+    line_index: usize,
+) {
+    let mut lexer =
+        Lexer::new(source);
+
+    let tokens =
+        match lexer.lex() {
+            Ok(tokens) =>
+                tokens,
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    if display_lexer {
+        println!(
+            "\nTokens:\n{tokens:#?}"
+        );
+    }
+
+    let mut parser =
+        Parser::new(tokens);
+
+    let program =
+        match parser.parse() {
+            Ok(program) =>
+                program,
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    if display_parser {
+        println!(
+            "\nAST:\n{program:#?}"
+        );
+    }
+
+    let chunk =
+        match compiler
+            .compile_program(
+                &program
+            )
+        {
+            Ok(chunk) =>
+                Rc::new(chunk),
+
+            Err(error) => {
+                error.display(
+                    source
+                );
+
+                return;
+            }
+        };
+
+    match vm.run_repl(
+        chunk
+    ) {
+        Ok(value)
+            if value != Value::Unit =>
+        {
             print_result(
                 value,
-                None,
-                false,
+                Some(line_index),
+                true,
             );
         }
 
@@ -270,67 +581,8 @@ fn run_file(
 
         Err(error) => {
             error.display(
-                &source
+                source
             );
-        }
-    }
-
-    Ok(())
-}
-
-fn run(
-    interpreter: &mut Interpreter,
-    source: &str,
-    display_lexer: bool,
-    display_parser: bool,
-    line_index: Option<usize>,
-    colorize_output: bool,
-) {
-    let mut lexer = Lexer::new(source);
-
-    let tokens = match lexer.lex() {
-        Ok(tokens) => tokens,
-
-        Err(error) => {
-            error.display(source);
-            return;
-        }
-    };
-
-    if display_lexer {
-        println!("\nTokens:\n{tokens:#?}");
-    }
-
-    let mut parser = Parser::new(tokens);
-
-    let program = match parser.parse() {
-        Ok(program) => program,
-
-        Err(error) => {
-            error.display(source);
-            return;
-        }
-    };
-
-    if display_parser {
-        println!("\nAST:\n{program:#?}");
-    }
-
-    match interpreter.eval_program(&program) {
-        Ok(ControlFlow::Value(value))
-            if value != Value::Unit =>
-        {
-            print_result(
-                value,
-                line_index,
-                colorize_output,
-            );
-        }
-
-        Ok(_) => {}
-
-        Err(error) => {
-            error.display(source);
         }
     }
 }
@@ -1049,121 +1301,6 @@ fn history_path() -> PathBuf {
     }
 
     PathBuf::from(".novum_history")
-}
-
-// ============================================================
-// REPL
-// ============================================================
-
-fn repl(
-    interpreter: &mut Interpreter,
-    display_lexer: bool,
-    display_parser: bool,
-) {
-    let history =
-        match FileBackedHistory::with_file(
-            1000,
-            history_path(),
-        ) {
-            Ok(history) => {
-                Box::new(history)
-            }
-
-            Err(error) => {
-                eprintln!(
-                    "warning: failed to initialize history: {error}"
-                );
-
-                Box::new(
-                    FileBackedHistory::default()
-                )
-            }
-        };
-
-    let keybindings =
-        configure_keybindings();
-
-    let edit_mode =
-        Box::new(Emacs::new(keybindings));
-
-    let mut editor = Reedline::create()
-        .with_history(history)
-        .with_edit_mode(edit_mode)
-        .with_validator(
-            Box::new(NovumValidator)
-        )
-        .with_highlighter(
-            Box::new(NovumHighlighter)
-        )
-        .use_kitty_keyboard_enhancement(true)
-        .with_ansi_colors(true);
-
-    let mut line_index = 0usize;
-
-    loop {
-        // Separate previous output from the next input.
-        println!();
-
-        let prompt =
-            NovumPrompt::new(line_index);
-
-        match editor.read_line(&prompt) {
-            Ok(Signal::Success(line)) => {
-                let command = line.trim();
-
-                if command.is_empty() {
-                    continue;
-                }
-
-                match command {
-                    "quit" | "exit" => {
-                        println!("\nBye!");
-                        break;
-                    }
-
-                    "help" => {
-                        print_repl_help();
-                        continue;
-                    }
-
-                    _ => {}
-                }
-
-                run(
-                    interpreter,
-                    &line,
-                    display_lexer,
-                    display_parser,
-                    Some(line_index),
-                    true,
-                );
-
-                line_index += 1;
-            }
-
-            Ok(Signal::CtrlC) => {
-                println!("^C");
-            }
-
-            Ok(Signal::CtrlD) => {
-                println!("\nBye!");
-                break;
-            }
-
-            Ok(signal) => {
-                eprintln!(
-                    "REPL event: {signal:?}"
-                );
-            }
-
-            Err(error) => {
-                eprintln!(
-                    "REPL error: {error}"
-                );
-                break;
-            }
-        }
-    }
 }
 
 // ============================================================

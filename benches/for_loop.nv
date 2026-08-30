@@ -1,0 +1,13 @@
+let x = 0
+
+for i in 0..1000000 {
+    x = x + i
+}
+
+x
+// print(x)
+
+// ________________________________________________________
+// Executed in  143.20 millis    fish           external
+//    usr time  132.18 millis    0.25 millis  131.93 millis
+//    sys time    9.31 millis    1.30 millis    8.01 millis

@@ -1,45 +1,71 @@
-use crate::{runtime::Env, syntax::{Expr, Pattern}};
-use std::{fmt, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    path::PathBuf,
+};
 
-pub type FuncRef = Rc<Function>;
+use super::{
+    Value,
+    ModuleRef,
+};
+use crate::vm::{
+    Chunk,
+};
 
-#[derive(Clone)]
-pub struct Function {
+pub type CellRef = Rc<RefCell<Value>>;
+pub type FunctionRef = Rc<FunctionProto>;
+pub type ClosureRef = Rc<Closure>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum UpvalueSpec {
+    Local(u16),
+    Parent(u16),
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionParameter {
     pub name: Option<String>,
-    pub params: Vec<Pattern>,
-    pub body: Rc<Expr>,
-    pub closure: Env,
 }
 
-impl Function {
-    pub fn parameters(
-        &self,
-    ) -> &[Pattern] {
-        &self.params
-    }
-
-    pub fn body(
-        &self,
-    ) -> &Expr {
-        &self.body
-    }
-
-    pub fn closure(
-        &self,
-    ) -> Env {
-        self.closure.clone()
-    }
+#[derive(Debug, Clone)]
+pub struct FunctionProto {
+    pub arity: u16,
+    pub parameters: Vec<FunctionParameter>,
+    pub chunk: Rc<Chunk>,
+    pub upvalue_specs: Vec<UpvalueSpec>,
 }
 
-impl fmt::Debug for Function {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub function: FunctionRef,
+    pub upvalues: Vec<CellRef>,
 }
 
-impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.name {
-            Some(name) => write!(f, "<{name}>"),
-            None => write!(f, "<lambda>"),
-        }
-    }
+#[derive(Debug)]
+pub struct CallFrame {
+    pub closure: ClosureRef,
+    pub ip: usize,
+    pub locals: Vec<Value>,
+    pub cells: Option<Vec<Option<CellRef>>>,
+    pub range_cursors: Vec<Option<RangeCursor>>,
+    pub module: Option<ModuleRef>,
+    pub source_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RangeCursor {
+    pub current: i64,
+
+    /*
+     * Always exclusive.
+     *
+     * For:
+     *
+     *     0..10
+     *     end = 10
+     *
+     *     0..=10
+     *     end = 11
+     */
+    pub end: i64,
 }

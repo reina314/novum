@@ -209,7 +209,6 @@ impl IndexExpr {
 }
 
 
-
 #[derive(Debug, Clone)]
 pub enum ListItem {
     Expr(Expr),
@@ -280,6 +279,11 @@ pub enum Pattern {
     Enum {
         path: Vec<String>,
         fields: Vec<Pattern>,
+    },
+
+    Struct {
+        path: Vec<String>,
+        fields: Vec<(String, Pattern)>,
     },
 }
 

@@ -1,8 +1,14 @@
-use crate::runtime::{
-    Module,
-    ModuleRef,
-    Value,
-    EnumValue,
+use crate::{
+    runtime::{
+        Module,
+        ModuleRef,
+        Value,
+        List,
+    },
+    stdlib::{
+        result_err,
+        result_ok,
+    },
 };
 
 use std::{
@@ -488,11 +494,7 @@ pub fn list_dir(
     Ok(
         result_ok(
             Value::List(
-                Rc::new(
-                    RefCell::new(
-                        result
-                    )
-                )
+                List::new(result)
             )
         )
     )
@@ -543,34 +545,4 @@ fn get_string(
                 other.type_name()
             )),
     }
-}
-
-fn result_ok(value: Value) -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Result",
-                "Ok",
-                vec![value],
-            )
-        )
-    )
-}
-
-fn result_err(message: impl Into<String>) -> Value {
-    Value::EnumValue(
-        Rc::new(
-            EnumValue::new(
-                "Result",
-                "Err",
-                vec![
-                    Value::Str(
-                        Rc::new(
-                            message.into()
-                        )
-                    )
-                ],
-            )
-        )
-    )
 }
