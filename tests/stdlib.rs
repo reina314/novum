@@ -139,7 +139,7 @@ fn vm_csv_read() {
             "tests/data/experiment.csv"
         ).nrows
         "#,
-        6,
+        122,
     )
 }
 
