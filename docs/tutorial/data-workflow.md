@@ -68,6 +68,6 @@ print(fit["r_squared"])
 
 The same language therefore covers the full path from raw tabular input to numerical analysis without introducing a separate data-processing language.
 
-{% callout warning %}
-The current `vm` line is still under development. Check the API reference before depending on behavior that is not demonstrated here.
-{% endcallout %}
+> **Warning**
+>
+> The current `vm` line is still under development. Check the API reference before depending on behavior that is not demonstrated here.

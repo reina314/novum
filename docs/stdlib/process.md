@@ -89,6 +89,6 @@ match result {
 }
 ```
 
-{% callout warning %}
-`process.run()` executes a real external process. Never pass untrusted command names or arguments to it without validating them first.
-{% endcallout %}
+> **Warning**
+>
+> `process.run()` executes a real external process. Never pass untrusted command names or arguments to it without validating them first.

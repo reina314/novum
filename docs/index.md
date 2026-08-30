@@ -70,6 +70,6 @@ The standard library includes `fs` for files and directories, `process` for envi
 | [Standard Library](stdlib/index.md) | User-facing API reference for the standard modules |
 | [Reference](reference/index.md) | Operators, types, and compact language reference |
 
-{% callout note %}
-The documentation intentionally does **not** describe bytecode, compiler internals, VM implementation details, or Rust data structures. It is written from a user perspective.
-{% endcallout %}
+> **Note**
+>
+> The documentation intentionally does **not** describe bytecode, compiler internals, VM implementation details, or Rust data structures. It is written from a user perspective.
