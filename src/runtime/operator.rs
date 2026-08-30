@@ -1076,9 +1076,7 @@ fn matmul(
                 lhs.dot(&rhs)?;
 
             Ok(
-                Value::Float(
-                    result
-                )
+                Value::Float(result)
             )
         }
 
@@ -1098,9 +1096,7 @@ fn matmul(
             Ok(
                 Value::Matrix(
                     Rc::new(
-                        RefCell::new(
-                            result
-                        )
+                        RefCell::new(result)
                     )
                 )
             )

@@ -1,6 +1,5 @@
 use faer::{
     Accum,
-    Conj,
     Mat,
     Par,
     Scale,
@@ -45,12 +44,16 @@ pub fn vector_dot(
     lhs: &faer::Col<f64>,
     rhs: &faer::Col<f64>,
 ) -> f64 {
-    faer::linalg::matmul::dot::inner_prod(
-        lhs.as_ref(),
-        Conj::No,
-        rhs.as_ref(),
-        Conj::No,
-    )
+    let mut result =
+        0.0;
+
+    for index in 0..lhs.nrows() {
+        result +=
+            lhs[index]
+            * rhs[index];
+    }
+
+    result
 }
 
 #[inline]
@@ -119,6 +122,64 @@ pub fn matrix_scale(
     Scale(scalar) * matrix
 }
 
+pub fn matrix_matmul(
+    lhs: &faer::Mat<f64>,
+    rhs: &faer::Mat<f64>,
+) -> Result<
+    faer::Mat<f64>,
+    String,
+> {
+    if lhs.ncols()
+        != rhs.nrows()
+    {
+        return Err(format!(
+            "cannot matrix-multiply shapes ({}, {}) and ({}, {})",
+            lhs.nrows(),
+            lhs.ncols(),
+            rhs.nrows(),
+            rhs.ncols(),
+        ));
+    }
+
+    let rows =
+        lhs.nrows();
+
+    let cols =
+        rhs.ncols();
+
+    let inner =
+        lhs.ncols();
+
+    let mut result =
+        faer::Mat::<f64>::zeros(
+            rows,
+            cols,
+        );
+
+    let work =
+        rows
+            .saturating_mul(cols)
+            .saturating_mul(inner);
+
+    let par =
+        if should_parallelize(work) {
+            faer::Par::rayon(0)
+        } else {
+            faer::Par::Seq
+        };
+
+    faer::linalg::matmul::matmul(
+        &mut result,
+        faer::Accum::Replace,
+        lhs,
+        rhs,
+        1.0,
+        par,
+    );
+
+    Ok(result)
+}
+
 pub fn matrix_elementwise_mul(
     lhs: &Mat<f64>,
     rhs: &Mat<f64>,
@@ -172,18 +233,19 @@ pub fn vector_matrix_mul(
         ));
     }
 
+    let rows =
+        matrix.nrows();
+
+    let cols =
+        matrix.ncols();
+
     let mut result =
-        faer::Mat::<f64>::zeros(
-            1,
-            matrix.ncols(),
+        faer::Col::<f64>::zeros(
+            cols
         );
 
     let work =
-        matrix
-            .nrows()
-            .saturating_mul(
-                matrix.ncols()
-            );
+        rows.saturating_mul(cols);
 
     let par =
         if should_parallelize(work) {
@@ -192,23 +254,24 @@ pub fn vector_matrix_mul(
             faer::Par::Seq
         };
 
-    faer::linalg::matmul::matmul(
-        &mut result,
-        faer::Accum::Replace,
-        vector.transpose(),
-        matrix,
-        1.0,
-        par,
-    );
+    for col in 0..cols {
+        let mut sum =
+            0.0;
 
-    Ok(
-        faer::Col::from_fn(
-            matrix.ncols(),
-            |index| {
-                result[(0, index)]
-            },
-        )
-    )
+        for row in 0..rows {
+            sum +=
+                vector[row]
+                * matrix[(row, col)];
+        }
+
+        result[col] =
+            sum;
+    }
+
+    let _ =
+        par;
+
+    Ok(result)
 }
 
 pub fn matrix_vector_mul(
