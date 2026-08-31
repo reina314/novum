@@ -86,9 +86,10 @@ enum NameResolution {
     Upvalue(u16),
     UsedNamespace {
         namespace: ModulePath,
+        name: String,
     },
     StandardEnum(String),
-    Builtin,
+    Builtin(String),
 }
 
 pub struct CompilerCheckpoint {
@@ -628,6 +629,65 @@ impl Compiler {
         }
     }
 
+    fn emit_name_resolution(
+        &mut self,
+        resolution: NameResolution,
+    ) -> Result<()> {
+        match resolution {
+            NameResolution::Local(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::LoadLocal,
+                    slot as u32,
+                );
+            }
+
+            NameResolution::Upvalue(slot) => {
+                self.chunk.emit_operand(
+                    OpCode::LoadUpvalue,
+                    slot as u32,
+                );
+            }
+
+            NameResolution::UsedNamespace {
+                namespace,
+                name,
+            } => {
+                self.emit_used_namespace_member(
+                    &namespace,
+                    &name,
+                )?;
+            }
+
+            NameResolution::StandardEnum(name) => {
+                let constant =
+                    self.add_standard_enum(
+                        &name
+                    )?;
+
+                self.chunk.emit_operand(
+                    OpCode::Constant,
+                    constant,
+                );
+            }
+
+            NameResolution::Builtin(name) => {
+                let constant =
+                    self.chunk.add_constant(
+                        Value::Str(
+                            Rc::new(name)
+                        )
+                    );
+
+                self.chunk.emit_operand(
+                    OpCode::LoadBuiltin,
+                    constant,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn emit_used_namespace_member(
         &mut self,
         namespace: &ModulePath,
@@ -934,6 +994,10 @@ impl Compiler {
         &mut self,
         name: &str,
     ) -> Result<NameResolution> {
+        // --------------------------------------------------------
+        // 1. Local
+        // --------------------------------------------------------
+
         if let Some(slot) =
             self.resolve_local(name)
         {
@@ -942,6 +1006,10 @@ impl Compiler {
             );
         }
 
+        // --------------------------------------------------------
+        // 2. Upvalue
+        // --------------------------------------------------------
+
         if let Some(slot) =
             self.resolve_upvalue(name)
         {
@@ -949,6 +1017,10 @@ impl Compiler {
                 NameResolution::Upvalue(slot)
             );
         }
+
+        // --------------------------------------------------------
+        // 3. Standard enums
+        // --------------------------------------------------------
 
         if matches!(
             name,
@@ -960,6 +1032,10 @@ impl Compiler {
                 )
             );
         }
+
+        // --------------------------------------------------------
+        // 4. Used namespaces
+        // --------------------------------------------------------
 
         let namespaces =
             self.used_namespaces.clone();
@@ -987,6 +1063,9 @@ impl Compiler {
                                 .into_iter()
                                 .next()
                                 .unwrap(),
+
+                        name:
+                            name.to_string(),
                     }
                 );
             }
@@ -1005,11 +1084,15 @@ impl Compiler {
             }
         }
 
-        if crate::stdlib::builtin::contains(
-            name
-        ) {
+        // --------------------------------------------------------
+        // 5. Builtin
+        // --------------------------------------------------------
+
+        if crate::stdlib::builtin::contains(name) {
             return Ok(
-                NameResolution::Builtin
+                NameResolution::Builtin(
+                    name.to_string()
+                )
             );
         }
 
@@ -3538,56 +3621,7 @@ impl Compiler {
             }
 
             ExprKind::Ident(name) => {
-                match self.resolve_name(name)? {
-                    NameResolution::Local(slot) => {
-                        self.chunk.emit_operand(
-                            OpCode::LoadLocal,
-                            slot as u32,
-                        );
-                    }
-
-                    NameResolution::Upvalue(slot) => {
-                        self.chunk.emit_operand(
-                            OpCode::LoadUpvalue,
-                            slot as u32,
-                        );
-                    }
-
-                    NameResolution::UsedNamespace {
-                        namespace,
-                    } => {
-                        self.emit_used_namespace_member(
-                            &namespace,
-                            name,
-                        )?;
-                    }
-
-                    NameResolution::StandardEnum(name) => {
-                        let constant =
-                            self.add_standard_enum(&name)?;
-
-                        self.chunk.emit_operand(
-                            OpCode::Constant,
-                            constant,
-                        );
-                    }
-
-                    NameResolution::Builtin => {
-                        let constant =
-                            self.chunk.add_constant(
-                                Value::Str(
-                                    Rc::new(
-                                        name.clone()
-                                    )
-                                )
-                            );
-
-                        self.chunk.emit_operand(
-                            OpCode::LoadBuiltin,
-                            constant,
-                        );
-                    }
-                }
+                self.compile_name(name)?;
             }
 
             ExprKind::If(
@@ -4078,119 +4112,50 @@ impl Compiler {
                     return Ok(());
                 }
 
-                // receiver.method(...)
+                /*
+                * --------------------------------------------------------
+                * Method syntax
+                *
+                * Still handled by InvokeMethod in Phase 2.
+                * --------------------------------------------------------
+                */
                 if let ExprKind::Field {
                     object,
                     name,
                 } = &callee.kind
                 {
-                    self.compile_expr(
-                        object
+                    self.compile_method_call(
+                        object,
+                        name,
+                        args,
                     )?;
-
-                    let method_index =
-                        self.chunk.add_constant(
-                            Value::Str(
-                                Rc::new(
-                                    name.clone()
-                                )
-                            )
-                        );
-
-                    for arg in args {
-                        self.compile_expr(
-                            &arg.value
-                        )?;
-                    }
-
-                    let call_site =
-                        self.add_call_site(
-                            args,
-                            Some(method_index),
-                        )?;
-
-                    self.chunk.emit_operand(
-                        OpCode::InvokeMethod,
-                        call_site,
-                    );
 
                     return Ok(());
                 }
 
-                // Intrinsics
-                if let ExprKind::Ident(name) =
-                    &callee.kind
-                {
-                    match name.as_str() {
-                        "iter" => {
-                            if args.len() != 1 {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Arity,
-                                        "iter() expects exactly one argument",
-                                        None,
-                                    )
-                                );
-                            }
+                /*
+                * --------------------------------------------------------
+                * Intrinsic
+                * --------------------------------------------------------
+                */
 
-                            self.compile_expr(
-                                &args[0].value
-                            )?;
-
-                            self.chunk.emit(
-                                OpCode::IteratorFrom
-                            );
-
-                            return Ok(());
-                        }
-
-                        "next" => {
-                            if args.len() != 1 {
-                                return Err(
-                                    Error::new(
-                                        ErrorKind::Arity,
-                                        "next() expects exactly one argument",
-                                        None,
-                                    )
-                                );
-                            }
-
-                            self.compile_expr(
-                                &args[0].value
-                            )?;
-
-                            self.chunk.emit(
-                                OpCode::IteratorNext
-                            );
-
-                            return Ok(());
-                        }
-
-                        _ => {}
-                    }
+                if self.try_compile_intrinsic_call(
+                    callee,
+                    args,
+                )? {
+                    return Ok(());
                 }
 
-                // Normal function call.
-                self.compile_expr(
-                    callee
+                /*
+                * --------------------------------------------------------
+                * Normal function application
+                * --------------------------------------------------------
+                */
+
+                self.compile_call(
+                    callee,
+                    args,
                 )?;
-
-                for arg in args {
-                    self.compile_expr(
-                        &arg.value
-                    )?;
-                }
-
-                let call_site =
-                    self.add_call_site(
-                        args,
-                        None,
-                    )?;
-
-                self.chunk.emit_operand(
-                    OpCode::Call,
-                    call_site,
-                );
             }
 
             ExprKind::Block(exprs) => {
@@ -5575,6 +5540,86 @@ impl Compiler {
         Ok(failures)
     }
 
+    fn compile_name(
+        &mut self,
+        name: &str,
+    ) -> Result<()> {
+        let resolution =
+            self.resolve_name(name)?;
+
+        self.emit_name_resolution(
+            resolution
+        )
+    }
+
+    fn compile_call(
+        &mut self,
+        callee: &Expr,
+        args: &[CallArg],
+    ) -> Result<()> {
+        self.compile_expr(
+            callee
+        )?;
+
+        for arg in args {
+            self.compile_expr(
+                &arg.value
+            )?;
+        }
+
+        let call_site =
+            self.add_call_site(
+                args,
+                None,
+            )?;
+
+        self.chunk.emit_operand(
+            OpCode::Call,
+            call_site,
+        );
+
+        Ok(())
+    }
+
+    fn compile_method_call(
+        &mut self,
+        object: &Expr,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<()> {
+        self.compile_expr(
+            object
+        )?;
+
+        let method_index =
+            self.chunk.add_constant(
+                Value::Str(
+                    Rc::new(
+                        name.to_string()
+                    )
+                )
+            );
+
+        for arg in args {
+            self.compile_expr(
+                &arg.value
+            )?;
+        }
+
+        let call_site =
+            self.add_call_site(
+                args,
+                Some(method_index),
+            )?;
+
+        self.chunk.emit_operand(
+            OpCode::InvokeMethod,
+            call_site,
+        );
+
+        Ok(())
+    }
+
     fn compile_pipeline_program(
         &mut self,
         source: &Expr,
@@ -5771,6 +5816,66 @@ impl Compiler {
         );
 
         Ok(true)
+    }
+
+    fn try_compile_intrinsic_call(
+        &mut self,
+        callee: &Expr,
+        args: &[CallArg],
+    ) -> Result<bool> {
+        let ExprKind::Ident(name) =
+            &callee.kind
+        else {
+            return Ok(false);
+        };
+
+        match name.as_str() {
+            "iter" => {
+                if args.len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "iter() expects exactly one argument",
+                            None,
+                        )
+                    );
+                }
+
+                self.compile_expr(
+                    &args[0].value
+                )?;
+
+                self.chunk.emit(
+                    OpCode::IteratorFrom
+                );
+
+                Ok(true)
+            }
+
+            "next" => {
+                if args.len() != 1 {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Arity,
+                            "next() expects exactly one argument",
+                            None,
+                        )
+                    );
+                }
+
+                self.compile_expr(
+                    &args[0].value
+                )?;
+
+                self.chunk.emit(
+                    OpCode::IteratorNext
+                );
+
+                Ok(true)
+            }
+
+            _ => Ok(false),
+        }
     }
 
 }

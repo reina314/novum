@@ -2921,3 +2921,15 @@ fn use_multiple_namespaces_can_resolve_unique_member() {
     );
 }
 
+#[test]
+fn phase2_local_shadows_used_namespace() {
+    common::assert_int(
+        r#"
+        use math
+        let sqrt = |x| 42
+        sqrt(9)
+        "#,
+        42,
+    );
+}
+
