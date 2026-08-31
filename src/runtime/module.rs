@@ -117,6 +117,14 @@ impl Module {
         self.exports.contains(name)
     }
 
+    pub fn exported_names(
+        &self,
+    ) -> impl Iterator<Item = &str> {
+        self.exports
+            .iter()
+            .map(String::as_str)
+    }
+
     /// Alias for `get_internal()`
     pub fn get(&self, name: &str) -> Option<Value> {
         self.fields.get(name).cloned()

@@ -3,7 +3,7 @@ use crate::{
     runtime::{
         apply_binop, CallFrame, CellRef, Class, ClassRef, Closure, ClosureRef, DataFrameRef,
         EnumConstructor, EnumRef, EnumValue, FieldDefinition, FunctionParameter, FunctionProto,
-        FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath, ModuleRef,
+        FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath, ModuleRef, ExtensionRegistry,
         ObjectRef, RangeCursor, SeriesRef, StructTypeRef, StructValue, UpvalueSpec, Value,
     },
     stdlib::{decode_class_counts, option_none, option_some},
@@ -41,6 +41,8 @@ pub struct Vm {
     loading_modules: Vec<PathBuf>,
     stdlib_modules: HashMap<String, ModuleRef>,
     module_namespaces: HashMap<ModulePath, ModuleRef>,
+
+    extension_registry: ExtensionRegistry,
 }
 
 impl Vm {
@@ -58,6 +60,8 @@ impl Vm {
             loading_modules: Vec::new(),
             stdlib_modules: HashMap::new(),
             module_namespaces: HashMap::new(),
+            extension_registry:
+                crate::stdlib::extension_registry(),
         }
     }
 

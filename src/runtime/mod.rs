@@ -16,6 +16,7 @@ pub mod path;
 pub mod standard;
 pub mod r#struct;
 pub mod value;
+pub mod extension;
 
 pub use operator::apply_binop;
 pub use set::{Set, SetRef};
@@ -41,3 +42,4 @@ pub use r#enum::{EnumConstructor, EnumDef, EnumRef, EnumValue, EnumValueRef};
 pub use r#struct::{StructType, StructTypeRef, StructValue, StructValueRef};
 pub use standard::{option, result};
 pub use value::{BuiltinFn, Dict, List, StrRef, Value};
+pub use extension::{ExtensionMethod, ExtensionRegistry, ReceiverKind,};

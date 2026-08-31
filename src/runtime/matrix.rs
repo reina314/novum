@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fmt, rc::Rc};
 
 use faer::{
-    linalg::solvers::{DenseSolveCore, Solve, SolveLstsq},
+    linalg::solvers::{DenseSolveCore,},
     Mat,
 };
 

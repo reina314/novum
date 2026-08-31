@@ -1,10 +1,9 @@
-use crate::runtime::{DataFrame, Module, ModuleRef, Series, SeriesRef, Value};
+use crate::runtime::{DataFrame, Module, ModuleRef, Series, SeriesRef, Value, ExtensionRegistry, ReceiverKind};
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use statrs::{
-    distribution::{ChiSquared, ContinuousCDF, FisherSnedecor, Normal, StudentsT},
-    statistics::Statistics,
+    distribution::{ContinuousCDF, StudentsT},
 };
 
 pub fn module() -> ModuleRef {
@@ -46,6 +45,71 @@ pub fn module() -> ModuleRef {
 
     Rc::new(RefCell::new(module))
 }
+
+pub fn register_extensions(
+    registry: &mut ExtensionRegistry,
+) {
+    registry.register(
+        ReceiverKind::Series,
+        "sum",
+        Value::Builtin(sum),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "min",
+        Value::Builtin(min),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "max",
+        Value::Builtin(max),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "mean",
+        Value::Builtin(mean),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "median",
+        Value::Builtin(median),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "quantile",
+        Value::Builtin(quantile),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "variance",
+        Value::Builtin(variance),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "std",
+        Value::Builtin(std),
+    );
+
+    registry.register(
+        ReceiverKind::Series,
+        "correlation",
+        Value::Builtin(correlation),
+    );
+
+    registry.register(
+        ReceiverKind::DataFrame,
+        "describe",
+        Value::Builtin(describe),
+    );
+}
+
 
 fn numeric_series(value: &Value) -> Result<Vec<f64>, String> {
     match value {

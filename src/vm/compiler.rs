@@ -13,7 +13,7 @@ use super::{
     PipelineExpr, PipelinePlan, PipelineProgram, PipelineSource, PipelineStage, RangeLoop,
 };
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
 enum PipelineStageAst {
     Map(Expr),
@@ -43,14 +43,6 @@ enum NameResolution {
     UsedNamespace { namespace: ModulePath, name: String },
     StandardEnum(String),
     Builtin(String),
-}
-
-pub struct CompilerCheckpoint {
-    next_local_slot: u16,
-    locals: HashMap<String, u16>,
-    upvalues: HashMap<String, u16>,
-    upvalue_specs: Vec<UpvalueSpec>,
-    used_namespaces: Vec<ModulePath>,
 }
 
 struct LoopContext {
@@ -85,6 +77,16 @@ impl Scope {
     }
 }
 
+pub struct CompilerCheckpoint {
+    next_local_slot: u16,
+    locals: HashMap<String, u16>,
+    upvalues: HashMap<String, u16>,
+    upvalue_specs: Vec<UpvalueSpec>,
+    used_namespaces: Vec<ModulePath>,
+    namespace_exports: 
+        HashMap<ModulePath, HashSet<String>>,
+}
+
 pub struct Compiler {
     chunk: Chunk,
     scope: ScopeRef,
@@ -92,6 +94,8 @@ pub struct Compiler {
     loops: Vec<LoopContext>,
     function_parameters: Vec<FunctionParameter>,
     used_namespaces: Vec<ModulePath>,
+    namespace_exports: 
+        HashMap<ModulePath, HashSet<String>>,
 }
 
 impl Compiler {
@@ -103,6 +107,7 @@ impl Compiler {
             loops: Vec::new(),
             function_parameters: Vec::new(),
             used_namespaces: Vec::new(),
+            namespace_exports: HashMap::new(),
         }
     }
 
@@ -119,6 +124,8 @@ impl Compiler {
             upvalue_specs: scope.upvalue_specs.clone(),
 
             used_namespaces: self.used_namespaces.clone(),
+
+            namespace_exports: self.namespace_exports.clone(),
         }
     }
 
@@ -126,6 +133,8 @@ impl Compiler {
         self.next_local_slot = checkpoint.next_local_slot;
 
         self.used_namespaces = checkpoint.used_namespaces;
+
+        self.namespace_exports = checkpoint.namespace_exports;
 
         let mut scope = self.scope.borrow_mut();
 
@@ -136,19 +145,86 @@ impl Compiler {
         scope.upvalue_specs = checkpoint.upvalue_specs;
     }
 
-    fn use_namespace(&mut self, path: ModulePath) -> Result<()> {
-        if self
-            .used_namespaces
-            .iter()
-            .any(|existing| existing == &path)
-        {
-            return Ok(());
-        }
-
-        self.used_namespaces.push(path);
-
-        Ok(())
+    fn use_namespace(
+    &mut self,
+    path: ModulePath,
+) -> Result<()> {
+    if self
+        .used_namespaces
+        .iter()
+        .any(|existing| existing == &path)
+    {
+        return Ok(());
     }
+
+    self.validate_use_namespace(
+        &path
+    )?;
+
+    let exports =
+        self.load_namespace_exports(
+            &path
+        )?;
+
+    self.namespace_exports.insert(
+        path.clone(),
+        exports,
+    );
+
+    self.used_namespaces.push(
+        path
+    );
+
+    Ok(())
+}
+
+    fn load_namespace_exports(
+    &self,
+    path: &ModulePath,
+) -> Result<
+    std::collections::HashSet<String>
+> {
+    if path.parts().len() != 1 {
+        return Err(
+            Error::new(
+                ErrorKind::Import,
+                format!(
+                    "namespace '{}' cannot be used yet",
+                    path
+                ),
+                None,
+            )
+        );
+    }
+
+    let module_name =
+        &path.parts()[0];
+
+    let module =
+        crate::stdlib::load_module(
+            module_name
+        )
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Import,
+                format!(
+                    "module '{}' not found",
+                    path
+                ),
+                None,
+            )
+        })?;
+
+    let module =
+        module.borrow();
+
+    Ok(
+        module
+            .exported_names()
+            .map(str::to_owned)
+            .collect()
+    )
+}
 
     fn validate_use_namespace(&self, path: &ModulePath) -> Result<()> {
         if path.parts().len() != 1 {
@@ -172,24 +248,21 @@ impl Compiler {
         Ok(())
     }
 
-    fn namespace_exports(&self, namespace: &ModulePath, name: &str) -> Result<bool> {
-        if namespace.parts().len() != 1 {
-            return Ok(false);
-        }
-
-        let module_name = &namespace.parts()[0];
-
-        let Some(module) = crate::stdlib::load_module(module_name) else {
-            return Err(Error::new(
-                ErrorKind::Import,
-                format!("module '{}' not found", namespace),
-                None,
-            ));
-        };
-
-        let x = Ok(module.borrow().is_exported(name));
-        x
-    }
+    fn namespace_exports(
+    &self,
+    namespace: &ModulePath,
+    name: &str,
+) -> Result<bool> {
+    Ok(
+        self.namespace_exports
+            .get(namespace)
+            .is_some_and(
+                |exports| {
+                    exports.contains(name)
+                }
+            )
+    )
+}
 
     fn declare_local(&mut self, name: String) -> Result<u16> {
         {

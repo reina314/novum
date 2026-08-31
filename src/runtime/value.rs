@@ -17,6 +17,7 @@ use super::{
     StructTypeRef,
     StructValueRef,
     VectorRef,
+    ReceiverKind,
 };
 
 use std::{
@@ -216,6 +217,52 @@ impl Value {
 
             Self::Unit => "Unit",
             Self::Null => "Null",
+        }
+    }
+
+    pub fn receiver_kind(&self) -> ReceiverKind {
+        match self {
+            Self::Int(_) =>
+                ReceiverKind::Int,
+
+            Self::Float(_) =>
+                ReceiverKind::Float,
+
+            Self::Bool(_) =>
+                ReceiverKind::Bool,
+
+            Self::Str(_) =>
+                ReceiverKind::Str,
+
+            Self::Tuple(_) =>
+                ReceiverKind::Tuple,
+
+            Self::List(_) =>
+                ReceiverKind::List,
+
+            Self::Set(_) =>
+                ReceiverKind::Set,
+
+            Self::Dict(_) =>
+                ReceiverKind::Dict,
+
+            Self::Vector(_) =>
+                ReceiverKind::Vector,
+
+            Self::Matrix(_) =>
+                ReceiverKind::Matrix,
+
+            Self::Series(_) =>
+                ReceiverKind::Series,
+
+            Self::DataFrame(_) =>
+                ReceiverKind::DataFrame,
+
+            Self::Object(_) =>
+                ReceiverKind::Object,
+
+            _ =>
+                ReceiverKind::Any,
         }
     }
 
