@@ -170,6 +170,20 @@ impl Compiler {
         Ok(())
     }
 
+    fn method_namespace_candidates(&self, name: &str) -> Vec<ModulePath> {
+        self.namespaces
+            .used
+            .iter()
+            .filter(|namespace| {
+                self.namespaces
+                    .exports
+                    .get(*namespace)
+                    .is_some_and(|exports| exports.contains(name))
+            })
+            .cloned()
+            .collect()
+    }
+
     fn load_namespace_exports(
         &self,
         path: &ModulePath,
@@ -3252,7 +3266,13 @@ impl Compiler {
             self.compile_expr(&arg.value)?;
         }
 
-        let call_site = self.add_call_site(args, Some(method_index))?;
+        let method_namespaces = self.method_namespace_candidates(name);
+
+        let call_site = self.chunk.add_method_call_site(
+            args.iter().map(|arg| arg.name.clone()).collect(),
+            Some(method_index),
+            method_namespaces,
+        );
 
         self.chunk.emit_operand(OpCode::InvokeMethod, call_site);
 

@@ -26,7 +26,29 @@ impl Chunk {
     pub fn add_call_site(&mut self, names: Vec<Option<String>>, method: Option<u32>) -> u32 {
         let index = self.call_sites.len();
 
-        self.call_sites.push(CallSite { names, method });
+        self.call_sites.push(CallSite {
+            names,
+            method,
+            method_namespaces: Vec::new(),
+        });
+
+        index as u32
+    }
+
+    #[inline]
+    pub fn add_method_call_site(
+        &mut self,
+        names: Vec<Option<String>>,
+        method: Option<u32>,
+        method_namespaces: Vec<ModulePath>,
+    ) -> u32 {
+        let index = self.call_sites.len();
+
+        self.call_sites.push(CallSite {
+            names,
+            method,
+            method_namespaces,
+        });
 
         index as u32
     }
@@ -110,6 +132,14 @@ pub struct ModuleRefSpec {
 pub struct CallSite {
     pub names: Vec<Option<String>>,
     pub method: Option<u32>,
+
+    /*
+     * Namespaces considered by method lookup after
+     * class / extension lookup fails.
+     *
+     * These are determined at compile time from `use`.
+     */
+    pub method_namespaces: Vec<ModulePath>,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -26,7 +26,6 @@ use std::{
 
 enum MethodTarget {
     Class(ClosureRef),
-
     Extension(Value),
 }
 
@@ -578,8 +577,13 @@ impl Vm {
 
                     let names = metadata.names.clone();
 
-                    let result =
-                        self.invoke_resolved_method(receiver, method.as_str(), args, &names)?;
+                    let result = self.invoke_resolved_method(
+                        receiver,
+                        method.as_str(),
+                        args,
+                        &names,
+                        &metadata.method_namespaces,
+                    )?;
 
                     self.stack.truncate(receiver_index);
 
@@ -1972,7 +1976,6 @@ impl Vm {
          * 1. Class / Object inherent method
          * --------------------------------------------------------
          */
-
         if let Value::Object(object) = receiver {
             let class = object.borrow().class();
 
@@ -1983,16 +1986,22 @@ impl Vm {
 
         /*
          * --------------------------------------------------------
-         * 2. Exact receiver extension
+         * 2. Exact extension
          * --------------------------------------------------------
          */
-
         let receiver_kind = receiver.receiver_kind();
 
         if let Some(function) = self.extension_registry.get(receiver_kind, name) {
             return Ok(Some(MethodTarget::Extension(function.clone())));
         }
 
+        /*
+         * Namespace lookup is intentionally not done here.
+         *
+         * The namespace candidates are attached to
+         * the compiled call site and are handled by
+         * invoke_resolved_method().
+         */
         Ok(None)
     }
 
@@ -4015,10 +4024,11 @@ impl Vm {
         name: &str,
         args: Vec<Value>,
         names: &[Option<String>],
+        namespaces: &[ModulePath],
     ) -> Result<Value> {
         /*
          * --------------------------------------------------------
-         * 1. Type-directed resolution
+         * 1. Class / extension
          * --------------------------------------------------------
          */
         if let Some(target) = self.resolve_method(&receiver, name)? {
@@ -4027,13 +4037,83 @@ impl Vm {
 
         /*
          * --------------------------------------------------------
-         * 2. Existing native/runtime methods
+         * 2. Namespace UFCS fallback
          * --------------------------------------------------------
-         *
-         * Keep the old implementation as a
-         * compatibility layer during migration.
+         */
+        if !namespaces.is_empty() {
+            return self.invoke_namespace_method(
+                receiver.clone(),
+                name,
+                args.clone(),
+                names,
+                namespaces,
+            );
+        }
+
+        /*
+         * --------------------------------------------------------
+         * 3. Legacy native methods
+         * --------------------------------------------------------
          */
         self.invoke_method(receiver, name, args, names)
+    }
+
+    fn invoke_namespace_method(
+        &mut self,
+        receiver: Value,
+        name: &str,
+        args: Vec<Value>,
+        names: &[Option<String>],
+        namespaces: &[ModulePath],
+    ) -> Result<Value> {
+        if namespaces.is_empty() {
+            return Err(Error::new(
+                ErrorKind::Name,
+                format!(
+                    "method '{}' is not supported for this value ({})",
+                    name,
+                    receiver.type_name(),
+                ),
+                None,
+            ));
+        }
+
+        if namespaces.len() > 1 {
+            return Err(Error::new(
+                ErrorKind::Name,
+                format!("ambiguous method '{}'", name,),
+                None,
+            ));
+        }
+
+        let namespace = &namespaces[0];
+
+        let module = self.load_module_namespace(namespace)?;
+
+        let function = module.borrow().get_field(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Name,
+                format!("namespace '{}' has no member '{}'", namespace, name,),
+                None,
+            )
+        })?;
+
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+
+        let mut call_names = Vec::with_capacity(names.len() + 1);
+
+        /*
+         * Receiver is always first positional argument.
+         */
+        call_args.push(receiver);
+
+        call_names.push(None);
+
+        call_args.extend(args);
+
+        call_names.extend(names.iter().cloned());
+
+        self.call_value(function, call_args, &call_names)
     }
 
     fn invoke_module_member(
