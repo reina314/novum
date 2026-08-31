@@ -1316,6 +1316,8 @@ impl Parser {
 
             TokenKind::Pipe => self.parse_lambda(),
 
+            TokenKind::At => self.parse_arg_pack(),
+
             _ => Err(Error::parse(
                 format!("unexpected token {:?}", token.kind),
                 token.span,
@@ -1324,7 +1326,7 @@ impl Parser {
     }
 
     // ============================================================
-    // Dictionary / list / lambda
+    // Dictionary / list / lambda / argpack
     // ============================================================
 
     fn parse_dict(&mut self) -> Result<Expr> {
@@ -1458,6 +1460,36 @@ impl Parser {
         let span = start.join(body.span);
 
         Ok(Expr::new(ExprKind::Lambda(params, Box::new(body)), span))
+    }
+
+    fn parse_arg_pack(&mut self) -> Result<Expr> {
+        let start = self.expect(TokenKind::At)?.span;
+
+        self.expect(TokenKind::LBracket)?;
+
+        let mut items = Vec::new();
+
+        if self.check(TokenKind::RBracket) {
+            let end = self.eat().span;
+
+            return Ok(Expr::new(ExprKind::ArgPack(items), start.join(end)));
+        }
+
+        loop {
+            items.push(self.parse_assignment()?);
+
+            if !self.eat_if(TokenKind::Comma) {
+                break;
+            }
+
+            if self.check(TokenKind::RBracket) {
+                break;
+            }
+        }
+
+        let end = self.expect(TokenKind::RBracket)?.span;
+
+        Ok(Expr::new(ExprKind::ArgPack(items), start.join(end)))
     }
 
     // ============================================================

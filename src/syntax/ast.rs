@@ -90,6 +90,8 @@ pub enum ExprKind {
     Ident(String),
 
     Tuple(Vec<Expr>),
+    ArgPack(Vec<Expr>),
+
     TupleIndex {
         object: Box<Expr>,
         index: usize,

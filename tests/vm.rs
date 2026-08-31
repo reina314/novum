@@ -2816,3 +2816,54 @@ fn vm_method_sugar_mixed_arguments() {
         16,
     );
 }
+
+#[test]
+fn vm_arg_pack_expands_multiple_receivers() {
+    assert_float(
+        r#"
+        use math
+
+        @[3, 7].min()
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn vm_tuple_is_not_argument_pack() {
+    match run(r#"
+        use math
+
+        (1, 2).min()
+        "#)
+    {
+        Ok(_) => {
+            panic!("tuple receiver unexpectedly expanded");
+        },
+
+        Err(_) => {},
+    }
+}
+
+#[test]
+fn vm_arg_pack_calls_local_function() {
+    assert_int(
+        r#"
+        let add =
+            |a, b| a + b
+
+        @[10, 20].add()
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn vm_arg_pack_unknown_function_is_error() {
+    assert_error_kind(
+        r#"
+        @[1, 2].does_not_exist()
+        "#,
+        ErrorKind::Name,
+    );
+}

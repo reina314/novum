@@ -983,6 +983,7 @@ impl Compiler {
             | ExprKind::Field { .. }
             | ExprKind::Index(..)
             | ExprKind::Tuple(..)
+            | ExprKind::ArgPack(_)
             | ExprKind::TupleIndex { .. }
             | ExprKind::List(..)
             | ExprKind::Dict(..)
@@ -1471,6 +1472,14 @@ impl Compiler {
 
                 self.chunk
                     .emit_operand(OpCode::NewTuple, elements.len() as u32);
+            },
+
+            ExprKind::ArgPack(_) => {
+                return Err(Error::new(
+                    ErrorKind::Runtime,
+                    "argument pack can only be used as a method receiver",
+                    None,
+                ));
             },
 
             ExprKind::TupleIndex { object, index } => {
@@ -2216,7 +2225,7 @@ impl Compiler {
                  * --------------------------------------------------------
                  */
                 if let ExprKind::Field { object, name } = &callee.kind {
-                    self.compile_method_call(object, name, args)?;
+                    self.compile_receiver_call(object, name, args)?;
 
                     return Ok(());
                 }
@@ -3067,55 +3076,36 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_method_call(&mut self, object: &Expr, name: &str, args: &[CallArg]) -> Result<()> {
+    fn compile_receiver_call(&mut self, object: &Expr, name: &str, args: &[CallArg]) -> Result<()> {
+        match &object.kind {
+            ExprKind::ArgPack(objects) => self.compile_spread_receiver_call(objects, name, args),
+
+            _ => self.compile_single_receiver_call(object, name, args),
+        }
+    }
+
+    fn compile_single_receiver_call(
+        &mut self,
+        object: &Expr,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<()> {
         /*
-         * --------------------------------------------------------
-         * First try the unified function namespace.
-         * --------------------------------------------------------
-         *
-         *     x.f(a)
-         *
-         * becomes
-         *
-         *     f(x, a)
-         *
-         * when `f` is a resolvable function.
+         * Try unified function resolution first.
          */
         if let Some(resolution) = self.resolve_name_candidate(name)? {
-            /*
-             * Build the unified argument list:
-             *
-             *     x.f(a, b=1)
-             *
-             * becomes:
-             *
-             *     f(x, a, b=1)
-             *
-             * The receiver is always the first positional
-             * argument.
-             */
             let mut call_args = Vec::with_capacity(args.len() + 1);
 
             call_args.push(CallArg::positional(object.clone()));
 
             call_args.extend(args.iter().cloned());
 
-            /*
-             * Callee.
-             */
             self.emit_name_resolution(resolution)?;
 
-            /*
-             * Arguments.
-             */
             for arg in &call_args {
                 self.compile_expr(&arg.value)?;
             }
 
-            /*
-             * The receiver occupies metadata position 0
-             * and is always positional.
-             */
             let call_site = self.add_call_site(&call_args, None)?;
 
             self.chunk.emit_operand(OpCode::Call, call_site);
@@ -3124,14 +3114,38 @@ impl Compiler {
         }
 
         /*
-         * --------------------------------------------------------
          * Legacy class/object method fallback.
-         * --------------------------------------------------------
-         *
-         * Existing methods remain supported until InvokeMethod
-         * is removed in a later phase.
          */
         self.compile_legacy_method_call(object, name, args)
+    }
+
+    fn compile_spread_receiver_call(
+        &mut self,
+        objects: &[Expr],
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<()> {
+        let resolution = self.resolve_name(name)?;
+
+        let mut call_args = Vec::with_capacity(objects.len() + args.len());
+
+        for object in objects {
+            call_args.push(CallArg::positional(object.clone()));
+        }
+
+        call_args.extend(args.iter().cloned());
+
+        self.emit_name_resolution(resolution)?;
+
+        for arg in &call_args {
+            self.compile_expr(&arg.value)?;
+        }
+
+        let call_site = self.add_call_site(&call_args, None)?;
+
+        self.chunk.emit_operand(OpCode::Call, call_site);
+
+        Ok(())
     }
 
     fn compile_legacy_method_call(
