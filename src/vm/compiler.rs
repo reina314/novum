@@ -81,11 +81,22 @@ enum LValue {
     },
 }
 
+enum NameResolution {
+    Local(u16),
+    Upvalue(u16),
+    UsedNamespace {
+        namespace: ModulePath,
+    },
+    StandardEnum(String),
+    Builtin,
+}
+
 pub struct CompilerCheckpoint {
     next_local_slot: u16,
     locals: HashMap<String, u16>,
     upvalues: HashMap<String, u16>,
     upvalue_specs: Vec<UpvalueSpec>,
+    used_namespaces: Vec<ModulePath>,
 }
 
 struct LoopContext {
@@ -136,6 +147,7 @@ pub struct Compiler {
     next_local_slot: u16,
     loops: Vec<LoopContext>,
     function_parameters: Vec<FunctionParameter>,
+    used_namespaces: Vec<ModulePath>,
 }
 
 impl Compiler {
@@ -146,6 +158,7 @@ impl Compiler {
             next_local_slot: 0,
             loops: Vec::new(),
             function_parameters: Vec::new(),
+            used_namespaces: Vec::new(),
         }
     }
 
@@ -167,6 +180,9 @@ impl Compiler {
 
             upvalue_specs:
                 scope.upvalue_specs.clone(),
+
+            used_namespaces:
+                self.used_namespaces.clone(),
         }
     }
 
@@ -176,6 +192,9 @@ impl Compiler {
     ) {
         self.next_local_slot =
             checkpoint.next_local_slot;
+
+        self.used_namespaces =
+            checkpoint.used_namespaces;
 
         let mut scope =
             self.scope.borrow_mut();
@@ -188,6 +207,96 @@ impl Compiler {
 
         scope.upvalue_specs =
             checkpoint.upvalue_specs;
+    }
+
+    fn use_namespace(
+        &mut self,
+        path: ModulePath,
+    ) -> Result<()> {
+        if self.used_namespaces
+            .iter()
+            .any(|existing| existing == &path)
+        {
+            return Ok(());
+        }
+
+        self.used_namespaces.push(path);
+
+        Ok(())
+    }
+
+    fn validate_use_namespace(
+        &self,
+        path: &ModulePath,
+    ) -> Result<()> {
+        if path.parts().len() != 1 {
+            return Err(
+                Error::new(
+                    ErrorKind::Import,
+                    format!(
+                        "namespace '{}' cannot be used yet",
+                        path
+                    ),
+                    None,
+                )
+            );
+        }
+
+        let name =
+            &path.parts()[0];
+
+        if crate::stdlib::load_module(name)
+            .is_none()
+        {
+            return Err(
+                Error::new(
+                    ErrorKind::Import,
+                    format!(
+                        "module '{}' not found",
+                        path
+                    ),
+                    None,
+                )
+            );
+        }
+
+        Ok(())
+    }
+
+    fn namespace_exports(
+        &self,
+        namespace: &ModulePath,
+        name: &str,
+    ) -> Result<bool> {
+        if namespace.parts().len() != 1 {
+            return Ok(false);
+        }
+
+        let module_name =
+            &namespace.parts()[0];
+
+        let Some(module) =
+            crate::stdlib::load_module(
+                module_name
+            )
+        else {
+            return Err(
+                Error::new(
+                    ErrorKind::Import,
+                    format!(
+                        "module '{}' not found",
+                        namespace
+                    ),
+                    None,
+                )
+            );
+        };
+
+        let x = Ok(
+            module
+                .borrow()
+                .is_exported(name)
+        ); x
     }
 
     fn declare_local(
@@ -519,6 +628,46 @@ impl Compiler {
         }
     }
 
+    fn emit_used_namespace_member(
+        &mut self,
+        namespace: &ModulePath,
+        name: &str,
+    ) -> Result<()> {
+        let module_ref =
+            self.chunk.add_module_ref(
+                ModuleRefSpec {
+                    path:
+                        namespace.clone(),
+                    namespace: true,
+                }
+            );
+
+        self.chunk.emit_operand(
+            OpCode::LoadModule,
+            module_ref,
+        );
+
+        let field =
+            self.chunk.add_constant(
+                Value::Str(
+                    Rc::new(
+                        name.to_string()
+                    )
+                )
+            );
+
+        self.chunk.emit_operand(
+            OpCode::Constant,
+            field,
+        );
+
+        self.chunk.emit(
+            OpCode::FieldGet
+        );
+
+        Ok(())
+    }
+
     fn enter_scope(
         &mut self,
     ) {
@@ -781,6 +930,101 @@ impl Compiler {
         None
     }
 
+    fn resolve_name(
+        &mut self,
+        name: &str,
+    ) -> Result<NameResolution> {
+        if let Some(slot) =
+            self.resolve_local(name)
+        {
+            return Ok(
+                NameResolution::Local(slot)
+            );
+        }
+
+        if let Some(slot) =
+            self.resolve_upvalue(name)
+        {
+            return Ok(
+                NameResolution::Upvalue(slot)
+            );
+        }
+
+        if matches!(
+            name,
+            "Option" | "Result"
+        ) {
+            return Ok(
+                NameResolution::StandardEnum(
+                    name.to_string()
+                )
+            );
+        }
+
+        let namespaces =
+            self.used_namespaces.clone();
+
+        let mut matches =
+            Vec::new();
+
+        for namespace in namespaces {
+            if self.namespace_exports(
+                &namespace,
+                name,
+            )? {
+                matches.push(namespace);
+            }
+        }
+
+        match matches.len() {
+            0 => {}
+
+            1 => {
+                return Ok(
+                    NameResolution::UsedNamespace {
+                        namespace:
+                            matches
+                                .into_iter()
+                                .next()
+                                .unwrap(),
+                    }
+                );
+            }
+
+            _ => {
+                return Err(
+                    Error::new(
+                        ErrorKind::Name,
+                        format!(
+                            "ambiguous name '{}'",
+                            name
+                        ),
+                        None,
+                    )
+                );
+            }
+        }
+
+        if crate::stdlib::builtin::contains(
+            name
+        ) {
+            return Ok(
+                NameResolution::Builtin
+            );
+        }
+
+        Err(
+            Error::new(
+                ErrorKind::Name,
+                format!(
+                    "{} is undefined",
+                    name
+                ),
+                None,
+            )
+        )
+    }
+
     fn resolve_enum_pattern(
         &self,
         path: &[String],
@@ -851,6 +1095,7 @@ impl Compiler {
     fn new_function(
         parent: ScopeRef,
         params: &[Pattern],
+        used_namespaces: Vec<ModulePath>,
     ) -> Result<Self> {
         if params.len() >
             u16::MAX as usize
@@ -881,6 +1126,7 @@ impl Compiler {
                     Vec::with_capacity(
                         params.len()
                     ),
+                used_namespaces,
             };
 
         for (
@@ -1392,7 +1638,8 @@ impl Compiler {
             | ExprKind::EnumDecl(_)
             | ExprKind::Import { .. }
             | ExprKind::Drop(_)
-            | ExprKind::Block(_) => false,
+            | ExprKind::Block(_)
+            | ExprKind::Use { .. } => false,
         }
     }
 
@@ -3291,60 +3538,55 @@ impl Compiler {
             }
 
             ExprKind::Ident(name) => {
-                if let Some(slot) =
-                    self.resolve_local(name)
-                {
-                    self.chunk.emit_operand(
-                        OpCode::LoadLocal,
-                        slot as u32,
-                    );
-                } else if let Some(slot) =
-                    self.resolve_upvalue(name)
-                {
-                    self.chunk.emit_operand(
-                        OpCode::LoadUpvalue,
-                        slot as u32,
-                    );
-                } else if matches!(
-                    name.as_str(),
-                    "Option" | "Result"
-                ) {
-                    let constant =
-                        self.add_standard_enum(
-                            name
-                        )?;
-
-                    self.chunk.emit_operand(
-                        OpCode::Constant,
-                        constant,
-                    );
-                } else if crate::stdlib::builtin::contains(
-                    name
-                ) {
-                    let constant =
-                        self.chunk.add_constant(
-                            Value::Str(
-                                Rc::new(
-                                    name.clone()
-                                )
-                            )
+                match self.resolve_name(name)? {
+                    NameResolution::Local(slot) => {
+                        self.chunk.emit_operand(
+                            OpCode::LoadLocal,
+                            slot as u32,
                         );
+                    }
 
-                    self.chunk.emit_operand(
-                        OpCode::LoadBuiltin,
-                        constant,
-                    );
-                } else {
-                    return Err(
-                        Error::new(
-                            ErrorKind::Name,
-                            format!(
-                                "{} is undefined",
-                                name
-                            ),
-                            None,
-                        )
-                    );
+                    NameResolution::Upvalue(slot) => {
+                        self.chunk.emit_operand(
+                            OpCode::LoadUpvalue,
+                            slot as u32,
+                        );
+                    }
+
+                    NameResolution::UsedNamespace {
+                        namespace,
+                    } => {
+                        self.emit_used_namespace_member(
+                            &namespace,
+                            name,
+                        )?;
+                    }
+
+                    NameResolution::StandardEnum(name) => {
+                        let constant =
+                            self.add_standard_enum(&name)?;
+
+                        self.chunk.emit_operand(
+                            OpCode::Constant,
+                            constant,
+                        );
+                    }
+
+                    NameResolution::Builtin => {
+                        let constant =
+                            self.chunk.add_constant(
+                                Value::Str(
+                                    Rc::new(
+                                        name.clone()
+                                    )
+                                )
+                            );
+
+                        self.chunk.emit_operand(
+                            OpCode::LoadBuiltin,
+                            constant,
+                        );
+                    }
                 }
             }
 
@@ -4036,6 +4278,35 @@ impl Compiler {
                 self.chunk.emit(
                     OpCode::Pop
                 );
+
+                self.chunk.emit(
+                    OpCode::Unit
+                );
+            }
+
+            ExprKind::Use { path } => {
+                if path.is_empty() {
+                    return Err(
+                        Error::new(
+                            ErrorKind::Import,
+                            "empty namespace path",
+                            None,
+                        )
+                    );
+                }
+
+                let module_path =
+                    ModulePath::new(
+                        path.clone()
+                    );
+
+                self.validate_use_namespace(
+                    &module_path
+                )?;
+
+                self.use_namespace(
+                    module_path
+                )?;
 
                 self.chunk.emit(
                     OpCode::Unit
@@ -4813,6 +5084,7 @@ impl Compiler {
             Compiler::new_function(
                 self.scope.clone(),
                 params,
+                self.used_namespaces.clone(),
             )?;
 
         compiler.compile_expr(
@@ -4840,6 +5112,7 @@ impl Compiler {
             Compiler::new_function(
                 self.scope.clone(),
                 &[],
+                self.used_namespaces.clone(),
             )?;
 
         compiler.compile_expr(

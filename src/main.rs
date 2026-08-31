@@ -731,7 +731,8 @@ impl NovumUi {
             | TokenKind::Class
             | TokenKind::Struct
             | TokenKind::Enum
-            | TokenKind::Import => {
+            | TokenKind::Import
+            | TokenKind::Use => {
                 Self::keyword_style()
             }
 

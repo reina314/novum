@@ -125,6 +125,10 @@ pub enum ExprKind {
         alias: Option<String>,
     },
 
+    Use {
+        path: Vec<String>,
+    },
+
     // Assignment & Deassignment
     Let {
         visibility: Visibility,

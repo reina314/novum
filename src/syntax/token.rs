@@ -53,6 +53,7 @@ pub enum TokenKind {
     Enum,
 
     Import,
+    Use,
 
     LParen,
     LBrace,

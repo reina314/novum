@@ -2838,9 +2838,86 @@ fn dataframe_iteration() {
     );
 }
 
+// ============================================================
+// Use
+// ============================================================
+#[test]
+fn import_and_use_can_coexist() {
+    common::assert_float(
+        r#"
+        import math
+        use math
+        sqrt(16)
+        "#,
+        4.0,
+    );
+}
 
+#[test]
+fn use_math_resolves_unqualified_name() {
+    common::assert_float(
+        r#"
+        use math
+        sqrt(9)
+        "#,
+        3.0,
+    );
+}
 
+#[test]
+fn use_does_not_bind_namespace_name() {
+    common::assert_error_kind(
+        r#"
+        use math
+        math
+        "#,
+        ErrorKind::Name,
+    );
+}
 
+#[test]
+fn use_unknown_module_fails() {
+    common::assert_error_kind(
+        r#"
+        use does_not_exist
+        "#,
+        ErrorKind::Import,
+    );
+}
 
+#[test]
+fn use_unknown_member_fails() {
+    common::assert_error_kind(
+        r#"
+        use math
+        totally_unknown_name
+        "#,
+        ErrorKind::Name,
+    );
+}
 
+#[test]
+fn use_namespace_collision_is_error() {
+    common::assert_error_kind(
+        r#"
+        use math
+        use stats
+        min(1, 2)
+        "#,
+        ErrorKind::Name,
+    );
+}
+
+#[test]
+fn use_multiple_namespaces_can_resolve_unique_member() {
+    common::assert_float(
+        r#"
+        use math
+        use stats
+
+        sqrt(25)
+        "#,
+        5.0,
+    );
+}
 

@@ -505,6 +505,9 @@ impl Parser {
             TokenKind::Import =>
                 self.parse_import(),
 
+            TokenKind::Use =>
+                self.parse_use(),
+
             TokenKind::Pub =>
                 self.parse_public_declaration(),
 
@@ -1065,6 +1068,72 @@ impl Parser {
                 ExprKind::Import {
                     path: parts,
                     alias,
+                },
+                start.join(end_span),
+            )
+        )
+    }
+
+    fn parse_use(&mut self) -> Result<Expr> {
+        let start =
+            self.expect(TokenKind::Use)?
+                .span;
+
+        let first =
+            self.peek().clone();
+
+        let first_name =
+            match first.kind {
+                TokenKind::Ident(name) => {
+                    self.pos += 1;
+                    name
+                }
+
+                _ => {
+                    return Err(
+                        Error::parse(
+                            "use expects a module name",
+                            first.span,
+                        )
+                    );
+                }
+            };
+
+        let mut parts =
+            vec![first_name];
+
+        let mut end_span =
+            first.span;
+
+        while self.eat_if(TokenKind::Dot) {
+            let token =
+                self.peek().clone();
+
+            let name =
+                match token.kind {
+                    TokenKind::Ident(name) => {
+                        self.pos += 1;
+                        name
+                    }
+
+                    _ => {
+                        return Err(
+                            Error::parse(
+                                "expected module name after '.'",
+                                token.span,
+                            )
+                        );
+                    }
+                };
+
+            end_span = token.span;
+            parts.push(name);
+        }
+
+        Ok(
+            Expr::new(
+                ExprKind::Use {
+                    path: parts,
                 },
                 start.join(end_span),
             )

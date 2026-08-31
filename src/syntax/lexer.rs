@@ -262,6 +262,7 @@ impl<'a> Lexer<'a> {
             "match" => TokenKind::Match,
 
             "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
 
             "struct" => TokenKind::Struct,
             "class" => TokenKind::Class,
