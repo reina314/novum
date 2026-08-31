@@ -565,12 +565,17 @@ impl Compiler {
     }
 
     fn resolve_name(&mut self, name: &str) -> Result<NameResolution> {
+        self.resolve_name_candidate(name)?
+            .ok_or_else(|| Error::new(ErrorKind::Name, format!("{} is undefined", name), None))
+    }
+
+    fn resolve_name_candidate(&mut self, name: &str) -> Result<Option<NameResolution>> {
         // --------------------------------------------------------
         // 1. Local
         // --------------------------------------------------------
 
         if let Some(slot) = self.resolve_local(name) {
-            return Ok(NameResolution::Local(slot));
+            return Ok(Some(NameResolution::Local(slot)));
         }
 
         // --------------------------------------------------------
@@ -578,15 +583,15 @@ impl Compiler {
         // --------------------------------------------------------
 
         if let Some(slot) = self.resolve_upvalue(name) {
-            return Ok(NameResolution::Upvalue(slot));
+            return Ok(Some(NameResolution::Upvalue(slot)));
         }
 
         // --------------------------------------------------------
-        // 3. Standard enums
+        // 3. Standard enum
         // --------------------------------------------------------
 
         if matches!(name, "Option" | "Result") {
-            return Ok(NameResolution::StandardEnum(name.to_string()));
+            return Ok(Some(NameResolution::StandardEnum(name.to_string())));
         }
 
         // --------------------------------------------------------
@@ -607,11 +612,11 @@ impl Compiler {
             0 => {},
 
             1 => {
-                return Ok(NameResolution::UsedNamespace {
+                return Ok(Some(NameResolution::UsedNamespace {
                     namespace: matches.into_iter().next().unwrap(),
 
                     name: name.to_string(),
-                });
+                }));
             },
 
             _ => {
@@ -628,14 +633,10 @@ impl Compiler {
         // --------------------------------------------------------
 
         if crate::stdlib::builtin::contains(name) {
-            return Ok(NameResolution::Builtin(name.to_string()));
+            return Ok(Some(NameResolution::Builtin(name.to_string())));
         }
 
-        Err(Error::new(
-            ErrorKind::Name,
-            format!("{} is undefined", name),
-            None,
-        ))
+        Ok(None)
     }
 
     fn resolve_enum_pattern(&self, path: &[String]) -> Result<(String, String)> {
@@ -2212,8 +2213,6 @@ impl Compiler {
                 /*
                  * --------------------------------------------------------
                  * Method syntax
-                 *
-                 * Still handled by InvokeMethod in Phase 2.
                  * --------------------------------------------------------
                  */
                 if let ExprKind::Field { object, name } = &callee.kind {
@@ -2224,20 +2223,18 @@ impl Compiler {
 
                 /*
                  * --------------------------------------------------------
-                 * Intrinsic
+                 * Intrinsics
                  * --------------------------------------------------------
                  */
-
                 if self.try_compile_intrinsic_call(callee, args)? {
                     return Ok(());
                 }
 
                 /*
                  * --------------------------------------------------------
-                 * Normal function application
+                 * Normal function call
                  * --------------------------------------------------------
                  */
-
                 self.compile_call(callee, args)?;
             },
 
@@ -3071,6 +3068,78 @@ impl Compiler {
     }
 
     fn compile_method_call(&mut self, object: &Expr, name: &str, args: &[CallArg]) -> Result<()> {
+        /*
+         * --------------------------------------------------------
+         * First try the unified function namespace.
+         * --------------------------------------------------------
+         *
+         *     x.f(a)
+         *
+         * becomes
+         *
+         *     f(x, a)
+         *
+         * when `f` is a resolvable function.
+         */
+        if let Some(resolution) = self.resolve_name_candidate(name)? {
+            /*
+             * Build the unified argument list:
+             *
+             *     x.f(a, b=1)
+             *
+             * becomes:
+             *
+             *     f(x, a, b=1)
+             *
+             * The receiver is always the first positional
+             * argument.
+             */
+            let mut call_args = Vec::with_capacity(args.len() + 1);
+
+            call_args.push(CallArg::positional(object.clone()));
+
+            call_args.extend(args.iter().cloned());
+
+            /*
+             * Callee.
+             */
+            self.emit_name_resolution(resolution)?;
+
+            /*
+             * Arguments.
+             */
+            for arg in &call_args {
+                self.compile_expr(&arg.value)?;
+            }
+
+            /*
+             * The receiver occupies metadata position 0
+             * and is always positional.
+             */
+            let call_site = self.add_call_site(&call_args, None)?;
+
+            self.chunk.emit_operand(OpCode::Call, call_site);
+
+            return Ok(());
+        }
+
+        /*
+         * --------------------------------------------------------
+         * Legacy class/object method fallback.
+         * --------------------------------------------------------
+         *
+         * Existing methods remain supported until InvokeMethod
+         * is removed in a later phase.
+         */
+        self.compile_legacy_method_call(object, name, args)
+    }
+
+    fn compile_legacy_method_call(
+        &mut self,
+        object: &Expr,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<()> {
         self.compile_expr(object)?;
 
         let method_index = self

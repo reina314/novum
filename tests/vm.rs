@@ -2737,3 +2737,82 @@ fn phase2_local_shadows_used_namespace() {
         42,
     );
 }
+
+#[test]
+fn vm_method_sugar_uses_namespace_function() {
+    assert_float(
+        r#"
+        use math
+
+        9.sqrt()
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn vm_method_sugar_uses_local_function() {
+    assert_int(
+        r#"
+        let add =
+            |x, y| x + y
+
+        10.add(
+            y = 5
+        )
+        "#,
+        15,
+    );
+}
+
+#[test]
+fn vm_method_sugar_stats_mean() {
+    assert_float(
+        r#"
+        use stats
+
+        let x =
+            series(
+                "x",
+                [1, 2, 3]
+            )
+
+        x.mean()
+        "#,
+        2.0,
+    );
+}
+
+#[test]
+fn vm_method_sugar_keeps_legacy_class_method() {
+    assert_int(
+        r#"
+        class Calculator {
+            calc =
+                |self, x| x + 1
+        }
+
+        let c =
+            Calculator()
+
+        c.calc(10)
+        "#,
+        11,
+    );
+}
+
+#[test]
+fn vm_method_sugar_mixed_arguments() {
+    assert_int(
+        r#"
+        let f =
+            |x, a, b| x + a * b
+
+        10.f(
+            b = 3,
+            a = 2,
+        )
+        "#,
+        16,
+    );
+}
