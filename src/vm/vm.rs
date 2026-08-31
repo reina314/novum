@@ -125,8 +125,8 @@ impl Vm {
     }
 
     #[inline]
-    fn method_cache_key(chunk: &Rc<Chunk>, call_site: usize) -> (usize, usize) {
-        (Rc::as_ptr(chunk) as usize, call_site)
+    fn method_cache_key(chunk: &Rc<Chunk>, call_site: usize, name: &str) -> (usize, usize, String) {
+        (Rc::as_ptr(chunk) as usize, call_site, name.to_owned())
     }
 
     pub fn run(&mut self, chunk: Rc<Chunk>) -> Result<Value> {
@@ -2053,7 +2053,7 @@ impl Vm {
         if namespaces.is_empty() {
             return Err(Error::new(
                 ErrorKind::Name,
-                format!("method '{}' is not supported", name,),
+                format!("method '{}' is not supported", name),
                 None,
             ));
         }
@@ -2061,7 +2061,7 @@ impl Vm {
         if namespaces.len() > 1 {
             return Err(Error::new(
                 ErrorKind::Name,
-                format!("ambiguous method '{}'", name,),
+                format!("ambiguous method '{}'", name),
                 None,
             ));
         }
@@ -2070,27 +2070,27 @@ impl Vm {
 
         let module = self.load_module_namespace(namespace)?;
 
-        let value = module.borrow().get_field(name).ok_or_else(|| {
+        let function = module.borrow().get_field(name).ok_or_else(|| {
             Error::new(
                 ErrorKind::Name,
-                format!("namespace '{}' has no member '{}'", namespace, name,),
+                format!("namespace '{}' has no member '{}'", namespace, name),
                 None,
             )
         })?;
 
-        match value {
+        match function {
             Value::Builtin(_)
             | Value::Closure(_)
             | Value::Class(_)
             | Value::EnumConstructor(_)
-            | Value::StructType(_) => Ok(MethodTarget::Callable(value)),
+            | Value::StructType(_) => Ok(MethodTarget::Callable(function)),
 
             other => Err(Error::new(
                 ErrorKind::Type,
                 format!(
                     "method '{}' is not callable (got {})",
                     name,
-                    other.type_name(),
+                    other.type_name()
                 ),
                 None,
             )),
@@ -2098,38 +2098,52 @@ impl Vm {
     }
 
     fn resolve_method_cached(
-    &mut self,
-    chunk: &Rc<Chunk>,
-    call_site: usize,
-    receiver: &Value,
-    name: &str,
-    namespaces: &[ModulePath],
-) -> Result<MethodTarget> {
-    let chunk_key =
-        Rc::as_ptr(chunk) as usize;
+        &mut self,
+        chunk: &Rc<Chunk>,
+        call_site: usize,
+        receiver: &Value,
+        name: &str,
+        namespaces: &[ModulePath],
+    ) -> Result<MethodTarget> {
+        let key = Self::method_cache_key(chunk, call_site, name);
 
-    let receiver_key =
-        Self::method_cache_receiver(
-            receiver,
-        );
+        let receiver_key = Self::method_cache_receiver(receiver);
 
-    let key =
-        (chunk_key, call_site);
-
-    if let Some(entry) =
-        self.method_cache.get(&key)
-    {
-        if entry.receiver == receiver_key {
-            return Ok(entry.target.clone());
+        /*
+         * --------------------------------------------------------
+         * Fast path
+         * --------------------------------------------------------
+         */
+        if let Some(entry) = self.method_cache.get(&key) {
+            if entry.receiver == receiver_key {
+                return Ok(entry.target.clone());
+            }
         }
-    }
 
-    if let Some(target) =
-        self.resolve_method(
-            receiver,
-            name,
-        )?
-    {
+        /*
+         * --------------------------------------------------------
+         * Class / extension lookup
+         * --------------------------------------------------------
+         */
+        if let Some(target) = self.resolve_method(receiver, name)? {
+            self.method_cache.insert(
+                key,
+                MethodCacheEntry {
+                    receiver: receiver_key,
+                    target: target.clone(),
+                },
+            );
+
+            return Ok(target);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * Namespace fallback
+         * --------------------------------------------------------
+         */
+        let target = self.resolve_namespace_method(name, namespaces)?;
+
         self.method_cache.insert(
             key,
             MethodCacheEntry {
@@ -2138,25 +2152,8 @@ impl Vm {
             },
         );
 
-        return Ok(target);
+        Ok(target)
     }
-
-    let target =
-        self.resolve_namespace_method(
-            name,
-            namespaces,
-        )?;
-
-    self.method_cache.insert(
-        key,
-        MethodCacheEntry {
-            receiver: receiver_key,
-            target: target.clone(),
-        },
-    );
-
-    Ok(target)
-}
 
     fn resolve_field(&self, object: Value, field: &str) -> Result<Value> {
         match object {
