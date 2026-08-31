@@ -897,7 +897,21 @@ impl Parser {
 
                 TokenKind::Percent => Some(BinOp::Mod),
 
-                TokenKind::At => Some(BinOp::MatMul),
+                TokenKind::At => {
+                    /*
+                     * `@[...]` is reserved for
+                     * argument-pack syntax.
+                     *
+                     * Therefore `@[` must not be
+                     * consumed as the matrix-multiplication
+                     * operator.
+                     */
+                    if self.peek_n(1).kind == TokenKind::LBracket {
+                        None
+                    } else {
+                        Some(BinOp::MatMul)
+                    }
+                },
 
                 _ => None,
             };

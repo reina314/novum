@@ -3096,12 +3096,22 @@ impl Compiler {
         if let Some(resolution) = self.resolve_name_candidate(name)? {
             let mut call_args = Vec::with_capacity(args.len() + 1);
 
+            /*
+             * Receiver is always the first
+             * positional argument.
+             */
             call_args.push(CallArg::positional(object.clone()));
 
             call_args.extend(args.iter().cloned());
 
+            /*
+             * Resolve callee.
+             */
             self.emit_name_resolution(resolution)?;
 
+            /*
+             * Compile arguments.
+             */
             for arg in &call_args {
                 self.compile_expr(&arg.value)?;
             }
@@ -3114,7 +3124,7 @@ impl Compiler {
         }
 
         /*
-         * Legacy class/object method fallback.
+         * Legacy class/object method.
          */
         self.compile_legacy_method_call(object, name, args)
     }
@@ -3125,22 +3135,44 @@ impl Compiler {
         name: &str,
         args: &[CallArg],
     ) -> Result<()> {
+        /*
+         * Spread receivers can only target ordinary
+         * function application.
+         *
+         * There is no single receiver for InvokeMethod.
+         */
         let resolution = self.resolve_name(name)?;
 
         let mut call_args = Vec::with_capacity(objects.len() + args.len());
 
+        /*
+         * @[a, b].f(...)
+         *
+         * =>
+         *
+         * f(a, b, ...)
+         */
         for object in objects {
             call_args.push(CallArg::positional(object.clone()));
         }
 
         call_args.extend(args.iter().cloned());
 
+        /*
+         * Callee.
+         */
         self.emit_name_resolution(resolution)?;
 
+        /*
+         * Arguments.
+         */
         for arg in &call_args {
             self.compile_expr(&arg.value)?;
         }
 
+        /*
+         * Unified Call metadata.
+         */
         let call_site = self.add_call_site(&call_args, None)?;
 
         self.chunk.emit_operand(OpCode::Call, call_site);
