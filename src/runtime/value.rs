@@ -12,12 +12,12 @@ use super::{
     ModuleRef,
     ObjectRef,
     PathRef,
+    ReceiverKind,
     SeriesRef,
     SetRef,
     StructTypeRef,
     StructValueRef,
     VectorRef,
-    ReceiverKind,
 };
 
 use std::{
@@ -222,47 +222,33 @@ impl Value {
 
     pub fn receiver_kind(&self) -> ReceiverKind {
         match self {
-            Self::Int(_) =>
-                ReceiverKind::Int,
+            Self::Int(_) => ReceiverKind::Int,
 
-            Self::Float(_) =>
-                ReceiverKind::Float,
+            Self::Float(_) => ReceiverKind::Float,
 
-            Self::Bool(_) =>
-                ReceiverKind::Bool,
+            Self::Bool(_) => ReceiverKind::Bool,
 
-            Self::Str(_) =>
-                ReceiverKind::Str,
+            Self::Str(_) => ReceiverKind::Str,
 
-            Self::Tuple(_) =>
-                ReceiverKind::Tuple,
+            Self::Tuple(_) => ReceiverKind::Tuple,
 
-            Self::List(_) =>
-                ReceiverKind::List,
+            Self::List(_) => ReceiverKind::List,
 
-            Self::Set(_) =>
-                ReceiverKind::Set,
+            Self::Set(_) => ReceiverKind::Set,
 
-            Self::Dict(_) =>
-                ReceiverKind::Dict,
+            Self::Dict(_) => ReceiverKind::Dict,
 
-            Self::Vector(_) =>
-                ReceiverKind::Vector,
+            Self::Vector(_) => ReceiverKind::Vector,
 
-            Self::Matrix(_) =>
-                ReceiverKind::Matrix,
+            Self::Matrix(_) => ReceiverKind::Matrix,
 
-            Self::Series(_) =>
-                ReceiverKind::Series,
+            Self::Series(_) => ReceiverKind::Series,
 
-            Self::DataFrame(_) =>
-                ReceiverKind::DataFrame,
+            Self::DataFrame(_) => ReceiverKind::DataFrame,
 
-            Self::Object(_) =>
-                ReceiverKind::Object,
+            Self::Object(_) => ReceiverKind::Object,
 
-            _ =>
-                ReceiverKind::Any,
+            _ => ReceiverKind::Any,
         }
     }
 

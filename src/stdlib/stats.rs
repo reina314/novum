@@ -1,115 +1,102 @@
-use crate::runtime::{DataFrame, Module, ModuleRef, Series, SeriesRef, Value, ExtensionRegistry, ReceiverKind};
+use crate::runtime::{
+    BuiltinFn, DataFrame, ExtensionRegistry, Module, ModuleRef, ReceiverKind, Series, SeriesRef,
+    Value,
+};
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use statrs::{
-    distribution::{ContinuousCDF, StudentsT},
-};
+use statrs::distribution::{ContinuousCDF, StudentsT};
+
+struct FunctionSpec {
+    name: &'static str,
+    function: BuiltinFn,
+    receiver: Option<ReceiverKind>,
+}
+
+fn function_specs() -> &'static [FunctionSpec] {
+    &[
+        FunctionSpec {
+            name: "describe",
+            function: describe,
+            receiver: Some(ReceiverKind::DataFrame),
+        },
+        FunctionSpec {
+            name: "sum",
+            function: sum,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "min",
+            function: min,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "max",
+            function: max,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "mean",
+            function: mean,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "median",
+            function: median,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "quantile",
+            function: quantile,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "variance",
+            function: variance,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "std",
+            function: std,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "correlation",
+            function: correlation,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "ttest",
+            function: ttest,
+            receiver: None,
+        },
+        FunctionSpec {
+            name: "welch",
+            function: welch,
+            receiver: Some(ReceiverKind::Series),
+        },
+    ]
+}
 
 pub fn module() -> ModuleRef {
     let mut module = Module::new("stats");
 
-    module.set_exported("describe", Value::Builtin(describe));
-
-    module.set_exported("sum", Value::Builtin(sum));
-
-    module.set_exported("min", Value::Builtin(min));
-
-    module.set_exported("max", Value::Builtin(max));
-
-    module.set_exported("mean", Value::Builtin(mean));
-
-    module.set_exported("median", Value::Builtin(median));
-
-    module.set_exported("quantile", Value::Builtin(quantile));
-
-    module.set_exported("variance", Value::Builtin(variance));
-
-    module.set_exported("std", Value::Builtin(std));
-
-    module.set_exported("correlation", Value::Builtin(correlation));
-
-    module.set_exported("ttest", Value::Builtin(ttest));
-
-    module.set_exported("welch", Value::Builtin(welch));
-
-    // module.set_exported(
-    //     "anova",
-    //     Value::Builtin(anova),
-    // );
-
-    // module.set_exported(
-    //     "mann_whitney",
-    //     Value::Builtin(mann_whitney),
-    // );
+    for spec in function_specs() {
+        module.set_exported(spec.name, Value::Builtin(spec.function));
+    }
 
     Rc::new(RefCell::new(module))
 }
 
-pub fn register_extensions(
-    registry: &mut ExtensionRegistry,
-) {
-    registry.register(
-        ReceiverKind::Series,
-        "sum",
-        Value::Builtin(sum),
-    );
+pub fn register_extensions(registry: &mut ExtensionRegistry) {
+    for spec in function_specs() {
+        let Some(receiver) = spec.receiver else {
+            continue;
+        };
 
-    registry.register(
-        ReceiverKind::Series,
-        "min",
-        Value::Builtin(min),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "max",
-        Value::Builtin(max),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "mean",
-        Value::Builtin(mean),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "median",
-        Value::Builtin(median),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "quantile",
-        Value::Builtin(quantile),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "variance",
-        Value::Builtin(variance),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "std",
-        Value::Builtin(std),
-    );
-
-    registry.register(
-        ReceiverKind::Series,
-        "correlation",
-        Value::Builtin(correlation),
-    );
-
-    registry.register(
-        ReceiverKind::DataFrame,
-        "describe",
-        Value::Builtin(describe),
-    );
+        registry.register(receiver, spec.name, Value::Builtin(spec.function));
+    }
 }
-
 
 fn numeric_series(value: &Value) -> Result<Vec<f64>, String> {
     match value {
@@ -126,17 +113,6 @@ fn numeric_values_from_series(series: &SeriesRef) -> Result<Vec<f64>, String> {
     series.numeric_values()
 }
 
-fn require_non_empty(values: &[f64], function: &str) -> Result<(), String> {
-    if values.is_empty() {
-        return Err(format!(
-            "{}() requires at least one numeric observation",
-            function
-        ));
-    }
-
-    Ok(())
-}
-
 fn series_values(value: &Value) -> Result<Vec<f64>, String> {
     match value {
         Value::Series(series) => series.numeric_values(),
@@ -145,16 +121,6 @@ fn series_values(value: &Value) -> Result<Vec<f64>, String> {
             "stats function expects Series, got {}",
             other.type_name()
         )),
-    }
-}
-
-fn dataframe_column(value: &Value, name: &str) -> Result<SeriesRef, String> {
-    match value {
-        Value::DataFrame(df) => df
-            .column(name)
-            .ok_or_else(|| format!("unknown DataFrame column '{}'", name)),
-
-        other => Err(format!("expected DataFrame, got {}", other.type_name())),
     }
 }
 

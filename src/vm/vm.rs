@@ -2,9 +2,10 @@ use crate::{
     error::{Error, ErrorKind, Result},
     runtime::{
         apply_binop, CallFrame, CellRef, Class, ClassRef, Closure, ClosureRef, DataFrameRef,
-        EnumConstructor, EnumRef, EnumValue, FieldDefinition, FunctionParameter, FunctionProto,
-        FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath, ModuleRef, ExtensionRegistry,
-        ObjectRef, RangeCursor, SeriesRef, StructTypeRef, StructValue, UpvalueSpec, Value,
+        EnumConstructor, EnumRef, EnumValue, ExtensionRegistry, FieldDefinition, FunctionParameter,
+        FunctionProto, FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath,
+        ModuleRef, ObjectRef, RangeCursor, SeriesRef, StructTypeRef, StructValue, UpvalueSpec,
+        Value,
     },
     stdlib::{decode_class_counts, option_none, option_some},
     syntax::BinOp,
@@ -60,8 +61,7 @@ impl Vm {
             loading_modules: Vec::new(),
             stdlib_modules: HashMap::new(),
             module_namespaces: HashMap::new(),
-            extension_registry:
-                crate::stdlib::extension_registry(),
+            extension_registry: crate::stdlib::extension_registry(),
         }
     }
 

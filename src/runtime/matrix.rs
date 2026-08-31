@@ -1,9 +1,6 @@
 use std::{cell::RefCell, fmt, rc::Rc};
 
-use faer::{
-    linalg::solvers::{DenseSolveCore,},
-    Mat,
-};
+use faer::{linalg::solvers::DenseSolveCore, Mat};
 
 pub type MatrixRef = Rc<RefCell<Matrix>>;
 

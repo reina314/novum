@@ -25,13 +25,8 @@ pub enum ReceiverKind {
     Object,
 }
 
-#[derive(Clone)]
-pub struct ExtensionMethod {
-    pub value: Value,
-}
-
 pub struct ExtensionRegistry {
-    methods: HashMap<(ReceiverKind, String), ExtensionMethod>,
+    methods: HashMap<(ReceiverKind, String), Value>,
 }
 
 impl ExtensionRegistry {
@@ -41,33 +36,18 @@ impl ExtensionRegistry {
         }
     }
 
-    pub fn register(
-        &mut self,
-        receiver: ReceiverKind,
-        name: impl Into<String>,
-        value: Value,
-    ) {
-        self.methods.insert(
-            (receiver, name.into()),
-            ExtensionMethod { value },
-        );
+    pub fn register(&mut self, receiver: ReceiverKind, name: impl Into<String>, value: Value) {
+        self.methods.insert((receiver, name.into()), value);
     }
 
-    pub fn get(
-        &self,
-        receiver: ReceiverKind,
-        name: &str,
-    ) -> Option<&Value> {
+    pub fn get(&self, receiver: ReceiverKind, name: &str) -> Option<&Value> {
         self.methods
             .get(&(receiver, name.to_string()))
-            .map(|method| &method.value)
+            .map(|value| value)
             .or_else(|| {
                 self.methods
-                    .get(&(
-                        ReceiverKind::Any,
-                        name.to_string(),
-                    ))
-                    .map(|method| &method.value)
+                    .get(&(ReceiverKind::Any, name.to_string()))
+                    .map(|value| value)
             })
     }
 }

@@ -1,4 +1,4 @@
-use crate::runtime::{ModuleRef, ExtensionRegistry};
+use crate::runtime::{ExtensionRegistry, ModuleRef};
 
 pub mod builtin;
 pub mod csv;
@@ -34,12 +34,9 @@ pub fn load_module(name: &str) -> Option<ModuleRef> {
 }
 
 pub fn extension_registry() -> ExtensionRegistry {
-    let mut registry =
-        ExtensionRegistry::new();
+    let mut registry = ExtensionRegistry::new();
 
-    stats::register_extensions(
-        &mut registry
-    );
+    stats::register_extensions(&mut registry);
 
     registry
 }

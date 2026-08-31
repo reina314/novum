@@ -13,7 +13,11 @@ use super::{
     PipelineExpr, PipelinePlan, PipelineProgram, PipelineSource, PipelineStage, RangeLoop,
 };
 
-use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 enum PipelineStageAst {
     Map(Expr),
@@ -77,14 +81,18 @@ impl Scope {
     }
 }
 
+#[derive(Clone)]
+struct NamespaceState {
+    used: Vec<ModulePath>,
+    exports: HashMap<ModulePath, HashSet<String>>,
+}
+
 pub struct CompilerCheckpoint {
     next_local_slot: u16,
     locals: HashMap<String, u16>,
     upvalues: HashMap<String, u16>,
     upvalue_specs: Vec<UpvalueSpec>,
-    used_namespaces: Vec<ModulePath>,
-    namespace_exports: 
-        HashMap<ModulePath, HashSet<String>>,
+    namespaces: NamespaceState,
 }
 
 pub struct Compiler {
@@ -93,9 +101,7 @@ pub struct Compiler {
     next_local_slot: u16,
     loops: Vec<LoopContext>,
     function_parameters: Vec<FunctionParameter>,
-    used_namespaces: Vec<ModulePath>,
-    namespace_exports: 
-        HashMap<ModulePath, HashSet<String>>,
+    namespaces: NamespaceState,
 }
 
 impl Compiler {
@@ -106,8 +112,10 @@ impl Compiler {
             next_local_slot: 0,
             loops: Vec::new(),
             function_parameters: Vec::new(),
-            used_namespaces: Vec::new(),
-            namespace_exports: HashMap::new(),
+            namespaces: NamespaceState {
+                used: Vec::new(),
+                exports: HashMap::new(),
+            },
         }
     }
 
@@ -123,18 +131,14 @@ impl Compiler {
 
             upvalue_specs: scope.upvalue_specs.clone(),
 
-            used_namespaces: self.used_namespaces.clone(),
-
-            namespace_exports: self.namespace_exports.clone(),
+            namespaces: self.namespaces.clone(),
         }
     }
 
     pub fn rollback(&mut self, checkpoint: CompilerCheckpoint) {
         self.next_local_slot = checkpoint.next_local_slot;
 
-        self.used_namespaces = checkpoint.used_namespaces;
-
-        self.namespace_exports = checkpoint.namespace_exports;
+        self.namespaces = checkpoint.namespaces;
 
         let mut scope = self.scope.borrow_mut();
 
@@ -145,86 +149,53 @@ impl Compiler {
         scope.upvalue_specs = checkpoint.upvalue_specs;
     }
 
-    fn use_namespace(
-    &mut self,
-    path: ModulePath,
-) -> Result<()> {
-    if self
-        .used_namespaces
-        .iter()
-        .any(|existing| existing == &path)
-    {
-        return Ok(());
+    fn use_namespace(&mut self, path: ModulePath) -> Result<()> {
+        if self
+            .namespaces
+            .used
+            .iter()
+            .any(|existing| existing == &path)
+        {
+            return Ok(());
+        }
+
+        self.validate_use_namespace(&path)?;
+
+        let exports = self.load_namespace_exports(&path)?;
+
+        self.namespaces.exports.insert(path.clone(), exports);
+
+        self.namespaces.used.push(path);
+
+        Ok(())
     }
-
-    self.validate_use_namespace(
-        &path
-    )?;
-
-    let exports =
-        self.load_namespace_exports(
-            &path
-        )?;
-
-    self.namespace_exports.insert(
-        path.clone(),
-        exports,
-    );
-
-    self.used_namespaces.push(
-        path
-    );
-
-    Ok(())
-}
 
     fn load_namespace_exports(
-    &self,
-    path: &ModulePath,
-) -> Result<
-    std::collections::HashSet<String>
-> {
-    if path.parts().len() != 1 {
-        return Err(
-            Error::new(
+        &self,
+        path: &ModulePath,
+    ) -> Result<std::collections::HashSet<String>> {
+        if path.parts().len() != 1 {
+            return Err(Error::new(
                 ErrorKind::Import,
-                format!(
-                    "namespace '{}' cannot be used yet",
-                    path
-                ),
+                format!("namespace '{}' cannot be used yet", path),
                 None,
-            )
-        );
-    }
+            ));
+        }
 
-    let module_name =
-        &path.parts()[0];
+        let module_name = &path.parts()[0];
 
-    let module =
-        crate::stdlib::load_module(
-            module_name
-        )
-        .ok_or_else(|| {
+        let module = crate::stdlib::load_module(module_name).ok_or_else(|| {
             Error::new(
                 ErrorKind::Import,
-                format!(
-                    "module '{}' not found",
-                    path
-                ),
+                format!("module '{}' not found", path),
                 None,
             )
         })?;
 
-    let module =
-        module.borrow();
+        let module = module.borrow();
 
-    Ok(
-        module
-            .exported_names()
-            .map(str::to_owned)
-            .collect()
-    )
-}
+        Ok(module.exported_names().map(str::to_owned).collect())
+    }
 
     fn validate_use_namespace(&self, path: &ModulePath) -> Result<()> {
         if path.parts().len() != 1 {
@@ -248,21 +219,13 @@ impl Compiler {
         Ok(())
     }
 
-    fn namespace_exports(
-    &self,
-    namespace: &ModulePath,
-    name: &str,
-) -> Result<bool> {
-    Ok(
-        self.namespace_exports
+    fn namespace_exports(&self, namespace: &ModulePath, name: &str) -> Result<bool> {
+        Ok(self
+            .namespaces
+            .exports
             .get(namespace)
-            .is_some_and(
-                |exports| {
-                    exports.contains(name)
-                }
-            )
-    )
-}
+            .is_some_and(|exports| exports.contains(name)))
+    }
 
     fn declare_local(&mut self, name: String) -> Result<u16> {
         {
@@ -671,7 +634,7 @@ impl Compiler {
         // 4. Used namespaces
         // --------------------------------------------------------
 
-        let namespaces = self.used_namespaces.clone();
+        let namespaces = self.namespaces.used.clone();
 
         let mut matches = Vec::new();
 
@@ -687,7 +650,6 @@ impl Compiler {
             1 => {
                 return Ok(Some(NameResolution::UsedNamespace {
                     namespace: matches.into_iter().next().unwrap(),
-
                     name: name.to_string(),
                 }));
             },
@@ -747,7 +709,7 @@ impl Compiler {
     fn new_function(
         parent: ScopeRef,
         params: &[Pattern],
-        used_namespaces: Vec<ModulePath>,
+        namespaces: NamespaceState,
     ) -> Result<Self> {
         if params.len() > u16::MAX as usize {
             return Err(Error::new(
@@ -765,7 +727,7 @@ impl Compiler {
             next_local_slot: params.len() as u16,
             loops: Vec::new(),
             function_parameters: Vec::with_capacity(params.len()),
-            used_namespaces,
+            namespaces,
         };
 
         for (index, param) in params.iter().enumerate() {
@@ -2895,7 +2857,7 @@ impl Compiler {
 
     fn compile_lambda_proto(&self, params: &[Pattern], body: &Expr) -> Result<FunctionRef> {
         let mut compiler =
-            Compiler::new_function(self.scope.clone(), params, self.used_namespaces.clone())?;
+            Compiler::new_function(self.scope.clone(), params, self.namespaces.clone())?;
 
         compiler.compile_expr(body)?;
 
@@ -2906,7 +2868,7 @@ impl Compiler {
 
     fn compile_zero_arg_proto(&self, body: &Expr) -> Result<FunctionRef> {
         let mut compiler =
-            Compiler::new_function(self.scope.clone(), &[], self.used_namespaces.clone())?;
+            Compiler::new_function(self.scope.clone(), &[], self.namespaces.clone())?;
 
         compiler.compile_expr(body)?;
 
