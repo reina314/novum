@@ -698,6 +698,18 @@ impl Compiler {
         }
     }
 
+    fn resolve_method_callable(&mut self, name: &str) -> Option<NameResolution> {
+        if let Some(slot) = self.resolve_local(name) {
+            return Some(NameResolution::Local(slot));
+        }
+
+        if let Some(slot) = self.resolve_upvalue(name) {
+            return Some(NameResolution::Upvalue(slot));
+        }
+
+        None
+    }
+
     pub fn finish(self) -> Chunk {
         let mut chunk = self.chunk;
 
@@ -3126,27 +3138,26 @@ impl Compiler {
         args: &[CallArg],
     ) -> Result<()> {
         /*
-         * Try unified function resolution first.
+         * --------------------------------------------------------
+         * 1. Lexically visible function
+         * --------------------------------------------------------
+         *
+         * A local/upvalue function is already a concrete callable.
+         * Keep using the ordinary Call opcode.
          */
-        if let Some(resolution) = self.resolve_name_candidate(name)? {
+        if let Some(resolution) = self.resolve_method_callable(name) {
             let mut call_args = Vec::with_capacity(args.len() + 1);
 
             /*
-             * Receiver is always the first
-             * positional argument.
+             * The receiver is always the
+             * first positional argument.
              */
             call_args.push(CallArg::positional(object.clone()));
 
             call_args.extend(args.iter().cloned());
 
-            /*
-             * Resolve callee.
-             */
             self.emit_name_resolution(resolution)?;
 
-            /*
-             * Compile arguments.
-             */
             for arg in &call_args {
                 self.compile_expr(&arg.value)?;
             }
@@ -3159,7 +3170,17 @@ impl Compiler {
         }
 
         /*
-         * Legacy class/object method.
+         * --------------------------------------------------------
+         * 2. Runtime method resolution
+         * --------------------------------------------------------
+         *
+         * The receiver's runtime type determines:
+         *
+         *   - class method
+         *   - extension method
+         *   - legacy native method
+         *
+         * InvokeMethod is retained as the migration opcode.
          */
         self.compile_legacy_method_call(object, name, args)
     }

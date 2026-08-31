@@ -578,7 +578,8 @@ impl Vm {
 
                     let names = metadata.names.clone();
 
-                    let result = self.invoke_method(receiver, method.as_str(), args, &names)?;
+                    let result =
+                        self.invoke_resolved_method(receiver, method.as_str(), args, &names)?;
 
                     self.stack.truncate(receiver_index);
 
@@ -2308,6 +2309,38 @@ impl Vm {
         Ok(bound)
     }
 
+    fn call_method_target(
+        &mut self,
+        target: MethodTarget,
+        receiver: Value,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+
+        let mut call_names = Vec::with_capacity(names.len() + 1);
+
+        /*
+         * Receiver is always the first
+         * positional argument.
+         */
+        call_args.push(receiver);
+
+        call_names.push(None);
+
+        call_args.extend(args);
+
+        call_names.extend(names.iter().cloned());
+
+        match target {
+            MethodTarget::Class(closure) => {
+                self.call_closure_sync_named(closure, call_args, &call_names)
+            },
+
+            MethodTarget::Extension(value) => self.call_value(value, call_args, &call_names),
+        }
+    }
+
     fn call_closure_sync(&mut self, closure: ClosureRef, args: Vec<Value>) -> Result<Value> {
         let names = vec![None; args.len()];
 
@@ -3974,6 +4007,33 @@ impl Vm {
                 None,
             )),
         }
+    }
+
+    fn invoke_resolved_method(
+        &mut self,
+        receiver: Value,
+        name: &str,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        /*
+         * --------------------------------------------------------
+         * 1. Type-directed resolution
+         * --------------------------------------------------------
+         */
+        if let Some(target) = self.resolve_method(&receiver, name)? {
+            return self.call_method_target(target, receiver, args, names);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * 2. Existing native/runtime methods
+         * --------------------------------------------------------
+         *
+         * Keep the old implementation as a
+         * compatibility layer during migration.
+         */
+        self.invoke_method(receiver, name, args, names)
     }
 
     fn invoke_module_member(

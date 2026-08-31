@@ -2867,3 +2867,35 @@ fn vm_arg_pack_unknown_function_is_error() {
         ErrorKind::Name,
     );
 }
+
+#[test]
+fn method_uses_series_extension_registry() {
+    assert_float(
+        r#"
+        let x =
+            series(
+                "x",
+                [1, 2, 3]
+            )
+
+        x.mean()
+        "#,
+        2.0,
+    );
+}
+
+#[test]
+fn method_uses_series_sum_extension() {
+    assert_float(
+        r#"
+        let x =
+            series(
+                "x",
+                [1, 2, 3]
+            )
+
+        x.sum()
+        "#,
+        6.0,
+    );
+}
