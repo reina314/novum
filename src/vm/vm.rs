@@ -28,6 +28,7 @@ use std::{
 enum MethodTarget {
     Class(ClosureRef),
     Callable(Value),
+    Legacy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2109,22 +2110,12 @@ impl Vm {
 
         let receiver_key = Self::method_cache_receiver(receiver);
 
-        /*
-         * --------------------------------------------------------
-         * Fast path
-         * --------------------------------------------------------
-         */
         if let Some(entry) = self.method_cache.get(&key) {
             if entry.receiver == receiver_key {
                 return Ok(entry.target.clone());
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * Class / extension lookup
-         * --------------------------------------------------------
-         */
         if let Some(target) = self.resolve_method(receiver, name)? {
             self.method_cache.insert(
                 key,
@@ -2137,12 +2128,21 @@ impl Vm {
             return Ok(target);
         }
 
-        /*
-         * --------------------------------------------------------
-         * Namespace fallback
-         * --------------------------------------------------------
-         */
-        let target = self.resolve_namespace_method(name, namespaces)?;
+        if !namespaces.is_empty() {
+            let target = self.resolve_namespace_method(name, namespaces)?;
+
+            self.method_cache.insert(
+                key,
+                MethodCacheEntry {
+                    receiver: receiver_key,
+                    target: target.clone(),
+                },
+            );
+
+            return Ok(target);
+        }
+
+        let target = MethodTarget::Legacy;
 
         self.method_cache.insert(
             key,
@@ -2472,31 +2472,44 @@ impl Vm {
         &mut self,
         target: MethodTarget,
         receiver: Value,
+        name: &str,
         args: Vec<Value>,
         names: &[Option<String>],
     ) -> Result<Value> {
-        let mut call_args = Vec::with_capacity(args.len() + 1);
-
-        let mut call_names = Vec::with_capacity(names.len() + 1);
-
-        /*
-         * Receiver is always the first
-         * positional argument.
-         */
-        call_args.push(receiver);
-
-        call_names.push(None);
-
-        call_args.extend(args);
-
-        call_names.extend(names.iter().cloned());
-
         match target {
             MethodTarget::Class(closure) => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+
+                let mut call_names = Vec::with_capacity(names.len() + 1);
+
+                call_args.push(receiver);
+
+                call_names.push(None);
+
+                call_args.extend(args);
+
+                call_names.extend(names.iter().cloned());
+
                 self.call_closure_sync_named(closure, call_args, &call_names)
             },
 
-            MethodTarget::Callable(value) => self.call_value(value, call_args, &call_names),
+            MethodTarget::Callable(value) => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+
+                let mut call_names = Vec::with_capacity(names.len() + 1);
+
+                call_args.push(receiver);
+
+                call_names.push(None);
+
+                call_args.extend(args);
+
+                call_names.extend(names.iter().cloned());
+
+                self.call_value(value, call_args, &call_names)
+            },
+
+            MethodTarget::Legacy => self.invoke_method(receiver, name, args, names),
         }
     }
 
@@ -4180,7 +4193,7 @@ impl Vm {
     ) -> Result<Value> {
         let target = self.resolve_method_cached(chunk, call_site, &receiver, name, namespaces)?;
 
-        self.call_method_target(target, receiver, args, names)
+        self.call_method_target(target, receiver, name, args, names)
     }
 
     fn invoke_namespace_method(
