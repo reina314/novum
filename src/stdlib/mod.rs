@@ -36,6 +36,7 @@ pub fn load_module(name: &str) -> Option<ModuleRef> {
 pub fn extension_registry() -> ExtensionRegistry {
     let mut registry = ExtensionRegistry::new();
 
+    math::register_extensions(&mut registry);
     stats::register_extensions(&mut registry);
 
     registry

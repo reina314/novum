@@ -19,6 +19,39 @@ fn builtin_str() {
 }
 
 #[test]
+fn math_sqrt_method_on_float() {
+    assert_float(
+        r#"
+        9.0.sqrt()
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn math_min_method() {
+    assert_float(
+        r#"
+        9.min(3)
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn math_clamp_method() {
+    assert_float(
+        r#"
+        9.clamp(
+            0,
+            5
+        )
+        "#,
+        5.0,
+    );
+}
+
+#[test]
 fn stdlib_math_sqrt() {
     assert_float(
         r#"

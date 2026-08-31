@@ -50,4 +50,12 @@ impl ExtensionRegistry {
                     .map(|value| value)
             })
     }
+
+    pub fn register_numeric(&mut self, name: impl Into<String>, value: Value) {
+        let name = name.into();
+
+        self.register(ReceiverKind::Int, name.clone(), value.clone());
+
+        self.register(ReceiverKind::Float, name, value);
+    }
 }
