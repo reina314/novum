@@ -2899,3 +2899,37 @@ fn method_uses_series_sum_extension() {
         6.0,
     );
 }
+
+#[test]
+fn class_method_has_priority_over_extension() {
+    assert_int(
+        r#"
+        class Foo {
+            mean =
+                |self| 42
+        }
+
+        let x =
+            Foo()
+
+        x.mean()
+        "#,
+        42,
+    );
+}
+
+#[test]
+fn repeated_method_calls_remain_correct() {
+    assert_float(
+        r#"
+        let x =
+            series(
+                "x",
+                [1, 2, 3]
+            )
+
+        x.mean() + x.mean()
+        "#,
+        4.0,
+    );
+}

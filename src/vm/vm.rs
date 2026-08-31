@@ -4,8 +4,8 @@ use crate::{
         apply_binop, CallFrame, CellRef, Class, ClassRef, Closure, ClosureRef, DataFrameRef,
         EnumConstructor, EnumRef, EnumValue, ExtensionRegistry, FieldDefinition, FunctionParameter,
         FunctionProto, FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath,
-        ModuleRef, ObjectRef, RangeCursor, SeriesRef, StructTypeRef, StructValue, UpvalueSpec,
-        Value,
+        ModuleRef, ObjectRef, RangeCursor, ReceiverKind, SeriesRef, StructTypeRef, StructValue,
+        UpvalueSpec, Value,
     },
     stdlib::{decode_class_counts, option_none, option_some},
     syntax::BinOp,
@@ -24,9 +24,22 @@ use std::{
     rc::Rc,
 };
 
+#[derive(Clone)]
 enum MethodTarget {
     Class(ClosureRef),
-    Extension(Value),
+    Callable(Value),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum MethodCacheReceiver {
+    Kind(ReceiverKind),
+    Class(usize),
+}
+
+#[derive(Clone)]
+struct MethodCacheEntry {
+    receiver: MethodCacheReceiver,
+    target: MethodTarget,
 }
 
 struct ExecutionResult {
@@ -49,6 +62,7 @@ pub struct Vm {
     module_namespaces: HashMap<ModulePath, ModuleRef>,
 
     extension_registry: ExtensionRegistry,
+    method_cache: HashMap<(usize, usize, String), MethodCacheEntry>,
 }
 
 impl Vm {
@@ -66,7 +80,9 @@ impl Vm {
             loading_modules: Vec::new(),
             stdlib_modules: HashMap::new(),
             module_namespaces: HashMap::new(),
+
             extension_registry: crate::stdlib::extension_registry(),
+            method_cache: HashMap::new(),
         }
     }
 
@@ -95,6 +111,24 @@ impl Vm {
         }
     }
 
+    #[inline]
+    fn method_cache_receiver(receiver: &Value) -> MethodCacheReceiver {
+        match receiver {
+            Value::Object(object) => {
+                let class = object.borrow().class();
+
+                MethodCacheReceiver::Class(Rc::as_ptr(&class) as usize)
+            },
+
+            _ => MethodCacheReceiver::Kind(receiver.receiver_kind()),
+        }
+    }
+
+    #[inline]
+    fn method_cache_key(chunk: &Rc<Chunk>, call_site: usize) -> (usize, usize) {
+        (Rc::as_ptr(chunk) as usize, call_site)
+    }
+
     pub fn run(&mut self, chunk: Rc<Chunk>) -> Result<Value> {
         let module = Rc::new(RefCell::new(Module::new("<main>")));
 
@@ -113,6 +147,7 @@ impl Vm {
     ) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
+        self.method_cache.clear();
 
         let function = Rc::new(FunctionProto {
             arity: 0,
@@ -144,6 +179,7 @@ impl Vm {
     pub fn run_repl(&mut self, chunk: Rc<Chunk>) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
+        self.method_cache.clear();
 
         let function = Rc::new(FunctionProto {
             arity: 0,
@@ -577,7 +613,11 @@ impl Vm {
 
                     let names = metadata.names.clone();
 
+                    let chunk = self.current_frame().closure.function.chunk.clone();
+
                     let result = self.invoke_resolved_method(
+                        &chunk,
+                        call_site,
                         receiver,
                         method.as_str(),
                         args,
@@ -1992,7 +2032,7 @@ impl Vm {
         let receiver_kind = receiver.receiver_kind();
 
         if let Some(function) = self.extension_registry.get(receiver_kind, name) {
-            return Ok(Some(MethodTarget::Extension(function.clone())));
+            return Ok(Some(MethodTarget::Callable(function.clone())));
         }
 
         /*
@@ -2004,6 +2044,119 @@ impl Vm {
          */
         Ok(None)
     }
+
+    fn resolve_namespace_method(
+        &mut self,
+        name: &str,
+        namespaces: &[ModulePath],
+    ) -> Result<MethodTarget> {
+        if namespaces.is_empty() {
+            return Err(Error::new(
+                ErrorKind::Name,
+                format!("method '{}' is not supported", name,),
+                None,
+            ));
+        }
+
+        if namespaces.len() > 1 {
+            return Err(Error::new(
+                ErrorKind::Name,
+                format!("ambiguous method '{}'", name,),
+                None,
+            ));
+        }
+
+        let namespace = &namespaces[0];
+
+        let module = self.load_module_namespace(namespace)?;
+
+        let value = module.borrow().get_field(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Name,
+                format!("namespace '{}' has no member '{}'", namespace, name,),
+                None,
+            )
+        })?;
+
+        match value {
+            Value::Builtin(_)
+            | Value::Closure(_)
+            | Value::Class(_)
+            | Value::EnumConstructor(_)
+            | Value::StructType(_) => Ok(MethodTarget::Callable(value)),
+
+            other => Err(Error::new(
+                ErrorKind::Type,
+                format!(
+                    "method '{}' is not callable (got {})",
+                    name,
+                    other.type_name(),
+                ),
+                None,
+            )),
+        }
+    }
+
+    fn resolve_method_cached(
+    &mut self,
+    chunk: &Rc<Chunk>,
+    call_site: usize,
+    receiver: &Value,
+    name: &str,
+    namespaces: &[ModulePath],
+) -> Result<MethodTarget> {
+    let chunk_key =
+        Rc::as_ptr(chunk) as usize;
+
+    let receiver_key =
+        Self::method_cache_receiver(
+            receiver,
+        );
+
+    let key =
+        (chunk_key, call_site);
+
+    if let Some(entry) =
+        self.method_cache.get(&key)
+    {
+        if entry.receiver == receiver_key {
+            return Ok(entry.target.clone());
+        }
+    }
+
+    if let Some(target) =
+        self.resolve_method(
+            receiver,
+            name,
+        )?
+    {
+        self.method_cache.insert(
+            key,
+            MethodCacheEntry {
+                receiver: receiver_key,
+                target: target.clone(),
+            },
+        );
+
+        return Ok(target);
+    }
+
+    let target =
+        self.resolve_namespace_method(
+            name,
+            namespaces,
+        )?;
+
+    self.method_cache.insert(
+        key,
+        MethodCacheEntry {
+            receiver: receiver_key,
+            target: target.clone(),
+        },
+    );
+
+    Ok(target)
+}
 
     fn resolve_field(&self, object: Value, field: &str) -> Result<Value> {
         match object {
@@ -2346,7 +2499,7 @@ impl Vm {
                 self.call_closure_sync_named(closure, call_args, &call_names)
             },
 
-            MethodTarget::Extension(value) => self.call_value(value, call_args, &call_names),
+            MethodTarget::Callable(value) => self.call_value(value, call_args, &call_names),
         }
     }
 
@@ -4020,42 +4173,17 @@ impl Vm {
 
     fn invoke_resolved_method(
         &mut self,
+        chunk: &Rc<Chunk>,
+        call_site: usize,
         receiver: Value,
         name: &str,
         args: Vec<Value>,
         names: &[Option<String>],
         namespaces: &[ModulePath],
     ) -> Result<Value> {
-        /*
-         * --------------------------------------------------------
-         * 1. Class / extension
-         * --------------------------------------------------------
-         */
-        if let Some(target) = self.resolve_method(&receiver, name)? {
-            return self.call_method_target(target, receiver, args, names);
-        }
+        let target = self.resolve_method_cached(chunk, call_site, &receiver, name, namespaces)?;
 
-        /*
-         * --------------------------------------------------------
-         * 2. Namespace UFCS fallback
-         * --------------------------------------------------------
-         */
-        if !namespaces.is_empty() {
-            return self.invoke_namespace_method(
-                receiver.clone(),
-                name,
-                args.clone(),
-                names,
-                namespaces,
-            );
-        }
-
-        /*
-         * --------------------------------------------------------
-         * 3. Legacy native methods
-         * --------------------------------------------------------
-         */
-        self.invoke_method(receiver, name, args, names)
+        self.call_method_target(target, receiver, args, names)
     }
 
     fn invoke_namespace_method(
