@@ -1,22 +1,11 @@
 use std::rc::Rc;
 
-use novum::{
-    runtime::Value,
-    error::{
-        ErrorKind,
-    },
-};
+use novum::{error::ErrorKind, runtime::Value};
 
 mod common;
 use common::{
-    run,
+    assert_bool, assert_error_kind, assert_float, assert_int, assert_list, assert_string, run,
     unwrap_value,
-    assert_int,
-    assert_float,
-    assert_bool,
-    assert_list,
-    assert_string,
-    assert_error_kind,
 };
 
 // ============================================================
@@ -25,30 +14,15 @@ use common::{
 
 #[test]
 fn vm_scalars() {
-    assert_int(
-        "1 + 2 * 3",
-        7,
-    );
+    assert_int("1 + 2 * 3", 7);
 
-    assert_int(
-        "(2 + 3) * 4",
-        20,
-    );
+    assert_int("(2 + 3) * 4", 20);
 
-    assert_float(
-        "1.5 + 2.5",
-        4.0,
-    );
+    assert_float("1.5 + 2.5", 4.0);
 
-    assert_bool(
-        "3 < 4",
-        true,
-    );
+    assert_bool("3 < 4", true);
 
-    assert_bool(
-        "3 == 3",
-        true,
-    );
+    assert_bool("3 == 3", true);
 }
 
 // ============================================================
@@ -185,22 +159,17 @@ fn dict_literal() {
 
 #[test]
 fn empty_dict() {
-    match run(
-        r#"
+    match run(r#"
         {}
-        "#
-    ) {
+        "#)
+    {
         Ok(Value::Dict(dict)) => {
-            assert!(
-                dict.borrow().is_empty()
-            );
-        }
+            assert!(dict.borrow().is_empty());
+        },
 
         other => {
-            panic!(
-                "expected Dict, got {other:?}"
-            );
-        }
+            panic!("expected Dict, got {other:?}");
+        },
     }
 }
 
@@ -385,17 +354,13 @@ fn vm_range() {
 
 #[test]
 fn vm_range_for_empty() {
-    let source =
-        r#"
+    let source = r#"
         for i in 10..10 {
             123
         }
         "#;
 
-    assert_eq!(
-        unwrap_value(source),
-        Value::Unit
-    );
+    assert_eq!(unwrap_value(source), Value::Unit);
 }
 
 #[test]
@@ -410,7 +375,7 @@ fn vm_range_for_inclusive() {
 
         sum
         "#,
-        5050
+        5050,
     )
 }
 
@@ -429,8 +394,8 @@ fn vm_range_for_break() {
         }
 
         sum
-        "#, 
-        45
+        "#,
+        45,
     );
 }
 
@@ -468,7 +433,7 @@ fn vm_nested_range_for() {
 
         sum
         "#,
-        2025
+        2025,
     );
 }
 
@@ -486,7 +451,7 @@ fn vm_range_for_dynamic_bounds() {
 
         sum
         "#,
-        9
+        9,
     )
 }
 
@@ -502,7 +467,7 @@ fn vm_range_for_negative() {
 
         sum
         "#,
-        -5
+        -5,
     )
 }
 
@@ -710,40 +675,19 @@ fn vm_iterator_pipeline() {
 
 #[test]
 fn vm_strings() {
-    assert_int(
-        "\"hello\".len()",
-        5,
-    );
+    assert_int("\"hello\".len()", 5);
 
-    assert_string(
-        "\"hello\".to_upper()",
-        "HELLO",
-    );
+    assert_string("\"hello\".to_upper()", "HELLO");
 
-    assert_string(
-        "\" hello \".trim()",
-        "hello",
-    );
+    assert_string("\" hello \".trim()", "hello");
 
-    assert_bool(
-        "\"hello\".contains(\"ell\")",
-        true,
-    );
+    assert_bool("\"hello\".contains(\"ell\")", true);
 
-    assert_bool(
-        "\"hello\".starts_with(\"he\")",
-        true,
-    );
+    assert_bool("\"hello\".starts_with(\"he\")", true);
 
-    assert_bool(
-        "\"hello\".ends_with(\"lo\")",
-        true,
-    );
+    assert_bool("\"hello\".ends_with(\"lo\")", true);
 
-    assert_string(
-        "\"ab\".repeat(3)",
-        "ababab",
-    );
+    assert_string("\"ab\".repeat(3)", "ababab");
 }
 
 // ============================================================
@@ -981,13 +925,7 @@ fn vm_combined_pipeline() {
             .take(5)
             .collect()
         ",
-        &[
-            27,
-            30,
-            33,
-            36,
-            39,
-        ],
+        &[27, 30, 33, 36, 39],
     );
 }
 
@@ -1001,11 +939,7 @@ fn vm_fused_closure_capture() {
             .map(|x| x + offset)
             .collect()
         "#,
-        &[
-            11,
-            12,
-            13,
-        ],
+        &[11, 12, 13],
     );
 }
 
@@ -1020,11 +954,7 @@ fn vm_pipeline_falls_back_for_nested_closure() {
             })
             .collect()
         "#,
-        &[
-            11,
-            12,
-            13,
-        ],
+        &[11, 12, 13],
     );
 }
 
@@ -1037,11 +967,7 @@ fn vm_fused_take_before_filter() {
             .filter(|x| x % 2 == 0)
             .collect()
         "#,
-        &[
-            0,
-            2,
-            4,
-        ],
+        &[0, 2, 4],
     );
 }
 
@@ -1931,18 +1857,12 @@ fn vm_mixed_method_arguments() {
 
 #[test]
 fn vm_import_unknown_module_is_error() {
-    assert_error_kind(
-        "import does_not_exist",
-        ErrorKind::Import,
-    );
+    assert_error_kind("import does_not_exist", ErrorKind::Import);
 }
 
 #[test]
 fn vm_cyclic_import_is_error() {
-    assert_error_kind(
-        "import tests.modules.c",
-        ErrorKind::Import,
-    );
+    assert_error_kind("import tests.modules.c", ErrorKind::Import);
 }
 
 #[test]
@@ -1953,7 +1873,7 @@ fn vm_import_user_module_alias() {
 
         mod.value
         "#,
-        1
+        1,
     );
 }
 
@@ -1966,8 +1886,8 @@ fn vm_import_with_and_without_alias() {
         
         tests.modules.counter.value
             == c.value
-        "#, 
-        true
+        "#,
+        true,
     );
 }
 
@@ -1994,7 +1914,7 @@ fn vm_public_let_is_exported() {
         import tests.modules.visibility
         tests.modules.visibility.answer
         "#,
-        42
+        42,
     );
 }
 
@@ -2005,7 +1925,7 @@ fn vm_private_let_is_hidden() {
         import tests.modules.visibility
         tests.modules.visibility.secret
         "#,
-        ErrorKind::Name
+        ErrorKind::Name,
     );
 }
 
@@ -2016,7 +1936,7 @@ fn vm_public_lambda_is_exported() {
         import tests.modules.visibility
         tests.modules.visibility.add(2, 3)
         "#,
-        5
+        5,
     );
 }
 
@@ -2086,143 +2006,84 @@ fn imported_class_named_arguments_with_alias() {
 
 #[test]
 fn option_some() {
-    match run(
-        r#"
+    match run(r#"
         Option.Some(42)
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Option"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Option");
 
-            assert_eq!(
-                value.variant(),
-                "Some"
-            );
+            assert_eq!(value.variant(), "Some");
 
-            assert_eq!(
-                value.fields(),
-                &[Value::Int(42)]
-            );
-        }
+            assert_eq!(value.fields(), &[Value::Int(42)]);
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn option_none() {
-    match run(
-        r#"
+    match run(r#"
         Option.None
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Option"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Option");
 
-            assert_eq!(
-                value.variant(),
-                "None"
-            );
+            assert_eq!(value.variant(), "None");
 
-            assert!(
-                value.fields().is_empty()
-            );
-        }
+            assert!(value.fields().is_empty());
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn result_ok() {
-    match run(
-        r#"
+    match run(r#"
         Result.Ok(42)
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Result"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Result");
 
-            assert_eq!(
-                value.variant(),
-                "Ok"
-            );
+            assert_eq!(value.variant(), "Ok");
 
-            assert_eq!(
-                value.field(0),
-                Some(Value::Int(42))
-            );
-        }
+            assert_eq!(value.field(0), Some(Value::Int(42)));
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn result_err() {
-    match run(
-        r#"
+    match run(r#"
         Result.Err("failed")
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Result"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Result");
 
-            assert_eq!(
-                value.variant(),
-                "Err"
-            );
+            assert_eq!(value.variant(), "Err");
 
             assert_eq!(
                 value.field(0),
-                Some(
-                    Value::Str(
-                        Rc::new(
-                            "failed"
-                                .to_string()
-                        )
-                    )
-                )
+                Some(Value::Str(Rc::new("failed".to_string())))
             );
-        }
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
@@ -2238,30 +2099,19 @@ fn try_option_some() {
 
 #[test]
 fn try_option_none() {
-    match run(
-        r#"
+    match run(r#"
         Option.None?
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Option"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Option");
 
-            assert_eq!(
-                value.variant(),
-                "None"
-            );
-        }
+            assert_eq!(value.variant(), "None");
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
@@ -2277,64 +2127,42 @@ fn try_result_ok() {
 
 #[test]
 fn try_result_err() {
-    match run(
-        r#"
+    match run(r#"
         Result.Err("failed")?
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Result"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Result");
 
-            assert_eq!(
-                value.variant(),
-                "Err"
-            );
-        }
+            assert_eq!(value.variant(), "Err");
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn try_propagates_from_function() {
-    match run(
-        r#"
+    match run(r#"
         let f = || {
             Option.None?
             42
         }
 
         f()
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Option"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Option");
 
-            assert_eq!(
-                value.variant(),
-                "None"
-            );
-        }
+            assert_eq!(value.variant(), "None");
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
@@ -2355,42 +2183,30 @@ fn try_unwraps_inside_function() {
 
 #[test]
 fn try_result_propagates_from_function() {
-    match run(
-        r#"
+    match run(r#"
         let f = || {
             Result.Err("failed")?
             42
         }
 
         f()
-        "#
-    ) {
-        Ok(
-            Value::EnumValue(value)
-        ) => {
-            assert_eq!(
-                value.enum_name(),
-                "Result"
-            );
+        "#)
+    {
+        Ok(Value::EnumValue(value)) => {
+            assert_eq!(value.enum_name(), "Result");
 
-            assert_eq!(
-                value.variant(),
-                "Err"
-            );
-        }
+            assert_eq!(value.variant(), "Err");
+        },
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn fs_read_try_propagates_from_function() {
-    match run(
-        r#"
+    match run(r#"
         import fs
 
         let read_file =
@@ -2401,25 +2217,17 @@ fn fs_read_try_propagates_from_function() {
         read_file(
             "__novum_missing_file__"
         )
-        "#
-    ) {
+        "#)
+    {
         Ok(Value::EnumValue(value)) => {
-            assert_eq!(
-                value.enum_name(),
-                "Result"
-            );
+            assert_eq!(value.enum_name(), "Result");
 
-            assert_eq!(
-                value.variant(),
-                "Err"
-            );
-        }
+            assert_eq!(value.variant(), "Err");
+        },
 
         other => {
-            panic!(
-                "expected Result::Err, got {other:?}"
-            );
-        }
+            panic!("expected Result::Err, got {other:?}");
+        },
     }
 }
 
@@ -2588,8 +2396,7 @@ fn nested_method_call_argument() {
 
 #[test]
 fn nested_method_call_in_builtin() {
-    match run(
-        r#"
+    match run(r#"
         class Test {
             value = 42
 
@@ -2604,15 +2411,13 @@ fn nested_method_call_in_builtin() {
         print(
             t.get()
         )
-        "#
-    ) {
-        Ok(Value::Unit) => {}
+        "#)
+    {
+        Ok(Value::Unit) => {},
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
@@ -2932,4 +2737,3 @@ fn phase2_local_shadows_used_namespace() {
         42,
     );
 }
-

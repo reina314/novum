@@ -1,16 +1,7 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    path::PathBuf,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
-use super::{
-    Value,
-    ModuleRef,
-};
-use crate::vm::{
-    Chunk,
-};
+use super::{ModuleRef, Value};
+use crate::vm::Chunk;
 
 pub type CellRef = Rc<RefCell<Value>>;
 pub type FunctionRef = Rc<FunctionProto>;

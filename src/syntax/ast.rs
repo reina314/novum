@@ -49,19 +49,14 @@ pub struct CallArg {
 }
 
 impl CallArg {
-    pub fn positional(
-        value: Expr,
-    ) -> Self {
+    pub fn positional(value: Expr) -> Self {
         Self {
             name: None,
             value: Box::new(value),
         }
     }
 
-    pub fn named(
-        name: String,
-        value: Expr,
-    ) -> Self {
+    pub fn named(name: String, value: Expr) -> Self {
         Self {
             name: Some(name),
             value: Box::new(value),
@@ -70,10 +65,7 @@ impl CallArg {
 }
 
 impl fmt::Debug for CallArg {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.name {
             Some(name) => f
                 .debug_struct("CallArg")
@@ -132,12 +124,12 @@ pub enum ExprKind {
     // Assignment & Deassignment
     Let {
         visibility: Visibility,
-        pattern: Pattern, 
+        pattern: Pattern,
         value: Box<Expr>,
     },
 
     Assign {
-        target: Box<Expr>, 
+        target: Box<Expr>,
         value: Box<Expr>,
     },
     AssignOp {
@@ -158,7 +150,7 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     For {
         pattern: Pattern,
-        iterable: Box<Expr>, 
+        iterable: Box<Expr>,
         body: Box<Expr>,
     },
     Try(Box<Expr>),
@@ -167,16 +159,13 @@ pub enum ExprKind {
         value: Box<Expr>,
         arms: Vec<MatchArm>,
     },
-    
+
     Block(Vec<Expr>),
     Lambda(Vec<Pattern>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
-    Index(
-        Box<Expr>,
-        IndexExpr,
-    ),
+    Index(Box<Expr>, IndexExpr),
     Field {
-        object: Box<Expr>, 
+        object: Box<Expr>,
         name: String,
     },
 
@@ -193,7 +182,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone)]
 pub enum IndexExpr {
     Single(Box<Expr>),
-    
+
     Range {
         start: Option<Box<Expr>>,
         end: Option<Box<Expr>>,
@@ -212,7 +201,6 @@ impl IndexExpr {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub enum ListItem {
     Expr(Expr),
@@ -227,7 +215,7 @@ pub enum BinOp {
     Div,
     Pow,
     Mod,
-    
+
     MatMul,
 
     Eq,
@@ -291,51 +279,24 @@ pub enum Pattern {
     },
 }
 
-pub fn span_of_index(
-    index: &IndexExpr,
-) -> Span {
+pub fn span_of_index(index: &IndexExpr) -> Span {
     match index {
-        IndexExpr::Single(expr) => {
-            expr.span
-        }
+        IndexExpr::Single(expr) => expr.span,
 
-        IndexExpr::Range {
-            start,
-            end,
-            ..
-        } => {
-            match (start, end) {
-                (Some(a), Some(b)) =>
-                    a.span.join(b.span),
+        IndexExpr::Range { start, end, .. } => match (start, end) {
+            (Some(a), Some(b)) => a.span.join(b.span),
 
-                (Some(a), None) =>
-                    a.span,
+            (Some(a), None) => a.span,
 
-                (None, Some(b)) =>
-                    b.span,
+            (None, Some(b)) => b.span,
 
-                (None, None) =>
-                    Span::EMPTY,
-            }
-        }
+            (None, None) => Span::EMPTY,
+        },
 
-        IndexExpr::Tuple(indices) => {
-            match (
-                indices.first(),
-                indices.last(),
-            ) {
-                (
-                    Some(first),
-                    Some(last),
-                ) => {
-                    span_of_index(first)
-                        .join(
-                            span_of_index(last)
-                        )
-                }
+        IndexExpr::Tuple(indices) => match (indices.first(), indices.last()) {
+            (Some(first), Some(last)) => span_of_index(first).join(span_of_index(last)),
 
-                _ => Span::EMPTY,
-            }
-        }
+            _ => Span::EMPTY,
+        },
     }
 }

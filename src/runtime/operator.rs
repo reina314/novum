@@ -1,23 +1,11 @@
 use crate::{
-    runtime::{
-        Value,
-        Series,
-        SeriesRef,
-        Vector,
-    },
+    runtime::{Series, SeriesRef, Value, Vector},
     syntax::BinOp,
 };
 
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
-fn apply_scalar_binop(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn apply_scalar_binop(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
     use BinOp::*;
 
     match op {
@@ -30,40 +18,19 @@ fn apply_scalar_binop(
         Mod => modulo(lhs, rhs),
         MatMul => matmul(lhs, rhs),
 
-        Eq => Ok(
-            Value::Bool(
-                Value::eq_values(
-                    &lhs,
-                    &rhs,
-                )?
-            )),
+        Eq => Ok(Value::Bool(Value::eq_values(&lhs, &rhs)?)),
 
-        Neq => Ok(
-            Value::Bool(
-                !Value::eq_values(
-                    &lhs,
-                    &rhs,
-                )?
-            )),
+        Neq => Ok(Value::Bool(!Value::eq_values(&lhs, &rhs)?)),
 
-        Lt | Leq | Gt | Geq =>
-            compare(op, lhs, rhs),
+        Lt | Leq | Gt | Geq => compare(op, lhs, rhs),
 
-        And | Or =>
-            bool_binary(op, lhs, rhs),
+        And | Or => bool_binary(op, lhs, rhs),
     }
 }
 
-fn apply_series_binop(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn apply_series_binop(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Series(lhs),
-            Value::Series(rhs),
-        ) => {
+        (Value::Series(lhs), Value::Series(rhs)) => {
             if lhs.len() != rhs.len() {
                 return Err(format!(
                     "Series length mismatch: {} vs {}",
@@ -72,151 +39,63 @@ fn apply_series_binop(
                 ));
             }
 
-            let mut values =
-                Vec::with_capacity(
-                    lhs.len()
-                );
+            let mut values = Vec::with_capacity(lhs.len());
 
             for i in 0..lhs.len() {
-                let left =
-                    lhs.get(i).unwrap();
+                let left = lhs.get(i).unwrap();
 
-                let right =
-                    rhs.get(i).unwrap();
+                let right = rhs.get(i).unwrap();
 
-                values.push(
-                    apply_series_element(
-                        op,
-                        left,
-                        right,
-                    )?
-                );
+                values.push(apply_series_element(op, left, right)?);
             }
 
-            Ok(
-                Value::Series(
-                    Rc::new(
-                        Series::new(
-                            lhs.name(),
-                            values,
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Series(Rc::new(Series::new(lhs.name(), values))))
+        },
 
-        (
-            Value::Series(series),
-            scalar,
-        ) => {
-            let values =
-                series
-                    .data()
-                    .iter()
-                    .cloned()
-                    .map(|value| {
-                        apply_series_element(
-                            op,
-                            value,
-                            scalar.clone(),
-                        )
-                    })
-                    .collect::<Result<
-                        Vec<_>,
-                        _
-                    >>()?;
+        (Value::Series(series), scalar) => {
+            let values = series
+                .data()
+                .iter()
+                .cloned()
+                .map(|value| apply_series_element(op, value, scalar.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(
-                Value::Series(
-                    Rc::new(
-                        Series::new(
-                            series.name(),
-                            values,
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Series(Rc::new(Series::new(series.name(), values))))
+        },
 
-        (
-            scalar,
-            Value::Series(series),
-        ) => {
-            let values =
-                series
-                    .data()
-                    .iter()
-                    .cloned()
-                    .map(|value| {
-                        apply_series_element(
-                            op,
-                            scalar.clone(),
-                            value,
-                        )
-                    })
-                    .collect::<Result<
-                        Vec<_>,
-                        _
-                    >>()?;
+        (scalar, Value::Series(series)) => {
+            let values = series
+                .data()
+                .iter()
+                .cloned()
+                .map(|value| apply_series_element(op, scalar.clone(), value))
+                .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(
-                Value::Series(
-                    Rc::new(
-                        Series::new(
-                            series.name(),
-                            values,
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Series(Rc::new(Series::new(series.name(), values))))
+        },
 
         _ => unreachable!(),
     }
 }
 
-fn apply_series_element(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn apply_series_element(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
     match op {
         BinOp::Eq => {
-            return Ok(
-                Value::Bool(
-                    Value::eq_values(
-                        &lhs,
-                        &rhs,
-                    )?
-                )
-            );
-        }
+            return Ok(Value::Bool(Value::eq_values(&lhs, &rhs)?));
+        },
 
         BinOp::Neq => {
-            return Ok(
-                Value::Bool(
-                    !Value::eq_values(
-                        &lhs,
-                        &rhs,
-                    )?
-                )
-            );
-        }
+            return Ok(Value::Bool(!Value::eq_values(&lhs, &rhs)?));
+        },
 
-        _ => {}
+        _ => {},
     }
 
-    if matches!(lhs, Value::Null)
-        || matches!(rhs, Value::Null)
-    {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
 
-    apply_scalar_binop(
-        op,
-        lhs,
-        rhs,
-    )
+    apply_scalar_binop(op, lhs, rhs)
 }
 
 pub fn apply_series_boolean_op(
@@ -232,1053 +111,482 @@ pub fn apply_series_boolean_op(
         ));
     }
 
-    let mut values =
-        Vec::with_capacity(
-            lhs.len()
-        );
+    let mut values = Vec::with_capacity(lhs.len());
 
     for i in 0..lhs.len() {
-        let left =
-            lhs.get(i)
-                .expect("Series index in bounds");
+        let left = lhs.get(i).expect("Series index in bounds");
 
-        let right =
-            rhs.get(i)
-                .expect("Series index in bounds");
+        let right = rhs.get(i).expect("Series index in bounds");
 
-        let value =
-            match (left, right) {
-                // -------------------------------------------------
-                // Bool × Bool
-                // -------------------------------------------------
+        let value = match (left, right) {
+            // -------------------------------------------------
+            // Bool × Bool
+            // -------------------------------------------------
+            (Value::Bool(a), Value::Bool(b)) => Value::Bool(if is_or { a || b } else { a && b }),
 
-                (
-                    Value::Bool(a),
-                    Value::Bool(b),
-                ) => {
-                    Value::Bool(
-                        if is_or {
-                            a || b
-                        } else {
-                            a && b
-                        }
-                    )
-                }
+            // -------------------------------------------------
+            // Missing value
+            // -------------------------------------------------
+            (Value::Null, _) | (_, Value::Null) => Value::Null,
 
-                // -------------------------------------------------
-                // Missing value
-                // -------------------------------------------------
-
-                (
-                    Value::Null,
-                    _
-                )
-                |
-                (
-                    _,
-                    Value::Null,
-                ) => {
-                    Value::Null
-                }
-
-                // -------------------------------------------------
-                // Type error
-                // -------------------------------------------------
-
-                (a, b) => {
-                    return Err(format!(
-                        "logical operation requires Bool values, got {} and {}",
-                        a.type_name(),
-                        b.type_name()
-                    ));
-                }
-            };
+            // -------------------------------------------------
+            // Type error
+            // -------------------------------------------------
+            (a, b) => {
+                return Err(format!(
+                    "logical operation requires Bool values, got {} and {}",
+                    a.type_name(),
+                    b.type_name()
+                ));
+            },
+        };
 
         values.push(value);
     }
 
-    Ok(
-        Series::new(
-            lhs.name(),
-            values,
-        )
-    )
+    Ok(Series::new(lhs.name(), values))
 }
 
-pub fn apply_binop(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+pub fn apply_binop(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
     match (&lhs, &rhs) {
-        (Value::Series(_), _)
-        | (_, Value::Series(_)) => {
-            apply_series_binop(
-                op,
-                lhs,
-                rhs,
-            )
-        }
+        (Value::Series(_), _) | (_, Value::Series(_)) => apply_series_binop(op, lhs, rhs),
 
-        _ => {
-            apply_scalar_binop(
-                op,
-                lhs,
-                rhs,
-            )
-        }
+        _ => apply_scalar_binop(op, lhs, rhs),
     }
 }
 
-fn add(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn add(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
         // string concatenation
-        (
-            Value::Str(a),
-            Value::Str(b),
-        ) => {
-            Ok(Value::Str(
-                Rc::new(
-                    format!("{}{}", a, b)
-                )
-            ))
-        }
+        (Value::Str(a), Value::Str(b)) => Ok(Value::Str(Rc::new(format!("{}{}", a, b)))),
 
-        (
-            Value::Str(a),
-            b,
-        ) => {
-            Ok(Value::Str(
-                Rc::new(
-                    format!("{}{}", a, b)
-                )
-            ))
-        }
+        (Value::Str(a), b) => Ok(Value::Str(Rc::new(format!("{}{}", a, b)))),
 
-        (
-            a,
-            Value::Str(b),
-        ) => {
-            Ok(Value::Str(
-                Rc::new(
-                    format!("{}{}", a, b)
-                )
-            ))
-        }
+        (a, Value::Str(b)) => Ok(Value::Str(Rc::new(format!("{}{}", a, b)))),
 
         // integers
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
-            a.checked_add(b)
-                .map(Value::Int)
-                .ok_or_else(|| {
-                    "integer overflow".into()
-                })
-        }
+        (Value::Int(a), Value::Int(b)) => a
+            .checked_add(b)
+            .map(Value::Int)
+            .ok_or_else(|| "integer overflow".into()),
 
         // floating point
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(a + b))
-        }
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(
-                a as f64 + b
-            ))
-        }
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
-            Ok(Value::Float(
-                a + b as f64
-            ))
-        }
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
 
-        (
-            Value::Vector(a),
-            Value::Vector(b),
-        ) => {
-            let result =
-                a.borrow()
-                    .add(
-                        &b.borrow()
-                    )?;
+        (Value::Vector(a), Value::Vector(b)) => {
+            let result = a.borrow().add(&b.borrow())?;
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Matrix(a),
-            Value::Matrix(b),
-        ) => {
+        (Value::Matrix(a), Value::Matrix(b)) => {
             let a = a.borrow();
             let b = b.borrow();
 
             let result = a.add(&b)?;
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
-        (a, b) => {
-            Err(format!(
-                "addition not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "addition not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn sub(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn sub(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
-            a.checked_sub(b)
-                .map(Value::Int)
-                .ok_or_else(|| {
-                    "integer overflow".into()
-                })
-        }
+        (Value::Int(a), Value::Int(b)) => a
+            .checked_sub(b)
+            .map(Value::Int)
+            .ok_or_else(|| "integer overflow".into()),
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(a - b))
-        }
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(
-                a as f64 - b
-            ))
-        }
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
-            Ok(Value::Float(
-                a - b as f64
-            ))
-        }
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - b as f64)),
 
-        (
-            Value::Vector(a),
-            Value::Vector(b),
-        ) => {
-            let result =
-                a.borrow()
-                    .sub(
-                        &b.borrow()
-                    )?;
+        (Value::Vector(a), Value::Vector(b)) => {
+            let result = a.borrow().sub(&b.borrow())?;
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Matrix(a),
-            Value::Matrix(b),
-        ) => {
+        (Value::Matrix(a), Value::Matrix(b)) => {
             let a = a.borrow();
             let b = b.borrow();
 
             let result = a.sub(&b)?;
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
-        (a, b) => {
-            Err(format!(
-                "subtraction not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "subtraction not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn mul(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn mul(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
-            a.checked_mul(b)
-                .map(Value::Int)
-                .ok_or_else(|| {
-                    "integer overflow".into()
-                })
-        }
+        (Value::Int(a), Value::Int(b)) => a
+            .checked_mul(b)
+            .map(Value::Int)
+            .ok_or_else(|| "integer overflow".into()),
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(a * b))
-        }
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(
-                a as f64 * b
-            ))
-        }
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
-            Ok(Value::Float(
-                a * b as f64
-            ))
-        }
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * b as f64)),
 
-        (
-            Value::List(list),
-            Value::Int(count),
-        ) => {
+        (Value::List(list), Value::Int(count)) => {
             if count < 0 {
-                return Err(
-                    "cannot repeat a list a negative number of times"
-                        .into()
-                );
+                return Err("cannot repeat a list a negative number of times".into());
             }
 
-            Ok(
-                Value::List(
-                    list.repeat(
-                        count as usize
-                    )?
-                )
-            )
-        }
+            Ok(Value::List(list.repeat(count as usize)?))
+        },
 
-        (
-            Value::Int(count),
-            Value::List(list),
-        ) => {
+        (Value::Int(count), Value::List(list)) => {
             if count < 0 {
-                return Err(
-                    "cannot repeat a list a negative number of times"
-                        .into()
-                );
+                return Err("cannot repeat a list a negative number of times".into());
             }
 
-            Ok(
-                Value::List(
-                    list.repeat(
-                        count as usize
-                    )?
-                )
-            )
-        }
+            Ok(Value::List(list.repeat(count as usize)?))
+        },
 
-        (// "abc" * 3 = "abcabcabc"
+        (
+            // "abc" * 3 = "abcabcabc"
             Value::Str(text),
             Value::Int(count),
         ) => {
             if count < 0 {
-                return Err(
-                    "cannot repeat a string a negative number of times".into()
-                );
+                return Err("cannot repeat a string a negative number of times".into());
             }
 
-            let count =
-                count as usize;
+            let count = count as usize;
 
-            let result =
-                text
-                    .as_ref()
-                    .repeat(count);
+            let result = text.as_ref().repeat(count);
 
-            Ok(
-                Value::Str(
-                    Rc::new(result)
-                )
-            )
-        }
+            Ok(Value::Str(Rc::new(result)))
+        },
 
-        (// 3 * "abc" = "abcabcabc"
+        (
+            // 3 * "abc" = "abcabcabc"
             Value::Int(count),
             Value::Str(text),
         ) => {
             if count < 0 {
-                return Err(
-                    "cannot repeat a string a negative number of times".into()
-                );
+                return Err("cannot repeat a string a negative number of times".into());
             }
 
-            let count =
-                count as usize;
+            let count = count as usize;
 
-            let result =
-                text
-                    .as_ref()
-                    .repeat(count);
+            let result = text.as_ref().repeat(count);
 
-            Ok(
-                Value::Str(
-                    Rc::new(result)
-                )
-            )
-        }
+            Ok(Value::Str(Rc::new(result)))
+        },
 
-        (
-            Value::Vector(vector),
-            Value::Int(scalar),
-        ) => {
-            let result =
-                vector.borrow()
-                    .scale(
-                        scalar as f64
-                    );
+        (Value::Vector(vector), Value::Int(scalar)) => {
+            let result = vector.borrow().scale(scalar as f64);
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Vector(vector),
-            Value::Float(scalar),
-        ) => {
-            let result =
-                vector.borrow()
-                    .scale(scalar);
+        (Value::Vector(vector), Value::Float(scalar)) => {
+            let result = vector.borrow().scale(scalar);
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Int(scalar),
-            Value::Vector(vector),
-        ) => {
-            let result =
-                vector.borrow()
-                    .scale(
-                        scalar as f64
-                    );
+        (Value::Int(scalar), Value::Vector(vector)) => {
+            let result = vector.borrow().scale(scalar as f64);
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Float(scalar),
-            Value::Vector(vector),
-        ) => {
-            let result =
-                vector.borrow()
-                    .scale(scalar);
+        (Value::Float(scalar), Value::Vector(vector)) => {
+            let result = vector.borrow().scale(scalar);
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            result
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+        },
 
         // Matrix * Matrix = element-wise
-        (
-            Value::Matrix(a),
-            Value::Matrix(b),
-        ) => {
+        (Value::Matrix(a), Value::Matrix(b)) => {
             let a = a.borrow();
             let b = b.borrow();
 
-            let result =
-                a.elementwise_mul(&b)?;
+            let result = a.elementwise_mul(&b)?;
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
         // scalar * Matrix
-        (
-            Value::Int(a),
-            Value::Matrix(b),
-        ) => {
-            let result =
-                b.borrow()
-                    .scalar_mul(a as f64);
+        (Value::Int(a), Value::Matrix(b)) => {
+            let result = b.borrow().scalar_mul(a as f64);
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Float(a),
-            Value::Matrix(b),
-        ) => {
-            let result =
-                b.borrow()
-                    .scalar_mul(a);
+        (Value::Float(a), Value::Matrix(b)) => {
+            let result = b.borrow().scalar_mul(a);
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                )
-            ))
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
         // Matrix * scalar
-        (
-            Value::Matrix(a),
-            Value::Int(b),
-        ) => {
-            let result =
-                a.borrow()
-                    .scalar_mul(b as f64);
+        (Value::Matrix(a), Value::Int(b)) => {
+            let result = a.borrow().scalar_mul(b as f64);
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                ))
-            )
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
-        (
-            Value::Matrix(a),
-            Value::Float(b),
-        ) => {
-            let result =
-                a.borrow()
-                    .scalar_mul(b);
+        (Value::Matrix(a), Value::Float(b)) => {
+            let result = a.borrow().scalar_mul(b);
 
-            Ok(Value::Matrix(
-                Rc::new(
-                    RefCell::new(result)
-                ))
-            )
-        }
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
 
-        (a, b) => {
-            Err(format!(
-                "multiplication not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "multiplication not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn divide(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn divide(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
+        (Value::Int(a), Value::Int(b)) => {
             if b == 0 {
-                return Err(
-                    "division by zero".into()
-                );
+                return Err("division by zero".into());
             }
 
             if a % b == 0 {
                 a.checked_div(b)
                     .map(Value::Int)
-                    .ok_or_else(|| {
-                        "integer overflow".into()
-                    })
+                    .ok_or_else(|| "integer overflow".into())
             } else {
-                Ok(Value::Float(
-                    a as f64 / b as f64
-                ))
+                Ok(Value::Float(a as f64 / b as f64))
             }
-        }
+        },
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
+        (Value::Float(a), Value::Float(b)) => {
             if b == 0.0 {
-                return Err(
-                    "division by zero".into()
-                );
+                return Err("division by zero".into());
             }
 
             Ok(Value::Float(a / b))
-        }
+        },
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
+        (Value::Int(a), Value::Float(b)) => {
             if b == 0.0 {
-                return Err(
-                    "division by zero".into()
-                );
+                return Err("division by zero".into());
             }
 
-            Ok(Value::Float(
-                a as f64 / b
-            ))
-        }
+            Ok(Value::Float(a as f64 / b))
+        },
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
+        (Value::Float(a), Value::Int(b)) => {
             if b == 0 {
-                return Err(
-                    "division by zero".into()
-                );
+                return Err("division by zero".into());
             }
 
-            Ok(Value::Float(
-                a / b as f64
-            ))
-        }
+            Ok(Value::Float(a / b as f64))
+        },
 
-        (a, b) => {
-            Err(format!(
-                "division not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "division not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn power(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn power(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) if b >= 0
-            && b <= u32::MAX as i64 =>
-        {
-            a.checked_pow(b as u32)
-                .map(Value::Int)
-                .ok_or_else(|| {
-                    "integer overflow in power".into()
-                })
-        }
+        (Value::Int(a), Value::Int(b)) if b >= 0 && b <= u32::MAX as i64 => a
+            .checked_pow(b as u32)
+            .map(Value::Int)
+            .ok_or_else(|| "integer overflow in power".into()),
 
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
-            Ok(Value::Float(
-                (a as f64).powf(b as f64)
-            ))
-        }
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(a.powf(b)))
-        }
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
-            Ok(Value::Float(
-                (a as f64).powf(b)
-            ))
-        }
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
-            Ok(Value::Float(
-                a.powf(b as f64)
-            ))
-        }
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
 
-        (a, b) => {
-            Err(format!(
-                "power not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "power not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn modulo(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn modulo(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => {
+        (Value::Int(a), Value::Int(b)) => {
             if b == 0 {
-                return Err(
-                    "modulo by zero".into()
-                );
+                return Err("modulo by zero".into());
             }
 
             Ok(Value::Int(a % b))
-        }
+        },
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => {
+        (Value::Float(a), Value::Float(b)) => {
             if b == 0.0 {
-                return Err(
-                    "modulo by zero".into()
-                );
+                return Err("modulo by zero".into());
             }
 
             Ok(Value::Float(a % b))
-        }
+        },
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => {
+        (Value::Int(a), Value::Float(b)) => {
             if b == 0.0 {
-                return Err(
-                    "modulo by zero".into()
-                );
+                return Err("modulo by zero".into());
             }
 
-            Ok(Value::Float(
-                a as f64 % b
-            ))
-        }
+            Ok(Value::Float(a as f64 % b))
+        },
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => {
+        (Value::Float(a), Value::Int(b)) => {
             if b == 0 {
-                return Err(
-                    "modulo by zero".into()
-                );
+                return Err("modulo by zero".into());
             }
 
-            Ok(Value::Float(
-                a % b as f64
-            ))
-        }
+            Ok(Value::Float(a % b as f64))
+        },
 
-        (a, b) => {
-            Err(format!(
-                "modulo not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "modulo not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn matmul(
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn matmul(lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Vector(lhs),
-            Value::Vector(rhs),
-        ) => {
-            let lhs =
-                lhs.borrow();
+        (Value::Vector(lhs), Value::Vector(rhs)) => {
+            let lhs = lhs.borrow();
 
-            let rhs =
-                rhs.borrow();
+            let rhs = rhs.borrow();
 
-            let result =
-                lhs.dot(&rhs)?;
+            let result = lhs.dot(&rhs)?;
 
-            Ok(
-                Value::Float(result)
-            )
-        }
+            Ok(Value::Float(result))
+        },
 
-        (
-            Value::Matrix(lhs),
-            Value::Matrix(rhs),
-        ) => {
-            let lhs =
-                lhs.borrow();
+        (Value::Matrix(lhs), Value::Matrix(rhs)) => {
+            let lhs = lhs.borrow();
 
-            let rhs =
-                rhs.borrow();
+            let rhs = rhs.borrow();
+
+            let result = lhs.matmul(&rhs)?;
+
+            Ok(Value::Matrix(Rc::new(RefCell::new(result))))
+        },
+
+        (Value::Matrix(matrix), Value::Vector(vector)) => {
+            let matrix = matrix.borrow();
+
+            let vector = vector.borrow();
 
             let result =
-                lhs.matmul(&rhs)?;
+                crate::runtime::numeric::matrix_vector_mul(matrix.as_faer(), vector.as_faer())?;
 
-            Ok(
-                Value::Matrix(
-                    Rc::new(
-                        RefCell::new(result)
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(Vector::from_faer(
+                result,
+            )))))
+        },
 
-        (
-            Value::Matrix(matrix),
-            Value::Vector(vector),
-        ) => {
-            let matrix =
-                matrix.borrow();
+        (Value::Vector(vector), Value::Matrix(matrix)) => {
+            let vector = vector.borrow();
 
-            let vector =
-                vector.borrow();
+            let matrix = matrix.borrow();
 
             let result =
-                crate::runtime::numeric::
-                    matrix_vector_mul(
-                        matrix.as_faer(),
-                        vector.as_faer(),
-                    )?;
+                crate::runtime::numeric::vector_matrix_mul(vector.as_faer(), matrix.as_faer())?;
 
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            Vector::from_faer(
-                                result
-                            )
-                        )
-                    )
-                )
-            )
-        }
+            Ok(Value::Vector(Rc::new(RefCell::new(Vector::from_faer(
+                result,
+            )))))
+        },
 
-        (
-            Value::Vector(vector),
-            Value::Matrix(matrix),
-        ) => {
-            let vector =
-                vector.borrow();
-
-            let matrix =
-                matrix.borrow();
-
-            let result =
-                crate::runtime::numeric::
-                    vector_matrix_mul(
-                        vector.as_faer(),
-                        matrix.as_faer(),
-                    )?;
-
-            Ok(
-                Value::Vector(
-                    Rc::new(
-                        RefCell::new(
-                            Vector::from_faer(
-                                result
-                            )
-                        )
-                    )
-                )
-            )
-        }
-
-        (lhs, rhs) => {
-            Err(format!(
-                "'@' expects Matrix or Vector, got {} and {}",
-                lhs.type_name(),
-                rhs.type_name(),
-            ))
-        }
+        (lhs, rhs) => Err(format!(
+            "'@' expects Matrix or Vector, got {} and {}",
+            lhs.type_name(),
+            rhs.type_name(),
+        )),
     }
 }
 
-fn bool_binary(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
+fn bool_binary(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
     match (lhs, rhs) {
-        (
-            Value::Bool(a),
-            Value::Bool(b),
-        ) => {
+        (Value::Bool(a), Value::Bool(b)) => {
             let result = match op {
                 BinOp::And => a && b,
                 BinOp::Or => a || b,
 
-                _ => unreachable!(
-                    "bool_binary called with non-logical operator"
-                ),
+                _ => unreachable!("bool_binary called with non-logical operator"),
             };
 
             Ok(Value::Bool(result))
-        }
+        },
 
-        (a, b) => {
-            Err(format!(
-                "logical operation not defined between {} and {}",
-                a.type_name(),
-                b.type_name()
-            ))
-        }
+        (a, b) => Err(format!(
+            "logical operation not defined between {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
     }
 }
 
-fn compare(
-    op: BinOp,
-    lhs: Value,
-    rhs: Value,
-) -> Result<Value, String> {
-    fn ord(
-        a: f64,
-        b: f64,
-        op: BinOp,
-    ) -> bool {
+fn compare(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
+    fn ord(a: f64, b: f64, op: BinOp) -> bool {
         match op {
             BinOp::Lt => a < b,
             BinOp::Leq => a <= b,
             BinOp::Gt => a > b,
             BinOp::Geq => a >= b,
 
-            _ => unreachable!(
-                "ord called with non-comparison operator"
-            ),
+            _ => unreachable!("ord called with non-comparison operator"),
         }
     }
 
     let result = match (&lhs, &rhs) {
-        (
-            Value::Int(a),
-            Value::Int(b),
-        ) => ord(
-            *a as f64,
-            *b as f64,
-            op,
-        ),
+        (Value::Int(a), Value::Int(b)) => ord(*a as f64, *b as f64, op),
 
-        (
-            Value::Float(a),
-            Value::Float(b),
-        ) => ord(*a, *b, op),
+        (Value::Float(a), Value::Float(b)) => ord(*a, *b, op),
 
-        (
-            Value::Int(a),
-            Value::Float(b),
-        ) => ord(
-            *a as f64,
-            *b,
-            op,
-        ),
+        (Value::Int(a), Value::Float(b)) => ord(*a as f64, *b, op),
 
-        (
-            Value::Float(a),
-            Value::Int(b),
-        ) => ord(
-            *a,
-            *b as f64,
-            op,
-        ),
+        (Value::Float(a), Value::Int(b)) => ord(*a, *b as f64, op),
 
-        (
-            Value::Str(a),
-            Value::Str(b),
-        ) => {
-            match op {
-                BinOp::Lt =>
-                    a < b,
+        (Value::Str(a), Value::Str(b)) => match op {
+            BinOp::Lt => a < b,
 
-                BinOp::Leq =>
-                    a <= b,
+            BinOp::Leq => a <= b,
 
-                BinOp::Gt =>
-                    a > b,
+            BinOp::Gt => a > b,
 
-                BinOp::Geq =>
-                    a >= b,
+            BinOp::Geq => a >= b,
 
-                _ => unreachable!(),
-            }
-        }
+            _ => unreachable!(),
+        },
 
         _ => {
             return Err(format!(
@@ -1286,7 +594,7 @@ fn compare(
                 lhs.type_name(),
                 rhs.type_name()
             ));
-        }
+        },
     };
 
     Ok(Value::Bool(result))

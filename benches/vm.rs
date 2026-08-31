@@ -1,114 +1,65 @@
-use criterion::{
-    criterion_group,
-    criterion_main,
-    Criterion,
-};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 use novum::{
     syntax::Lexer,
     syntax::Parser,
-    vm::{
-        Chunk,
-        Compiler,
-        Vm,
-    },
+    vm::{Chunk, Compiler, Vm},
 };
 
-use std::{
-    hint::black_box,
-    rc::Rc,
-};
+use std::{hint::black_box, rc::Rc};
 
-fn compile(
-    source: &str,
-) -> Rc<Chunk> {
-    let tokens =
-        Lexer::new(source)
-            .lex()
-            .expect("lex failed");
+fn compile(source: &str) -> Rc<Chunk> {
+    let tokens = Lexer::new(source).lex().expect("lex failed");
 
-    let mut parser =
-        Parser::new(tokens);
+    let mut parser = Parser::new(tokens);
 
-    let program =
-        parser
-            .parse()
-            .expect("parse failed");
+    let program = parser.parse().expect("parse failed");
 
-    Rc::new(
-        Compiler::new()
-            .compile(&program)
-            .expect("compile failed")
-    )
+    Rc::new(Compiler::new().compile(&program).expect("compile failed"))
 }
 
-fn benchmark_iterator_map(
-    c: &mut Criterion,
-) {
-    let chunk =
-        compile(
-            r#"
+fn benchmark_iterator_map(c: &mut Criterion) {
+    let chunk = compile(
+        r#"
             let xs =
                 (0..1_000_000)
                     .map(|x| x * 2)
                     .collect()
-            "#
-        );
-
-    let mut vm =
-        Vm::new();
-
-    c.bench_function(
-        "map_collect",
-        |b| {
-            b.iter(|| {
-                vm.run(
-                    chunk.clone()
-                )
-                .expect("VM failed");
-            })
-        }
+            "#,
     );
+
+    let mut vm = Vm::new();
+
+    c.bench_function("map_collect", |b| {
+        b.iter(|| {
+            vm.run(chunk.clone()).expect("VM failed");
+        })
+    });
 }
 
-fn benchmark_iterator(
-    c: &mut Criterion,
-) {
-    let chunk =
-        compile(
-            r#"
+fn benchmark_iterator(c: &mut Criterion) {
+    let chunk = compile(
+        r#"
             let xs =
                 (0..1_000_000)
                     .map(|x| x * 2)
                     .filter(|x| x % 3 == 0)
                     .collect()
-            "#
-        );
-
-    let mut vm =
-        Vm::new();
-
-    c.bench_function(
-        "map_filter_collect",
-        |b| {
-            b.iter(|| {
-                vm.run(
-                    black_box(
-                        chunk.clone()
-                    )
-                )
-                .expect("VM failed");
-            })
-        }
+            "#,
     );
+
+    let mut vm = Vm::new();
+
+    c.bench_function("map_filter_collect", |b| {
+        b.iter(|| {
+            vm.run(black_box(chunk.clone())).expect("VM failed");
+        })
+    });
 }
 
-fn benchmark_for(
-    c: &mut Criterion,
-) {
-    let chunk =
-        compile(
-            r#"
+fn benchmark_for(c: &mut Criterion) {
+    let chunk = compile(
+        r#"
             let x = 0
 
             for i in 0..1_000_000 {
@@ -116,25 +67,16 @@ fn benchmark_for(
             }
 
             x
-            "#
-        );
-
-    let mut vm =
-        Vm::new();
-
-    c.bench_function(
-        "for_loop",
-        |b| {
-            b.iter(|| {
-                vm.run(
-                    black_box(
-                        chunk.clone()
-                    )
-                )
-                .expect("VM failed");
-            })
-        }
+            "#,
     );
+
+    let mut vm = Vm::new();
+
+    c.bench_function("for_loop", |b| {
+        b.iter(|| {
+            vm.run(black_box(chunk.clone())).expect("VM failed");
+        })
+    });
 }
 
 criterion_group!(
@@ -144,6 +86,4 @@ criterion_group!(
     benchmark_for,
 );
 
-criterion_main!(
-    benches
-);
+criterion_main!(benches);

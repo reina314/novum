@@ -6,27 +6,15 @@ pub struct Instruction {
 
 impl Instruction {
     #[inline]
-    pub fn new(
-        opcode: OpCode,
-        operand: u32,
-    ) -> Self {
-        Self {
-            opcode,
-            operand,
-        }
+    pub fn new(opcode: OpCode, operand: u32) -> Self {
+        Self { opcode, operand }
     }
 
     #[inline]
-    pub fn simple(
-        opcode: OpCode,
-    ) -> Self {
-        Self {
-            opcode,
-            operand: 0,
-        }
+    pub fn simple(opcode: OpCode) -> Self {
+        Self { opcode, operand: 0 }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpCode {
@@ -54,7 +42,7 @@ pub enum OpCode {
     NewStruct,
     NewClass,
     NewRange,
-    
+
     ListAppend,
     ListExtendRange,
 

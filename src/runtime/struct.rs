@@ -1,9 +1,6 @@
 use super::Value;
 
-use std::{
-    fmt,
-    rc::Rc,
-};
+use std::{fmt, rc::Rc};
 
 #[derive(Clone)]
 pub struct StructType {
@@ -14,10 +11,7 @@ pub struct StructType {
 pub type StructTypeRef = Rc<StructType>;
 
 impl StructType {
-    pub fn new(
-        name: impl Into<String>,
-        fields: Vec<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, fields: Vec<String>) -> Self {
         Self {
             name: name.into(),
             fields,
@@ -32,26 +26,14 @@ impl StructType {
         &self.fields
     }
 
-    pub fn field_index(
-        &self,
-        name: &str,
-    ) -> Option<usize> {
-        self.fields
-            .iter()
-            .position(|field| field == name)
+    pub fn field_index(&self, name: &str) -> Option<usize> {
+        self.fields.iter().position(|field| field == name)
     }
 }
 
 impl fmt::Display for StructType {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "<struct {}>",
-            self.name
-        )
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<struct {}>", self.name)
     }
 }
 
@@ -64,27 +46,17 @@ pub struct StructValue {
 pub type StructValueRef = Rc<StructValue>;
 
 impl StructValue {
-    pub fn new(
-        ty: StructTypeRef,
-        fields: Vec<Value>,
-    ) -> Result<Self, String> {
-        if fields.len()
-            != ty.fields().len()
-        {
-            return Err(
-                format!(
-                    "struct '{}' expects {} fields, got {}",
-                    ty.name(),
-                    ty.fields().len(),
-                    fields.len(),
-                )
-            );
+    pub fn new(ty: StructTypeRef, fields: Vec<Value>) -> Result<Self, String> {
+        if fields.len() != ty.fields().len() {
+            return Err(format!(
+                "struct '{}' expects {} fields, got {}",
+                ty.name(),
+                ty.fields().len(),
+                fields.len(),
+            ));
         }
 
-        Ok(Self {
-            ty,
-            fields,
-        })
+        Ok(Self { ty, fields })
     }
 
     pub fn ty(&self) -> StructTypeRef {
@@ -99,59 +71,32 @@ impl StructValue {
         &self.fields
     }
 
-    pub fn field(
-        &self,
-        index: usize,
-    ) -> Option<Value> {
-        self.fields
-            .get(index)
-            .cloned()
+    pub fn field(&self, index: usize) -> Option<Value> {
+        self.fields.get(index).cloned()
     }
 
-    pub fn get_field(
-        &self,
-        name: &str,
-    ) -> Option<Value> {
-        let index =
-            self.ty.field_index(name)?;
+    pub fn get_field(&self, name: &str) -> Option<Value> {
+        let index = self.ty.field_index(name)?;
 
         self.field(index)
     }
 }
 
 impl fmt::Display for StructValue {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "{} {{",
-            self.type_name()
-        )?;
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {{", self.type_name())?;
 
-        for (
-            index,
-            name,
-        ) in self.ty.fields().iter().enumerate()
-        {
+        for (index, name) in self.ty.fields().iter().enumerate() {
             if index > 0 {
                 write!(f, ", ")?;
             }
 
-            let value =
-                self.fields
-                    .get(index)
-                    .expect(
-                        "StructValue field count invariant violated"
-                    );
+            let value = self
+                .fields
+                .get(index)
+                .expect("StructValue field count invariant violated");
 
-            write!(
-                f,
-                "{}: {}",
-                name,
-                value,
-            )?;
+            write!(f, "{}: {}", name, value,)?;
         }
 
         write!(f, "}}")

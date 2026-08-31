@@ -78,10 +78,7 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    pub fn is_ident(
-        &self,
-        expected: &str,
-    ) -> bool {
+    pub fn is_ident(&self, expected: &str) -> bool {
         matches!(
             self,
             TokenKind::Ident(name)
