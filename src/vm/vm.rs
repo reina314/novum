@@ -24,6 +24,12 @@ use std::{
     rc::Rc,
 };
 
+enum MethodTarget {
+    Class(ClosureRef),
+
+    Extension(Value),
+}
+
 struct ExecutionResult {
     value: Value,
     frame: CallFrame,
@@ -1957,6 +1963,36 @@ impl Vm {
                 None,
             )),
         }
+    }
+
+    fn resolve_method(&self, receiver: &Value, name: &str) -> Result<Option<MethodTarget>> {
+        /*
+         * --------------------------------------------------------
+         * 1. Class / Object inherent method
+         * --------------------------------------------------------
+         */
+
+        if let Value::Object(object) = receiver {
+            let class = object.borrow().class();
+
+            if let Some(method) = class.method(name) {
+                return Ok(Some(MethodTarget::Class(method)));
+            }
+        }
+
+        /*
+         * --------------------------------------------------------
+         * 2. Exact receiver extension
+         * --------------------------------------------------------
+         */
+
+        let receiver_kind = receiver.receiver_kind();
+
+        if let Some(function) = self.extension_registry.get(receiver_kind, name) {
+            return Ok(Some(MethodTarget::Extension(function.clone())));
+        }
+
+        Ok(None)
     }
 
     fn resolve_field(&self, object: Value, field: &str) -> Result<Value> {
