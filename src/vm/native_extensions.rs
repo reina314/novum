@@ -242,6 +242,8 @@ fn register_dataframe_extensions(registry: &mut ExtensionRegistry) {
 
     registry.register_native(ReceiverKind::DataFrame, "head", dataframe_head);
 
+    registry.register_native(ReceiverKind::DataFrame, "tail", dataframe_tail);
+
     registry.register_native(ReceiverKind::DataFrame, "to_matrix", dataframe_to_matrix);
 
     registry.register_native(ReceiverKind::DataFrame, "iter", dataframe_iter);
@@ -1181,12 +1183,53 @@ fn dataframe_head(
         unreachable!();
     };
 
-    expect_arity("head", &args, 1)?;
+    let n = match args.len() {
+        0 => 5,
 
-    let n = expect_usize_index("head", &args[0])?;
+        1 => expect_usize_index("head", &args[0])?,
+
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Arity,
+                format!("head() expects 0 or 1 argument(s), got {}", args.len()),
+                None,
+            ));
+        },
+    };
 
     let result = df
         .head(n)
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(result)))
+}
+
+fn dataframe_tail(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::DataFrame(df) = receiver else {
+        unreachable!();
+    };
+
+    let n = match args.len() {
+        0 => 5,
+
+        1 => expect_usize_index("tail", &args[0])?,
+
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Arity,
+                format!("tail() expects 0 or 1 argument(s), got {}", args.len()),
+                None,
+            ));
+        },
+    };
+
+    let result = df
+        .tail(n)
         .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
 
     Ok(Value::DataFrame(Rc::new(result)))

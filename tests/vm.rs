@@ -2976,3 +2976,68 @@ fn vm_pipeline_tuple_lambda() {
         &[3, 7],
     );
 }
+
+#[test]
+fn vm_logical_and() {
+    assert_bool(
+        r#"
+        true and true
+        "#,
+        true,
+    );
+
+    assert_bool(
+        r#"
+        true and false
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        false and true
+        "#,
+        false,
+    );
+}
+
+#[test]
+fn vm_logical_or() {
+    assert_bool(
+        r#"
+        false or false
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        false or true
+        "#,
+        true,
+    );
+
+    assert_bool(
+        r#"
+        true or false
+        "#,
+        true,
+    );
+}
+
+#[test]
+fn vm_logical_not() {
+    assert_bool(
+        r#"
+        not true
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        not false
+        "#,
+        true,
+    );
+}
