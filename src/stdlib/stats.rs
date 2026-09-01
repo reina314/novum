@@ -698,13 +698,29 @@ fn one_sample_ttest_values(
     mu0: f64,
     method: &str,
 ) -> Result<Value, String> {
-    let n = values.len();
-
-    if n < 2 {
+    if !mu0.is_finite() {
         return Err(
-            "t-test requires at least 2 observations".into()
+            "t-test null hypothesis mean must be finite"
+                .into()
         );
     }
+
+    if values.len() < 2 {
+        return Err(
+            "t-test requires at least 2 observations"
+                .into()
+        );
+    }
+
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(
+            "t-test data contains non-finite value"
+                .into()
+        );
+    }
+
+    let n =
+        values.len();
 
     let mean =
         values.iter().sum::<f64>()
@@ -724,11 +740,13 @@ fn one_sample_ttest_values(
 
     if !variance.is_finite() {
         return Err(
-            "t-test variance is not finite".into()
+            "t-test variance is not finite"
+                .into()
         );
     }
 
-    let std = variance.sqrt();
+    let std =
+        variance.sqrt();
 
     if std == 0.0 {
         return Err(
@@ -744,7 +762,11 @@ fn one_sample_ttest_values(
     let df =
         (n - 1) as f64;
 
-    let p_value = t_distribution_p_value(t, df)?;
+    let p_value =
+        t_distribution_p_value(
+            t,
+            df,
+        )?;
 
     Ok(result_dict(vec![
         (
@@ -762,10 +784,145 @@ fn one_sample_ttest_values(
         (
             "method",
             Value::Str(
-                Rc::new(method.to_owned())
+                Rc::new(
+                    method.to_owned()
+                )
             ),
         ),
     ]))
+}
+
+fn paired_numeric_values(
+    first: &SeriesRef,
+    second: &SeriesRef,
+) -> Result<(Vec<f64>, Vec<f64>), String> {
+    if first.len() != second.len() {
+        return Err(
+            "paired test requires equal-length Series"
+                .into()
+        );
+    }
+
+    let mut first_values =
+        Vec::with_capacity(first.len());
+
+    let mut second_values =
+        Vec::with_capacity(second.len());
+
+    for index in 0..first.len() {
+        let first_value =
+            first.get(index)
+                .ok_or_else(|| {
+                    format!(
+                        "first Series index out of bounds: {}",
+                        index
+                    )
+                })?;
+
+        let second_value =
+            second.get(index)
+                .ok_or_else(|| {
+                    format!(
+                        "second Series index out of bounds: {}",
+                        index
+                    )
+                })?;
+
+        match (&first_value, &second_value) {
+            (Value::Null, _)
+            | (_, Value::Null) => {
+                continue;
+            }
+
+            (
+                Value::Int(first),
+                Value::Int(second),
+            ) => {
+                first_values.push(
+                    *first as f64
+                );
+
+                second_values.push(
+                    *second as f64
+                );
+            }
+
+            (
+                Value::Int(first),
+                Value::Float(second),
+            ) => {
+                if !second.is_finite() {
+                    return Err(
+                        "paired test contains non-finite value"
+                            .into()
+                    );
+                }
+
+                first_values.push(
+                    *first as f64
+                );
+
+                second_values.push(
+                    *second
+                );
+            }
+
+            (
+                Value::Float(first),
+                Value::Int(second),
+            ) => {
+                if !first.is_finite() {
+                    return Err(
+                        "paired test contains non-finite value"
+                            .into()
+                    );
+                }
+
+                first_values.push(
+                    *first
+                );
+
+                second_values.push(
+                    *second as f64
+                );
+            }
+
+            (
+                Value::Float(first),
+                Value::Float(second),
+            ) => {
+                if !first.is_finite()
+                    || !second.is_finite()
+                {
+                    return Err(
+                        "paired test contains non-finite value"
+                            .into()
+                    );
+                }
+
+                first_values.push(
+                    *first
+                );
+
+                second_values.push(
+                    *second
+                );
+            }
+
+            (first, second) => {
+                return Err(format!(
+                    "paired test requires numeric Series; found {} and {}",
+                    first.type_name(),
+                    second.type_name()
+                ));
+            }
+        }
+    }
+
+    Ok((
+        first_values,
+        second_values,
+    ))
 }
 
 pub fn ttest(
@@ -815,32 +972,53 @@ pub fn paired_ttest(
         );
     }
 
-    let before =
-        numeric_series_values(&args[0])?;
+    let first =
+        match &args[0] {
+            Value::Series(series) => {
+                series.clone()
+            }
 
-    let after =
-        numeric_series_values(&args[1])?;
+            other => {
+                return Err(format!(
+                    "paired_ttest() first argument must be Series, got {}",
+                    other.type_name()
+                ));
+            }
+        };
 
-    if before.len() != after.len() {
+    let second =
+        match &args[1] {
+            Value::Series(series) => {
+                series.clone()
+            }
+
+            other => {
+                return Err(format!(
+                    "paired_ttest() second argument must be Series, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let (first_values, second_values) =
+        paired_numeric_values(
+            &first,
+            &second,
+        )?;
+
+    if first_values.len() < 2 {
         return Err(
-            "paired_ttest() requires equal-length Series"
-                .into()
-        );
-    }
-
-    if before.len() < 2 {
-        return Err(
-            "paired_ttest() requires at least 2 pairs"
+            "paired_ttest() requires at least 2 complete pairs"
                 .into()
         );
     }
 
     let differences =
-        before
+        first_values
             .iter()
-            .zip(after.iter())
-            .map(|(before, after)| {
-                before - after
+            .zip(second_values.iter())
+            .map(|(first, second)| {
+                first - second
             })
             .collect::<Vec<_>>();
 
@@ -851,53 +1029,140 @@ pub fn paired_ttest(
     )
 }
 
-pub fn welch(args: Vec<Value>) -> Result<Value, String> {
+pub fn welch(
+    args: Vec<Value>,
+) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err("welch() expects exactly 2 Series".into());
+        return Err(
+            "welch() expects exactly 2 Series"
+                .into()
+        );
     }
 
-    let x = series_values(&args[0])?;
+    let x =
+        numeric_series_values(&args[0])?;
 
-    let y = series_values(&args[1])?;
+    let y =
+        numeric_series_values(&args[1])?;
 
-    if x.len() < 2 || y.len() < 2 {
-        return Err("welch() requires at least 2 observations per group".into());
+    if x.len() < 2
+        || y.len() < 2
+    {
+        return Err(
+            "welch() requires at least 2 observations per group"
+                .into()
+        );
     }
 
-    let nx = x.len() as f64;
-
-    let ny = y.len() as f64;
-
-    let mean_x = x.iter().sum::<f64>() / nx;
-
-    let mean_y = y.iter().sum::<f64>() / ny;
-
-    let var_x = x.iter().map(|v| (*v - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
-
-    let var_y = y.iter().map(|v| (*v - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
-
-    let se2 = var_x / nx + var_y / ny;
-
-    if se2 == 0.0 {
-        return Err("welch() standard error is zero".into());
+    if x.iter().any(|v| !v.is_finite())
+        || y.iter().any(|v| !v.is_finite())
+    {
+        return Err(
+            "welch() data contains non-finite value"
+                .into()
+        );
     }
 
-    let t = (mean_x - mean_y) / se2.sqrt();
+    let nx =
+        x.len() as f64;
 
-    let numerator = se2.powi(2);
+    let ny =
+        y.len() as f64;
+
+    let mean_x =
+        x.iter().sum::<f64>() / nx;
+
+    let mean_y =
+        y.iter().sum::<f64>() / ny;
+
+    let var_x =
+        x.iter()
+            .map(|v| {
+                (*v - mean_x).powi(2)
+            })
+            .sum::<f64>()
+            / (nx - 1.0);
+
+    let var_y =
+        y.iter()
+            .map(|v| {
+                (*v - mean_y).powi(2)
+            })
+            .sum::<f64>()
+            / (ny - 1.0);
+
+    let se2 =
+        var_x / nx
+            + var_y / ny;
+
+    if !se2.is_finite()
+        || se2 <= 0.0
+    {
+        return Err(
+            "welch() standard error is zero or non-finite"
+                .into()
+        );
+    }
+
+    let t =
+        (mean_x - mean_y)
+            / se2.sqrt();
+
+    let numerator =
+        se2.powi(2);
 
     let denominator =
-        (var_x.powi(2) / (nx.powi(2) * (nx - 1.0))) + (var_y.powi(2) / (ny.powi(2) * (ny - 1.0)));
+        var_x.powi(2)
+            / (
+                nx.powi(2)
+                    * (nx - 1.0)
+            )
+            + var_y.powi(2)
+                / (
+                    ny.powi(2)
+                        * (ny - 1.0)
+                );
 
-    let df = numerator / denominator;
+    if denominator <= 0.0
+        || !denominator.is_finite()
+    {
+        return Err(
+            "welch() degrees of freedom are undefined"
+                .into()
+        );
+    }
 
-    let p_value = t_distribution_p_value(t, df)?;
+    let df =
+        numerator / denominator;
+
+    let p_value =
+        t_distribution_p_value(
+            t,
+            df,
+        )?;
 
     Ok(result_dict(vec![
-        ("statistic", Value::Float(t)),
-        ("p_value", Value::Float(p_value)),
-        ("df", Value::Float(df)),
-        ("method", Value::Str(Rc::new("Welch's t-test".to_string()))),
+        (
+            "statistic",
+            Value::Float(t),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "df",
+            Value::Float(df),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(
+                    "Welch's t-test"
+                        .to_string()
+                )
+            ),
+        ),
     ]))
 }
 
