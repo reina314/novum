@@ -2,7 +2,8 @@ use novum::error::ErrorKind;
 
 mod common;
 use common::{
-    assert_error_kind, assert_float, assert_int, assert_list, assert_matrix, assert_vector,
+    assert_bool, assert_error_kind, assert_float, assert_int, assert_list, assert_matrix,
+    assert_vector,
 };
 
 #[test]
@@ -728,5 +729,32 @@ fn linalg_solve_lstsq() {
         linalg.solve_lstsq(A, b)
         "#,
         &[2.0],
+    );
+}
+
+#[test]
+fn vm_ufcs_linalg() {
+    assert_bool(
+        r#"
+        let A = [
+            [1, 2],
+            [3, 4]
+        ].matrix()
+
+        A.det() == -2.0
+        "#,
+        true,
+    );
+
+    assert_list(
+        r#"
+        let A = [
+            [1, 2],
+            [3, 4]
+        ].matrix()
+
+        A.shape()
+        "#,
+        &[2, 2],
     );
 }

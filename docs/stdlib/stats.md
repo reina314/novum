@@ -1,10 +1,9 @@
 ---
-
 layout: default
 title: Statistics
 parent: Standard Library
 nav_order: 8
-------------
+---
 
 # `stats`
 
