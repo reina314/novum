@@ -984,9 +984,9 @@ impl Compiler {
             return false;
         };
 
-        if params.len() != 1 {
+        let [Pattern::Ident(_)] = params.as_slice() else {
             return false;
-        }
+        };
 
         Self::pipeline_expr_is_fusable(body)
     }
