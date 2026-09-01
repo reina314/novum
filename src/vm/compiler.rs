@@ -3196,7 +3196,7 @@ impl Compiler {
          *
          * InvokeMethod is retained as the migration opcode.
          */
-        self.compile_legacy_method_call(object, name, args)
+        self.compile_method_call(object, name, args)
     }
 
     fn compile_spread_receiver_call(
@@ -3250,12 +3250,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_legacy_method_call(
-        &mut self,
-        object: &Expr,
-        name: &str,
-        args: &[CallArg],
-    ) -> Result<()> {
+    fn compile_method_call(&mut self, object: &Expr, name: &str, args: &[CallArg]) -> Result<()> {
         self.compile_expr(object)?;
 
         let method_index = self
@@ -3274,7 +3269,7 @@ impl Compiler {
             method_namespaces,
         );
 
-        self.chunk.emit_operand(OpCode::InvokeMethod, call_site);
+        self.chunk.emit_operand(OpCode::Call, call_site);
 
         Ok(())
     }

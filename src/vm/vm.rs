@@ -12,9 +12,9 @@ use crate::{
 };
 
 use super::{
-    Chunk, Instruction, IntPipelineExpr, IntPipelinePredicate, IntPipelineStage, ModuleLoader,
-    OpCode, PipelineExpr, PipelinePlan, PipelineProgram, PipelineSource, PipelineStage,
-    PipelineState,
+    CallSite, Chunk, Instruction, IntPipelineExpr, IntPipelinePredicate, IntPipelineStage,
+    ModuleLoader, OpCode, PipelineExpr, PipelinePlan, PipelineProgram, PipelineSource,
+    PipelineStage, PipelineState,
 };
 
 use std::{
@@ -25,22 +25,21 @@ use std::{
 };
 
 #[derive(Clone)]
-enum MethodTarget {
-    Class(ClosureRef),
+enum CallTarget {
     Callable(Value),
     Legacy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum MethodCacheReceiver {
+enum CallTargetCacheReceiver {
     Kind(ReceiverKind),
     Class(usize),
 }
 
 #[derive(Clone)]
-struct MethodCacheEntry {
-    receiver: MethodCacheReceiver,
-    target: MethodTarget,
+struct CallTargetCacheEntry {
+    receiver: CallTargetCacheReceiver,
+    target: CallTarget,
 }
 
 struct ExecutionResult {
@@ -63,7 +62,7 @@ pub struct Vm {
     module_namespaces: HashMap<ModulePath, ModuleRef>,
 
     extension_registry: ExtensionRegistry,
-    method_cache: HashMap<(usize, usize, String), MethodCacheEntry>,
+    call_target_cache: HashMap<(usize, usize, String), CallTargetCacheEntry>,
 }
 
 impl Vm {
@@ -83,7 +82,7 @@ impl Vm {
             module_namespaces: HashMap::new(),
 
             extension_registry: crate::stdlib::extension_registry(),
-            method_cache: HashMap::new(),
+            call_target_cache: HashMap::new(),
         }
     }
 
@@ -113,20 +112,24 @@ impl Vm {
     }
 
     #[inline]
-    fn method_cache_receiver(receiver: &Value) -> MethodCacheReceiver {
+    fn call_target_cache_receiver(receiver: &Value) -> CallTargetCacheReceiver {
         match receiver {
             Value::Object(object) => {
                 let class = object.borrow().class();
 
-                MethodCacheReceiver::Class(Rc::as_ptr(&class) as usize)
+                CallTargetCacheReceiver::Class(Rc::as_ptr(&class) as usize)
             },
 
-            _ => MethodCacheReceiver::Kind(receiver.receiver_kind()),
+            _ => CallTargetCacheReceiver::Kind(receiver.receiver_kind()),
         }
     }
 
     #[inline]
-    fn method_cache_key(chunk: &Rc<Chunk>, call_site: usize, name: &str) -> (usize, usize, String) {
+    fn call_target_cache_key(
+        chunk: &Rc<Chunk>,
+        call_site: usize,
+        name: &str,
+    ) -> (usize, usize, String) {
         (Rc::as_ptr(chunk) as usize, call_site, name.to_owned())
     }
 
@@ -148,7 +151,7 @@ impl Vm {
     ) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
-        self.method_cache.clear();
+        self.call_target_cache.clear();
 
         let function = Rc::new(FunctionProto {
             arity: 0,
@@ -180,7 +183,7 @@ impl Vm {
     pub fn run_repl(&mut self, chunk: Rc<Chunk>) -> Result<Value> {
         self.stack.clear();
         self.frames.clear();
-        self.method_cache.clear();
+        self.call_target_cache.clear();
 
         let function = Rc::new(FunctionProto {
             arity: 0,
@@ -554,116 +557,8 @@ impl Vm {
                     *cell.borrow_mut() = value;
                 },
 
-                OpCode::InvokeMethod => {
-                    let call_site = operand as usize;
-
-                    let metadata = self
-                        .current_frame()
-                        .closure
-                        .function
-                        .chunk
-                        .call_sites
-                        .get(call_site)
-                        .cloned()
-                        .ok_or_else(|| {
-                            Error::new(ErrorKind::Runtime, "call-site index out of bounds", None)
-                        })?;
-
-                    let method_index = metadata.method.ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::Runtime,
-                            "InvokeMethod requires method call-site metadata",
-                            None,
-                        )
-                    })?;
-
-                    let method = self
-                        .current_frame()
-                        .closure
-                        .function
-                        .chunk
-                        .constants
-                        .get(method_index as usize)
-                        .cloned()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::Runtime,
-                                "method name constant out of bounds",
-                                None,
-                            )
-                        })?;
-
-                    let Value::Str(method) = method else {
-                        return Err(Error::new(
-                            ErrorKind::Runtime,
-                            "method name constant must be Str",
-                            None,
-                        ));
-                    };
-
-                    let argc = metadata.names.len();
-
-                    let receiver_index =
-                        self.stack.len().checked_sub(argc + 1).ok_or_else(|| {
-                            Error::new(ErrorKind::Runtime, "invalid method call stack", None)
-                        })?;
-
-                    let receiver = self.stack[receiver_index].clone();
-
-                    let args = self.stack[receiver_index + 1..].to_vec();
-
-                    let names = metadata.names.clone();
-
-                    let chunk = self.current_frame().closure.function.chunk.clone();
-
-                    let result = self.invoke_resolved_method(
-                        &chunk,
-                        call_site,
-                        receiver,
-                        method.as_str(),
-                        args,
-                        &names,
-                        &metadata.method_namespaces,
-                    )?;
-
-                    self.stack.truncate(receiver_index);
-
-                    self.push(result);
-                },
-
                 OpCode::Call => {
-                    let call_site = operand as usize;
-
-                    let metadata = self
-                        .current_frame()
-                        .closure
-                        .function
-                        .chunk
-                        .call_sites
-                        .get(call_site)
-                        .cloned()
-                        .ok_or_else(|| {
-                            Error::new(ErrorKind::Runtime, "call-site index out of bounds", None)
-                        })?;
-
-                    let argc = metadata.names.len();
-
-                    let function_index =
-                        self.stack.len().checked_sub(argc + 1).ok_or_else(|| {
-                            Error::new(ErrorKind::Runtime, "invalid call stack", None)
-                        })?;
-
-                    let callable = self.stack[function_index].clone();
-
-                    let args = self.stack[function_index + 1..].to_vec();
-
-                    let names = metadata.names.clone();
-
-                    let result = self.call_value(callable, args, &names)?;
-
-                    self.stack.truncate(function_index);
-
-                    self.push(result);
+                    self.execute_call(operand as usize)?;
                 },
 
                 OpCode::Closure => {
@@ -1605,6 +1500,117 @@ impl Vm {
         }
     }
 
+    fn execute_call(&mut self, call_site: usize) -> Result<()> {
+        let metadata = self.current_call_site(call_site)?;
+
+        if metadata.method.is_some() {
+            self.execute_method_call(call_site, metadata)
+        } else {
+            self.execute_function_call(metadata)
+        }
+    }
+
+    fn current_call_site(&self, call_site: usize) -> Result<CallSite> {
+        self.current_frame()
+            .closure
+            .function
+            .chunk
+            .call_sites
+            .get(call_site)
+            .cloned()
+            .ok_or_else(|| Error::new(ErrorKind::Runtime, "call-site index out of bounds", None))
+    }
+
+    fn execute_function_call(&mut self, metadata: CallSite) -> Result<()> {
+        let argc = metadata.names.len();
+
+        let function_index = self
+            .stack
+            .len()
+            .checked_sub(argc + 1)
+            .ok_or_else(|| Error::new(ErrorKind::Runtime, "invalid call stack", None))?;
+
+        let callable = self.stack[function_index].clone();
+
+        let args = self.stack[function_index + 1..].to_vec();
+
+        let names = metadata.names;
+
+        let result = self.call_value(callable, args, &names)?;
+
+        self.stack.truncate(function_index);
+
+        self.push(result);
+
+        Ok(())
+    }
+
+    fn execute_method_call(&mut self, call_site: usize, metadata: CallSite) -> Result<()> {
+        let method_index = metadata.method.ok_or_else(|| {
+            Error::new(
+                ErrorKind::Runtime,
+                "method call-site metadata is missing method",
+                None,
+            )
+        })?;
+
+        let method = self
+            .current_frame()
+            .closure
+            .function
+            .chunk
+            .constants
+            .get(method_index as usize)
+            .cloned()
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Runtime,
+                    "method name constant out of bounds",
+                    None,
+                )
+            })?;
+
+        let Value::Str(method) = method else {
+            return Err(Error::new(
+                ErrorKind::Runtime,
+                "method name constant must be Str",
+                None,
+            ));
+        };
+
+        let argc = metadata.names.len();
+
+        let receiver_index = self
+            .stack
+            .len()
+            .checked_sub(argc + 1)
+            .ok_or_else(|| Error::new(ErrorKind::Runtime, "invalid method call stack", None))?;
+
+        let receiver = self.stack[receiver_index].clone();
+
+        let args = self.stack[receiver_index + 1..].to_vec();
+
+        let names = metadata.names;
+
+        let chunk = self.current_frame().closure.function.chunk.clone();
+
+        let target = self.resolve_method_cached(
+            &chunk,
+            call_site,
+            &receiver,
+            method.as_str(),
+            &metadata.method_namespaces,
+        )?;
+
+        let result = self.invoke_call_target(target, receiver, method.as_str(), args, &names)?;
+
+        self.stack.truncate(receiver_index);
+
+        self.push(result);
+
+        Ok(())
+    }
+
     fn execute_fused_pipeline(&mut self, pipeline_index: usize) -> Result<()> {
         let pipeline = self
             .current_frame()
@@ -2011,38 +2017,21 @@ impl Vm {
         }
     }
 
-    fn resolve_method(&self, receiver: &Value, name: &str) -> Result<Option<MethodTarget>> {
-        /*
-         * --------------------------------------------------------
-         * 1. Class / Object inherent method
-         * --------------------------------------------------------
-         */
+    fn resolve_method(&self, receiver: &Value, name: &str) -> Result<Option<CallTarget>> {
         if let Value::Object(object) = receiver {
             let class = object.borrow().class();
 
             if let Some(method) = class.method(name) {
-                return Ok(Some(MethodTarget::Class(method)));
+                return Ok(Some(CallTarget::Callable(Value::Closure(method))));
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * 2. Exact extension
-         * --------------------------------------------------------
-         */
         let receiver_kind = receiver.receiver_kind();
 
         if let Some(function) = self.extension_registry.get(receiver_kind, name) {
-            return Ok(Some(MethodTarget::Callable(function.clone())));
+            return Ok(Some(CallTarget::Callable(function.clone())));
         }
 
-        /*
-         * Namespace lookup is intentionally not done here.
-         *
-         * The namespace candidates are attached to
-         * the compiled call site and are handled by
-         * invoke_resolved_method().
-         */
         Ok(None)
     }
 
@@ -2050,7 +2039,7 @@ impl Vm {
         &mut self,
         name: &str,
         namespaces: &[ModulePath],
-    ) -> Result<MethodTarget> {
+    ) -> Result<CallTarget> {
         if namespaces.is_empty() {
             return Err(Error::new(
                 ErrorKind::Name,
@@ -2084,7 +2073,7 @@ impl Vm {
             | Value::Closure(_)
             | Value::Class(_)
             | Value::EnumConstructor(_)
-            | Value::StructType(_) => Ok(MethodTarget::Callable(function)),
+            | Value::StructType(_) => Ok(CallTarget::Callable(function)),
 
             other => Err(Error::new(
                 ErrorKind::Type,
@@ -2105,21 +2094,21 @@ impl Vm {
         receiver: &Value,
         name: &str,
         namespaces: &[ModulePath],
-    ) -> Result<MethodTarget> {
-        let key = Self::method_cache_key(chunk, call_site, name);
+    ) -> Result<CallTarget> {
+        let key = Self::call_target_cache_key(chunk, call_site, name);
 
-        let receiver_key = Self::method_cache_receiver(receiver);
+        let receiver_key = Self::call_target_cache_receiver(receiver);
 
-        if let Some(entry) = self.method_cache.get(&key) {
+        if let Some(entry) = self.call_target_cache.get(&key) {
             if entry.receiver == receiver_key {
                 return Ok(entry.target.clone());
             }
         }
 
         if let Some(target) = self.resolve_method(receiver, name)? {
-            self.method_cache.insert(
+            self.call_target_cache.insert(
                 key,
-                MethodCacheEntry {
+                CallTargetCacheEntry {
                     receiver: receiver_key,
                     target: target.clone(),
                 },
@@ -2131,9 +2120,9 @@ impl Vm {
         if !namespaces.is_empty() {
             let target = self.resolve_namespace_method(name, namespaces)?;
 
-            self.method_cache.insert(
+            self.call_target_cache.insert(
                 key,
-                MethodCacheEntry {
+                CallTargetCacheEntry {
                     receiver: receiver_key,
                     target: target.clone(),
                 },
@@ -2142,11 +2131,11 @@ impl Vm {
             return Ok(target);
         }
 
-        let target = MethodTarget::Legacy;
+        let target = CallTarget::Legacy;
 
-        self.method_cache.insert(
+        self.call_target_cache.insert(
             key,
-            MethodCacheEntry {
+            CallTargetCacheEntry {
                 receiver: receiver_key,
                 target: target.clone(),
             },
@@ -2466,51 +2455,6 @@ impl Vm {
          * be supplied positionally.
          */
         Ok(bound)
-    }
-
-    fn call_method_target(
-        &mut self,
-        target: MethodTarget,
-        receiver: Value,
-        name: &str,
-        args: Vec<Value>,
-        names: &[Option<String>],
-    ) -> Result<Value> {
-        match target {
-            MethodTarget::Class(closure) => {
-                let mut call_args = Vec::with_capacity(args.len() + 1);
-
-                let mut call_names = Vec::with_capacity(names.len() + 1);
-
-                call_args.push(receiver);
-
-                call_names.push(None);
-
-                call_args.extend(args);
-
-                call_names.extend(names.iter().cloned());
-
-                self.call_closure_sync_named(closure, call_args, &call_names)
-            },
-
-            MethodTarget::Callable(value) => {
-                let mut call_args = Vec::with_capacity(args.len() + 1);
-
-                let mut call_names = Vec::with_capacity(names.len() + 1);
-
-                call_args.push(receiver);
-
-                call_names.push(None);
-
-                call_args.extend(args);
-
-                call_names.extend(names.iter().cloned());
-
-                self.call_value(value, call_args, &call_names)
-            },
-
-            MethodTarget::Legacy => self.invoke_method(receiver, name, args, names),
-        }
     }
 
     fn call_closure_sync(&mut self, closure: ClosureRef, args: Vec<Value>) -> Result<Value> {
@@ -4181,77 +4125,33 @@ impl Vm {
         }
     }
 
-    fn invoke_resolved_method(
+    fn invoke_call_target(
         &mut self,
-        chunk: &Rc<Chunk>,
-        call_site: usize,
+        target: CallTarget,
         receiver: Value,
         name: &str,
         args: Vec<Value>,
         names: &[Option<String>],
-        namespaces: &[ModulePath],
     ) -> Result<Value> {
-        let target = self.resolve_method_cached(chunk, call_site, &receiver, name, namespaces)?;
+        match target {
+            CallTarget::Callable(value) => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
 
-        self.call_method_target(target, receiver, name, args, names)
-    }
+                let mut call_names = Vec::with_capacity(names.len() + 1);
 
-    fn invoke_namespace_method(
-        &mut self,
-        receiver: Value,
-        name: &str,
-        args: Vec<Value>,
-        names: &[Option<String>],
-        namespaces: &[ModulePath],
-    ) -> Result<Value> {
-        if namespaces.is_empty() {
-            return Err(Error::new(
-                ErrorKind::Name,
-                format!(
-                    "method '{}' is not supported for this value ({})",
-                    name,
-                    receiver.type_name(),
-                ),
-                None,
-            ));
+                call_args.push(receiver);
+
+                call_names.push(None);
+
+                call_args.extend(args);
+
+                call_names.extend(names.iter().cloned());
+
+                self.call_value(value, call_args, &call_names)
+            },
+
+            CallTarget::Legacy => self.invoke_method(receiver, name, args, names),
         }
-
-        if namespaces.len() > 1 {
-            return Err(Error::new(
-                ErrorKind::Name,
-                format!("ambiguous method '{}'", name,),
-                None,
-            ));
-        }
-
-        let namespace = &namespaces[0];
-
-        let module = self.load_module_namespace(namespace)?;
-
-        let function = module.borrow().get_field(name).ok_or_else(|| {
-            Error::new(
-                ErrorKind::Name,
-                format!("namespace '{}' has no member '{}'", namespace, name,),
-                None,
-            )
-        })?;
-
-        let mut call_args = Vec::with_capacity(args.len() + 1);
-
-        let mut call_names = Vec::with_capacity(names.len() + 1);
-
-        /*
-         * Receiver is always first positional argument.
-         */
-        call_args.push(receiver);
-
-        call_names.push(None);
-
-        call_args.extend(args);
-
-        call_names.extend(names.iter().cloned());
-
-        self.call_value(function, call_args, &call_names)
     }
 
     fn invoke_module_member(

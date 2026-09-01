@@ -90,8 +90,6 @@ pub enum OpCode {
     JumpIfTrue,
     JumpIfFalse,
 
-    InvokeMethod,
-
     Try,
 
     Call,

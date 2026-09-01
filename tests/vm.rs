@@ -2933,3 +2933,22 @@ fn repeated_method_calls_remain_correct() {
         4.0,
     );
 }
+
+#[test]
+fn method_call_and_function_call_share_call_path() {
+    assert_int(
+        r#"
+        let add =
+            |a, b| a + b
+
+        let direct =
+            add(10, 20)
+
+        let method =
+            10.add(20)
+
+        direct + method
+        "#,
+        60,
+    );
+}
