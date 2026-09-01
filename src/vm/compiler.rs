@@ -1514,12 +1514,20 @@ impl Compiler {
                 self.chunk.emit(OpCode::Not);
             },
 
-            ExprKind::Binary(op, left, right) => {
-                self.compile_expr(left)?;
+            ExprKind::Binary(op, left, right) => match op {
+                BinOp::And => {
+                    self.compile_logical_and(left, right)?;
+                },
 
-                self.compile_expr(right)?;
+                BinOp::Or => {
+                    self.compile_logical_or(left, right)?;
+                },
 
-                self.compile_binop(*op)?;
+                _ => {
+                    self.compile_expr(left)?;
+                    self.compile_expr(right)?;
+                    self.compile_binop(*op)?;
+                },
             },
 
             ExprKind::Tuple(elements) => {
@@ -2804,6 +2812,100 @@ impl Compiler {
         };
 
         self.chunk.emit(opcode);
+
+        Ok(())
+    }
+
+    fn compile_logical_and(&mut self, left: &Expr, right: &Expr) -> Result<()> {
+        /*
+         * left and right
+         *
+         * Evaluate left first.
+         *
+         * JumpIfFalse:
+         *     - verifies that left is Bool
+         *     - consumes left
+         *
+         * If left is false, short-circuit and return false.
+         *
+         * Otherwise evaluate right and normalize its result
+         * to Bool through JumpIfFalse / Constant.
+         */
+
+        self.compile_expr(left)?;
+
+        let left_false = self.chunk.emit_operand(OpCode::JumpIfFalse, 0);
+
+        self.compile_expr(right)?;
+
+        let right_false = self.chunk.emit_operand(OpCode::JumpIfFalse, 0);
+
+        let true_constant = self.chunk.add_constant(Value::Bool(true));
+
+        self.chunk.emit_operand(OpCode::Constant, true_constant);
+
+        let end_jump = self.chunk.emit_operand(OpCode::Jump, 0);
+
+        let false_target = self.chunk.code.len();
+
+        let false_constant = self.chunk.add_constant(Value::Bool(false));
+
+        self.chunk.emit_operand(OpCode::Constant, false_constant);
+
+        let end = self.chunk.code.len();
+
+        self.chunk.patch_operand(left_false, false_target as u32);
+
+        self.chunk.patch_operand(right_false, false_target as u32);
+
+        self.chunk.patch_operand(end_jump, end as u32);
+
+        Ok(())
+    }
+
+    fn compile_logical_or(&mut self, left: &Expr, right: &Expr) -> Result<()> {
+        /*
+         * left or right
+         *
+         * Evaluate left first.
+         *
+         * JumpIfTrue:
+         *     - verifies that left is Bool
+         *     - consumes left
+         *
+         * If left is true, short-circuit and return true.
+         *
+         * Otherwise evaluate right and normalize its result
+         * to Bool through JumpIfTrue / Constant.
+         */
+
+        self.compile_expr(left)?;
+
+        let left_true = self.chunk.emit_operand(OpCode::JumpIfTrue, 0);
+
+        self.compile_expr(right)?;
+
+        let right_true = self.chunk.emit_operand(OpCode::JumpIfTrue, 0);
+
+        let false_constant = self.chunk.add_constant(Value::Bool(false));
+
+        self.chunk.emit_operand(OpCode::Constant, false_constant);
+
+        let end_jump = self.chunk.emit_operand(OpCode::Jump, 0);
+
+        let true_target = self.chunk.code.len();
+
+        let true_constant = self.chunk.add_constant(Value::Bool(true));
+
+        self.chunk.emit_operand(OpCode::Constant, true_constant);
+
+        let end = self.chunk.code.len();
+
+        self.chunk.patch_operand(left_true, true_target as u32);
+
+        self.chunk.patch_operand(right_true, true_target as u32);
+
+        self.chunk.patch_operand(end_jump, end as u32);
 
         Ok(())
     }

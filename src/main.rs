@@ -496,6 +496,8 @@ impl NovumUi {
             | TokenKind::Continue
             | TokenKind::Return
             | TokenKind::In
+            | TokenKind::DoubleEq
+            | TokenKind::Not
             | TokenKind::As
             | TokenKind::Let
             | TokenKind::Pub
