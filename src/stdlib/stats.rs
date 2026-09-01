@@ -5,7 +5,7 @@ use crate::runtime::{
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use statrs::distribution::{ContinuousCDF, Normal, StudentsT, FisherSnedecor, ChiSquared};
+use statrs::distribution::{ChiSquared, ContinuousCDF, FisherSnedecor, Normal, StudentsT};
 
 struct FunctionSpec {
     name: &'static str,
@@ -143,7 +143,6 @@ pub fn register_extensions(registry: &mut ExtensionRegistry) {
     }
 }
 
-
 //=========================
 // general helpers
 //=========================
@@ -184,15 +183,9 @@ fn series_values(value: &Value) -> Result<Vec<f64>, String> {
     }
 }
 
-fn expect_series_value(
-    value: &Value,
-    function: &str,
-    index: usize,
-) -> Result<SeriesRef, String> {
+fn expect_series_value(value: &Value, function: &str, index: usize) -> Result<SeriesRef, String> {
     match value {
-        Value::Series(series) => {
-            Ok(series.clone())
-        }
+        Value::Series(series) => Ok(series.clone()),
 
         other => Err(format!(
             "{}() argument {} must be Series, got {}",
@@ -212,27 +205,13 @@ fn result_dict(fields: Vec<(&str, Value)>) -> Value {
     Value::Dict(Rc::new(RefCell::new(map)))
 }
 
-fn confidence_interval_dict(
-    lower: f64,
-    upper: f64,
-    level: f64,
-) -> Value {
+fn confidence_interval_dict(lower: f64, upper: f64, level: f64) -> Value {
     result_dict(vec![
-        (
-            "lower",
-            Value::Float(lower),
-        ),
-        (
-            "upper",
-            Value::Float(upper),
-        ),
-        (
-            "level",
-            Value::Float(level),
-        ),
+        ("lower", Value::Float(lower)),
+        ("upper", Value::Float(upper)),
+        ("level", Value::Float(level)),
     ])
 }
-
 
 //=========================
 // descriptive statistics
@@ -722,7 +701,6 @@ pub fn correlation(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(pearson_correlation(&x, &y)?))
 }
 
-
 //=========================
 // t-tests
 //=========================
@@ -739,145 +717,72 @@ fn one_sample_ttest_values(
     confidence: f64,
 ) -> Result<Value, String> {
     if !mu0.is_finite() {
-        return Err(
-            "t-test null hypothesis mean must be finite"
-                .into()
-        );
+        return Err("t-test null hypothesis mean must be finite".into());
     }
 
     if values.len() < 2 {
-        return Err(
-            "t-test requires at least 2 observations"
-                .into()
-        );
+        return Err("t-test requires at least 2 observations".into());
     }
 
-    if values.iter().any(
-        |value| !value.is_finite()
-    ) {
-        return Err(
-            "t-test data contains non-finite value"
-                .into()
-        );
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err("t-test data contains non-finite value".into());
     }
 
-    let n =
-        values.len();
+    let n = values.len();
 
-    let n_f =
-        n as f64;
+    let n_f = n as f64;
 
-    let mean =
-        values.iter().sum::<f64>()
-            / n_f;
+    let mean = values.iter().sum::<f64>() / n_f;
 
-    let variance =
-        values
-            .iter()
-            .map(|value| {
-                let difference =
-                    *value - mean;
+    let variance = values
+        .iter()
+        .map(|value| {
+            let difference = *value - mean;
 
-                difference * difference
-            })
-            .sum::<f64>()
-            / (n - 1) as f64;
+            difference * difference
+        })
+        .sum::<f64>()
+        / (n - 1) as f64;
 
     if !variance.is_finite() {
-        return Err(
-            "t-test variance is not finite"
-                .into()
-        );
+        return Err("t-test variance is not finite".into());
     }
 
-    let std =
-        variance.sqrt();
+    let std = variance.sqrt();
 
     if std == 0.0 {
-        return Err(
-            "t-test sample standard deviation is zero"
-                .into()
-        );
+        return Err("t-test sample standard deviation is zero".into());
     }
 
-    let estimate =
-        mean - mu0;
+    let estimate = mean - mu0;
 
-    let standard_error =
-        std / n_f.sqrt();
+    let standard_error = std / n_f.sqrt();
 
-    let t =
-        estimate / standard_error;
+    let t = estimate / standard_error;
 
-    let df =
-        (n - 1) as f64;
+    let df = (n - 1) as f64;
 
-    let p_value =
-        t_distribution_p_value(
-            t,
-            df,
-        )?;
+    let p_value = t_distribution_p_value(t, df)?;
 
-    let (
-        ci_lower,
-        ci_upper,
-    ) =
-        t_confidence_interval(
-            estimate,
-            standard_error,
-            df,
-            confidence,
-        )?;
+    let (ci_lower, ci_upper) = t_confidence_interval(estimate, standard_error, df, confidence)?;
 
-    let effect_size =
-        estimate / std;
+    let effect_size = estimate / std;
 
     Ok(result_dict(vec![
-        (
-            "statistic",
-            Value::Float(t),
-        ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "df",
-            Value::Float(df),
-        ),
-        (
-            "estimate",
-            Value::Float(estimate),
-        ),
-        (
-            "effect_size",
-            Value::Float(effect_size),
-        ),
+        ("statistic", Value::Float(t)),
+        ("p_value", Value::Float(p_value)),
+        ("df", Value::Float(df)),
+        ("estimate", Value::Float(estimate)),
+        ("effect_size", Value::Float(effect_size)),
         (
             "effect_size_name",
-            Value::Str(
-                Rc::new(
-                    "Cohen's d"
-                        .to_string()
-                )
-            ),
+            Value::Str(Rc::new("Cohen's d".to_string())),
         ),
         (
             "confidence_interval",
-            confidence_interval_dict(
-                ci_lower,
-                ci_upper,
-                confidence,
-            ),
+            confidence_interval_dict(ci_lower, ci_upper, confidence),
         ),
-        (
-            "method",
-            Value::Str(
-                Rc::new(
-                    method.to_owned()
-                )
-            ),
-        ),
+        ("method", Value::Str(Rc::new(method.to_owned()))),
     ]))
 }
 
@@ -886,117 +791,62 @@ fn paired_numeric_values(
     second: &SeriesRef,
 ) -> Result<(Vec<f64>, Vec<f64>), String> {
     if first.len() != second.len() {
-        return Err(
-            "paired test requires equal-length Series"
-                .into()
-        );
+        return Err("paired test requires equal-length Series".into());
     }
 
-    let mut first_values =
-        Vec::with_capacity(first.len());
+    let mut first_values = Vec::with_capacity(first.len());
 
-    let mut second_values =
-        Vec::with_capacity(second.len());
+    let mut second_values = Vec::with_capacity(second.len());
 
     for index in 0..first.len() {
-        let first_value =
-            first.get(index)
-                .ok_or_else(|| {
-                    format!(
-                        "first Series index out of bounds: {}",
-                        index
-                    )
-                })?;
+        let first_value = first
+            .get(index)
+            .ok_or_else(|| format!("first Series index out of bounds: {}", index))?;
 
-        let second_value =
-            second.get(index)
-                .ok_or_else(|| {
-                    format!(
-                        "second Series index out of bounds: {}",
-                        index
-                    )
-                })?;
+        let second_value = second
+            .get(index)
+            .ok_or_else(|| format!("second Series index out of bounds: {}", index))?;
 
         match (&first_value, &second_value) {
-            (Value::Null, _)
-            | (_, Value::Null) => {
+            (Value::Null, _) | (_, Value::Null) => {
                 continue;
-            }
+            },
 
-            (
-                Value::Int(first),
-                Value::Int(second),
-            ) => {
-                first_values.push(
-                    *first as f64
-                );
+            (Value::Int(first), Value::Int(second)) => {
+                first_values.push(*first as f64);
 
-                second_values.push(
-                    *second as f64
-                );
-            }
+                second_values.push(*second as f64);
+            },
 
-            (
-                Value::Int(first),
-                Value::Float(second),
-            ) => {
+            (Value::Int(first), Value::Float(second)) => {
                 if !second.is_finite() {
-                    return Err(
-                        "paired test contains non-finite value"
-                            .into()
-                    );
+                    return Err("paired test contains non-finite value".into());
                 }
 
-                first_values.push(
-                    *first as f64
-                );
+                first_values.push(*first as f64);
 
-                second_values.push(
-                    *second
-                );
-            }
+                second_values.push(*second);
+            },
 
-            (
-                Value::Float(first),
-                Value::Int(second),
-            ) => {
+            (Value::Float(first), Value::Int(second)) => {
                 if !first.is_finite() {
-                    return Err(
-                        "paired test contains non-finite value"
-                            .into()
-                    );
+                    return Err("paired test contains non-finite value".into());
                 }
 
-                first_values.push(
-                    *first
-                );
+                first_values.push(*first);
 
-                second_values.push(
-                    *second as f64
-                );
-            }
+                second_values.push(*second as f64);
+            },
 
-            (
-                Value::Float(first),
-                Value::Float(second),
-            ) => {
-                if !first.is_finite()
-                    || !second.is_finite()
-                {
-                    return Err(
-                        "paired test contains non-finite value"
-                            .into()
-                    );
+            (Value::Float(first), Value::Float(second)) => {
+                if !first.is_finite() || !second.is_finite() {
+                    return Err("paired test contains non-finite value".into());
                 }
 
-                first_values.push(
-                    *first
-                );
+                first_values.push(*first);
 
-                second_values.push(
-                    *second
-                );
-            }
+                second_values.push(*second);
+            },
 
             (first, second) => {
                 return Err(format!(
@@ -1004,14 +854,11 @@ fn paired_numeric_values(
                     first.type_name(),
                     second.type_name()
                 ));
-            }
+            },
         }
     }
 
-    Ok((
-        first_values,
-        second_values,
-    ))
+    Ok((first_values, second_values))
 }
 
 fn t_confidence_interval(
@@ -1026,116 +873,64 @@ fn t_confidence_interval(
         || !df.is_finite()
         || df <= 0.0
     {
-        return Err(
-            "invalid parameters for t confidence interval"
-                .into()
-        );
+        return Err("invalid parameters for t confidence interval".into());
     }
 
-    if !confidence.is_finite()
-        || !(0.0 < confidence && confidence < 1.0)
-    {
-        return Err(
-            "confidence level must be in (0, 1)"
-                .into()
-        );
+    if !confidence.is_finite() || !(0.0 < confidence && confidence < 1.0) {
+        return Err("confidence level must be in (0, 1)".into());
     }
 
-    let distribution =
-        StudentsT::new(
-            0.0,
-            1.0,
-            df,
-        )
-        .map_err(|error| error.to_string())?;
+    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
 
-    let alpha =
-        1.0 - confidence;
+    let alpha = 1.0 - confidence;
 
-    let critical =
-        distribution.inverse_cdf(
-            1.0 - alpha / 2.0
-        );
+    let critical = distribution.inverse_cdf(1.0 - alpha / 2.0);
 
-    let margin =
-        critical * standard_error;
+    let margin = critical * standard_error;
 
-    Ok((
-        estimate - margin,
-        estimate + margin,
-    ))
+    Ok((estimate - margin, estimate + margin))
 }
 
-fn confidence_level_from_args(
-    args: &[Value],
-    index: usize,
-    function: &str,
-) -> Result<f64, String> {
-    let value =
-        match args.get(index) {
-            Some(Value::Int(value)) => {
-                *value as f64
-            }
+fn confidence_level_from_args(args: &[Value], index: usize, function: &str) -> Result<f64, String> {
+    let value = match args.get(index) {
+        Some(Value::Int(value)) => *value as f64,
 
-            Some(Value::Float(value)) => {
-                *value
-            }
+        Some(Value::Float(value)) => *value,
 
-            Some(other) => {
-                return Err(format!(
-                    "{}() confidence level must be numeric, got {}",
-                    function,
-                    other.type_name()
-                ));
-            }
+        Some(other) => {
+            return Err(format!(
+                "{}() confidence level must be numeric, got {}",
+                function,
+                other.type_name()
+            ));
+        },
 
-            None => {
-                return Ok(0.95);
-            }
-        };
+        None => {
+            return Ok(0.95);
+        },
+    };
 
-    if !value.is_finite()
-        || !(0.0 < value && value < 1.0)
-    {
-        return Err(format!(
-            "{}() confidence level must be in (0, 1)",
-            function
-        ));
+    if !value.is_finite() || !(0.0 < value && value < 1.0) {
+        return Err(format!("{}() confidence level must be in (0, 1)", function));
     }
 
     Ok(value)
 }
 
-fn paired_effect_size(
-    differences: &[f64],
-) -> Result<f64, String> {
+fn paired_effect_size(differences: &[f64]) -> Result<f64, String> {
     if differences.len() < 2 {
-        return Err(
-            "paired effect size requires at least 2 pairs"
-                .into()
-        );
+        return Err("paired effect size requires at least 2 pairs".into());
     }
 
-    let mean =
-        differences.iter()
-            .sum::<f64>()
-            / differences.len() as f64;
+    let mean = differences.iter().sum::<f64>() / differences.len() as f64;
 
-    let variance =
-        sample_variance(differences)
-            .ok_or_else(|| {
-                "paired effect size variance is undefined"
-                    .to_string()
-            })?;
+    let variance = sample_variance(differences)
+        .ok_or_else(|| "paired effect size variance is undefined".to_string())?;
 
-    let std =
-        variance.sqrt();
+    let std = variance.sqrt();
 
     if std == 0.0 {
-        return Err(
-            "paired effect size standard deviation is zero"
-                .into()
-        );
+        return Err("paired effect size standard deviation is zero".into());
     }
 
     Ok(mean / std)
@@ -1147,23 +942,13 @@ fn welch_effect_size(
     variance_x: f64,
     variance_y: f64,
 ) -> Result<f64, String> {
-    let reference_sd =
-        ((variance_x + variance_y) / 2.0)
-            .sqrt();
+    let reference_sd = ((variance_x + variance_y) / 2.0).sqrt();
 
-    if !reference_sd.is_finite()
-        || reference_sd == 0.0
-    {
-        return Err(
-            "Welch effect size standard deviation is zero or non-finite"
-                .into()
-        );
+    if !reference_sd.is_finite() || reference_sd == 0.0 {
+        return Err("Welch effect size standard deviation is zero or non-finite".into());
     }
 
-    Ok(
-        (mean_x - mean_y)
-            / reference_sd
-    )
+    Ok((mean_x - mean_y) / reference_sd)
 }
 
 fn welch_confidence_interval(
@@ -1176,373 +961,168 @@ fn welch_confidence_interval(
     df: f64,
     confidence: f64,
 ) -> Result<(f64, f64), String> {
-    let estimate =
-        mean_x - mean_y;
+    let estimate = mean_x - mean_y;
 
-    let standard_error =
-        (
-            variance_x / nx as f64
-                + variance_y / ny as f64
-        )
-        .sqrt();
+    let standard_error = (variance_x / nx as f64 + variance_y / ny as f64).sqrt();
 
-    t_confidence_interval(
-        estimate,
-        standard_error,
-        df,
-        confidence,
-    )
+    t_confidence_interval(estimate, standard_error, df, confidence)
 }
 
-pub fn ttest(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
     if !(2..=3).contains(&args.len()) {
-        return Err(
-            "ttest() expects Series, mu0, and optional confidence level"
-                .into()
-        );
+        return Err("ttest() expects Series, mu0, and optional confidence level".into());
     }
 
-    let values =
-        numeric_series_values(
-            &args[0]
-        )?;
+    let values = numeric_series_values(&args[0])?;
 
-    let mu0 =
-        match &args[1] {
-            Value::Int(value) => {
-                *value as f64
-            }
+    let mu0 = match &args[1] {
+        Value::Int(value) => *value as f64,
 
-            Value::Float(value) => {
-                *value
-            }
+        Value::Float(value) => *value,
 
-            other => {
-                return Err(format!(
-                    "ttest() mu0 must be numeric, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        other => {
+            return Err(format!(
+                "ttest() mu0 must be numeric, got {}",
+                other.type_name()
+            ));
+        },
+    };
 
-    let confidence =
-        confidence_level_from_args(
-            &args,
-            2,
-            "ttest",
-        )?;
+    let confidence = confidence_level_from_args(&args, 2, "ttest")?;
 
-    one_sample_ttest_values(
-        &values,
-        mu0,
-        "One-sample t-test",
-        confidence,
-    )
+    one_sample_ttest_values(&values, mu0, "One-sample t-test", confidence)
 }
 
-pub fn paired_ttest(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn paired_ttest(args: Vec<Value>) -> Result<Value, String> {
     if !(2..=3).contains(&args.len()) {
-        return Err(
-            "paired_ttest() expects 2 Series and optional confidence level"
-                .into()
-        );
+        return Err("paired_ttest() expects 2 Series and optional confidence level".into());
     }
 
-    let first =
-        expect_series_value(
-            &args[0],
-            "paired_ttest",
-            0,
-        )?;
+    let first = expect_series_value(&args[0], "paired_ttest", 0)?;
 
-    let second =
-        expect_series_value(
-            &args[1],
-            "paired_ttest",
-            1,
-        )?;
+    let second = expect_series_value(&args[1], "paired_ttest", 1)?;
 
-    let (
-        first_values,
-        second_values,
-    ) =
-        paired_numeric_values(
-            &first,
-            &second,
-        )?;
+    let (first_values, second_values) = paired_numeric_values(&first, &second)?;
 
     if first_values.len() < 2 {
-        return Err(
-            "paired_ttest() requires at least 2 complete pairs"
-                .into()
-        );
+        return Err("paired_ttest() requires at least 2 complete pairs".into());
     }
 
-    let differences =
-        first_values
-            .iter()
-            .zip(second_values.iter())
-            .map(|(first, second)| {
-                first - second
-            })
-            .collect::<Vec<_>>();
+    let differences = first_values
+        .iter()
+        .zip(second_values.iter())
+        .map(|(first, second)| first - second)
+        .collect::<Vec<_>>();
 
-    let confidence =
-        confidence_level_from_args(
-            &args,
-            2,
-            "paired_ttest",
-        )?;
+    let confidence = confidence_level_from_args(&args, 2, "paired_ttest")?;
 
-    let result =
-        one_sample_ttest_values(
-            &differences,
-            0.0,
-            "Paired t-test",
-            confidence,
-        )?;
+    let result = one_sample_ttest_values(&differences, 0.0, "Paired t-test", confidence)?;
 
     /*
      * Replace the generic one-sample Cohen's d
      * with the paired-samples effect size d_z.
      */
-    let effect_size =
-        paired_effect_size(
-            &differences
-        )?;
+    let effect_size = paired_effect_size(&differences)?;
 
-    let Value::Dict(dict) =
-        result
-    else {
+    let Value::Dict(dict) = result else {
         unreachable!();
     };
 
-    dict.borrow_mut().insert(
-        "effect_size".into(),
-        Value::Float(effect_size),
-    );
+    dict.borrow_mut()
+        .insert("effect_size".into(), Value::Float(effect_size));
 
     dict.borrow_mut().insert(
         "effect_size_name".into(),
-        Value::Str(
-            Rc::new(
-                "Cohen's dz".to_string()
-            )
-        ),
+        Value::Str(Rc::new("Cohen's dz".to_string())),
     );
 
     Ok(Value::Dict(dict))
 }
 
-pub fn welch(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     if !(2..=3).contains(&args.len()) {
-        return Err(
-            "welch() expects 2 Series and optional confidence level"
-                .into()
-        );
+        return Err("welch() expects 2 Series and optional confidence level".into());
     }
 
-    let x =
-        numeric_series_values(
-            &args[0]
-        )?;
+    let x = numeric_series_values(&args[0])?;
 
-    let y =
-        numeric_series_values(
-            &args[1]
-        )?;
+    let y = numeric_series_values(&args[1])?;
 
-    if x.len() < 2
-        || y.len() < 2
-    {
-        return Err(
-            "welch() requires at least 2 observations per group"
-                .into()
-        );
+    if x.len() < 2 || y.len() < 2 {
+        return Err("welch() requires at least 2 observations per group".into());
     }
 
-    if x.iter().any(
-        |value| !value.is_finite()
-    )
-        || y.iter().any(
-            |value| !value.is_finite()
-        )
-    {
-        return Err(
-            "welch() data contains non-finite value"
-                .into()
-        );
+    if x.iter().any(|value| !value.is_finite()) || y.iter().any(|value| !value.is_finite()) {
+        return Err("welch() data contains non-finite value".into());
     }
 
-    let confidence =
-        confidence_level_from_args(
-            &args,
-            2,
-            "welch",
-        )?;
+    let confidence = confidence_level_from_args(&args, 2, "welch")?;
 
-    let nx =
-        x.len() as f64;
+    let nx = x.len() as f64;
 
-    let ny =
-        y.len() as f64;
+    let ny = y.len() as f64;
 
-    let mean_x =
-        x.iter().sum::<f64>()
-            / nx;
+    let mean_x = x.iter().sum::<f64>() / nx;
 
-    let mean_y =
-        y.iter().sum::<f64>()
-            / ny;
+    let mean_y = y.iter().sum::<f64>() / ny;
 
-    let var_x =
-        x.iter()
-            .map(|value| {
-                (*value - mean_x).powi(2)
-            })
-            .sum::<f64>()
-            / (nx - 1.0);
+    let var_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
 
-    let var_y =
-        y.iter()
-            .map(|value| {
-                (*value - mean_y).powi(2)
-            })
-            .sum::<f64>()
-            / (ny - 1.0);
+    let var_y = y.iter().map(|value| (*value - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
 
-    let se2 =
-        var_x / nx
-            + var_y / ny;
+    let se2 = var_x / nx + var_y / ny;
 
-    if !se2.is_finite()
-        || se2 <= 0.0
-    {
-        return Err(
-            "welch() standard error is zero or non-finite"
-                .into()
-        );
+    if !se2.is_finite() || se2 <= 0.0 {
+        return Err("welch() standard error is zero or non-finite".into());
     }
 
-    let standard_error =
-        se2.sqrt();
+    let standard_error = se2.sqrt();
 
-    let estimate =
-        mean_x - mean_y;
+    let estimate = mean_x - mean_y;
 
-    let t =
-        estimate
-            / standard_error;
+    let t = estimate / standard_error;
 
-    let numerator =
-        se2.powi(2);
+    let numerator = se2.powi(2);
 
     let denominator =
-        var_x.powi(2)
-            / (
-                nx.powi(2)
-                    * (nx - 1.0)
-            )
-            + var_y.powi(2)
-                / (
-                    ny.powi(2)
-                        * (ny - 1.0)
-                );
+        var_x.powi(2) / (nx.powi(2) * (nx - 1.0)) + var_y.powi(2) / (ny.powi(2) * (ny - 1.0));
 
-    if denominator <= 0.0
-        || !denominator.is_finite()
-    {
-        return Err(
-            "welch() degrees of freedom are undefined"
-                .into()
-        );
+    if denominator <= 0.0 || !denominator.is_finite() {
+        return Err("welch() degrees of freedom are undefined".into());
     }
 
-    let df =
-        numerator / denominator;
+    let df = numerator / denominator;
 
-    let p_value =
-        t_distribution_p_value(
-            t,
-            df,
-        )?;
+    let p_value = t_distribution_p_value(t, df)?;
 
-    let (
-        ci_lower,
-        ci_upper,
-    ) =
-        welch_confidence_interval(
-            mean_x,
-            mean_y,
-            var_x,
-            var_y,
-            x.len(),
-            y.len(),
-            df,
-            confidence,
-        )?;
+    let (ci_lower, ci_upper) = welch_confidence_interval(
+        mean_x,
+        mean_y,
+        var_x,
+        var_y,
+        x.len(),
+        y.len(),
+        df,
+        confidence,
+    )?;
 
-    let effect_size =
-        welch_effect_size(
-            mean_x,
-            mean_y,
-            var_x,
-            var_y,
-        )?;
+    let effect_size = welch_effect_size(mean_x, mean_y, var_x, var_y)?;
 
     Ok(result_dict(vec![
-        (
-            "statistic",
-            Value::Float(t),
-        ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "df",
-            Value::Float(df),
-        ),
-        (
-            "estimate",
-            Value::Float(estimate),
-        ),
-        (
-            "effect_size",
-            Value::Float(effect_size),
-        ),
+        ("statistic", Value::Float(t)),
+        ("p_value", Value::Float(p_value)),
+        ("df", Value::Float(df)),
+        ("estimate", Value::Float(estimate)),
+        ("effect_size", Value::Float(effect_size)),
         (
             "effect_size_name",
-            Value::Str(
-                Rc::new(
-                    "Standardized mean difference"
-                        .to_string()
-                )
-            ),
+            Value::Str(Rc::new("Standardized mean difference".to_string())),
         ),
         (
             "confidence_interval",
-            confidence_interval_dict(
-                ci_lower,
-                ci_upper,
-                confidence,
-            ),
+            confidence_interval_dict(ci_lower, ci_upper, confidence),
         ),
-        (
-            "method",
-            Value::Str(
-                Rc::new(
-                    "Welch's t-test"
-                        .to_string()
-                )
-            ),
-        ),
+        ("method", Value::Str(Rc::new("Welch's t-test".to_string()))),
     ]))
 }
 
@@ -1554,47 +1134,29 @@ fn continuity_corrected_z(
     mean: f64,
     standard_deviation: f64,
 ) -> Result<f64, String> {
-    if !standard_deviation.is_finite()
-        || standard_deviation <= 0.0
-    {
-        return Err(
-            "normal approximation standard deviation must be positive and finite"
-                .into()
-        );
+    if !standard_deviation.is_finite() || standard_deviation <= 0.0 {
+        return Err("normal approximation standard deviation must be positive and finite".into());
     }
 
-    let correction =
-        if statistic < mean {
-            0.5
-        } else if statistic > mean {
-            -0.5
-        } else {
-            0.0
-        };
+    let correction = if statistic < mean {
+        0.5
+    } else if statistic > mean {
+        -0.5
+    } else {
+        0.0
+    };
 
-    Ok(
-        (statistic - mean + correction)
-            / standard_deviation
-    )
+    Ok((statistic - mean + correction) / standard_deviation)
 }
 
-fn two_sided_normal_p_value(
-    z: f64,
-) -> Result<f64, String> {
+fn two_sided_normal_p_value(z: f64) -> Result<f64, String> {
     if !z.is_finite() {
-        return Err(
-            "normal approximation produced a non-finite z-score"
-                .into()
-        );
+        return Err("normal approximation produced a non-finite z-score".into());
     }
 
-    let normal =
-        Normal::new(0.0, 1.0)
-            .map_err(|error| error.to_string())?;
+    let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
 
-    Ok(
-        2.0 * normal.sf(z.abs())
-    )
+    Ok(2.0 * normal.sf(z.abs()))
 }
 
 fn rank_value(value: f64) -> f64 {
@@ -1605,90 +1167,62 @@ fn rank_value(value: f64) -> f64 {
     }
 }
 
-fn average_ranks(
-    values: &[f64],
-) -> Vec<f64> {
-    let mut indexed =
-        values
-            .iter()
-            .copied()
-            .map(rank_value)
-            .enumerate()
-            .collect::<Vec<_>>();
+fn average_ranks(values: &[f64]) -> Vec<f64> {
+    let mut indexed = values
+        .iter()
+        .copied()
+        .map(rank_value)
+        .enumerate()
+        .collect::<Vec<_>>();
 
-    indexed.sort_by(
-        |(_, left), (_, right)| {
-            left.total_cmp(right)
-        }
-    );
+    indexed.sort_by(|(_, left), (_, right)| left.total_cmp(right));
 
-    let mut ranks =
-        vec![0.0; values.len()];
+    let mut ranks = vec![0.0; values.len()];
 
     let mut index = 0usize;
 
     while index < indexed.len() {
         let start = index;
 
-        let value =
-            indexed[index].1;
+        let value = indexed[index].1;
 
-        while index < indexed.len()
-            && indexed[index].1 == value
-        {
+        while index < indexed.len() && indexed[index].1 == value {
             index += 1;
         }
 
         let end = index;
 
-        let rank_start =
-            start as f64 + 1.0;
+        let rank_start = start as f64 + 1.0;
 
-        let rank_end =
-            end as f64;
+        let rank_end = end as f64;
 
-        let average =
-            (rank_start + rank_end)
-                / 2.0;
+        let average = (rank_start + rank_end) / 2.0;
 
         for position in start..end {
-            let original_index =
-                indexed[position].0;
+            let original_index = indexed[position].0;
 
-            ranks[original_index] =
-                average;
+            ranks[original_index] = average;
         }
     }
 
     ranks
 }
 
-fn tie_group_sizes(
-    values: &[f64],
-) -> Vec<usize> {
-    let mut sorted =
-        values.to_vec();
+fn tie_group_sizes(values: &[f64]) -> Vec<usize> {
+    let mut sorted = values.to_vec();
 
-    sorted.sort_by(
-        |left, right| {
-            left.total_cmp(right)
-        }
-    );
+    sorted.sort_by(|left, right| left.total_cmp(right));
 
-    let mut sizes =
-        Vec::new();
+    let mut sizes = Vec::new();
 
     let mut index = 0usize;
 
     while index < sorted.len() {
         let start = index;
 
-        let value =
-            sorted[index];
+        let value = sorted[index];
 
-        while index < sorted.len()
-            && sorted[index] == value
-        {
+        while index < sorted.len() && sorted[index] == value {
             index += 1;
         }
 
@@ -1698,61 +1232,34 @@ fn tie_group_sizes(
     sizes
 }
 
-fn mann_whitney_values(
-    x: &[f64],
-    y: &[f64],
-) -> Result<(f64, f64, f64), String> {
+fn mann_whitney_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64), String> {
     if x.is_empty() || y.is_empty() {
-        return Err(
-            "mann_whitney() requires non-empty Series"
-                .into()
-        );
+        return Err("mann_whitney() requires non-empty Series".into());
     }
 
     let nx = x.len();
     let ny = y.len();
 
-    let mut combined =
-        Vec::with_capacity(nx + ny);
+    let mut combined = Vec::with_capacity(nx + ny);
 
-    combined.extend(
-        x.iter()
-            .copied()
-            .map(|value| (value, 0usize))
-    );
+    combined.extend(x.iter().copied().map(|value| (value, 0usize)));
 
-    combined.extend(
-        y.iter()
-            .copied()
-            .map(|value| (value, 1usize))
-    );
+    combined.extend(y.iter().copied().map(|value| (value, 1usize)));
 
-    let values =
-        combined
-            .iter()
-            .map(|(value, _)| *value)
-            .collect::<Vec<_>>();
+    let values = combined.iter().map(|(value, _)| *value).collect::<Vec<_>>();
 
-    let ranks =
-        average_ranks(&values);
+    let ranks = average_ranks(&values);
 
-    let rank_sum_x =
-        combined
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, group))| {
-                *group == 0
-            })
-            .map(|(index, _)| ranks[index])
-            .sum::<f64>();
+    let rank_sum_x = combined
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, group))| *group == 0)
+        .map(|(index, _)| ranks[index])
+        .sum::<f64>();
 
-    let u_x =
-        rank_sum_x
-            - (nx * (nx + 1) / 2) as f64;
+    let u_x = rank_sum_x - (nx * (nx + 1) / 2) as f64;
 
-    let u_y =
-        (nx * ny) as f64
-            - u_x;
+    let u_y = (nx * ny) as f64 - u_x;
 
     let u = u_x.min(u_y);
 
@@ -1760,171 +1267,103 @@ fn mann_whitney_values(
     let ny_f = ny as f64;
     let n = (nx + ny) as f64;
 
-    let mean_u =
-        nx_f * ny_f / 2.0;
+    let mean_u = nx_f * ny_f / 2.0;
 
-    let tie_sizes =
-        tie_group_sizes(&values);
+    let tie_sizes = tie_group_sizes(&values);
 
-    let tie_term =
-        tie_sizes
-            .iter()
-            .map(|size| {
-                let t = *size as f64;
+    let tie_term = tie_sizes
+        .iter()
+        .map(|size| {
+            let t = *size as f64;
 
-                t.powi(3) - t
-            })
-            .sum::<f64>();
+            t.powi(3) - t
+        })
+        .sum::<f64>();
 
-    let variance_u =
-        nx_f * ny_f / 12.0
-            * (
-                n + 1.0
-                - tie_term
-                    / (n * (n - 1.0))
-            );
+    let variance_u = nx_f * ny_f / 12.0 * (n + 1.0 - tie_term / (n * (n - 1.0)));
 
-    if variance_u <= 0.0
-        || !variance_u.is_finite()
-    {
-        return Err(
-            "mann_whitney() normal approximation is undefined"
-                .into()
-        );
+    if variance_u <= 0.0 || !variance_u.is_finite() {
+        return Err("mann_whitney() normal approximation is undefined".into());
     }
 
-    let z =
-        continuity_corrected_z(
-            u,
-            mean_u,
-            variance_u.sqrt(),
-        )?;
+    let z = continuity_corrected_z(u, mean_u, variance_u.sqrt())?;
 
-    let p_value =
-        two_sided_normal_p_value(z)?;
+    let p_value = two_sided_normal_p_value(z)?;
 
     Ok((u, z, p_value))
 }
 
-pub fn mann_whitney(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn mann_whitney(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "mann_whitney() expects exactly 2 Series"
-                .into()
-        );
+        return Err("mann_whitney() expects exactly 2 Series".into());
     }
 
-    let x =
-        numeric_series_values(&args[0])?;
+    let x = numeric_series_values(&args[0])?;
 
-    let y =
-        numeric_series_values(&args[1])?;
+    let y = numeric_series_values(&args[1])?;
 
-    let (statistic, z, p_value) =
-        mann_whitney_values(&x, &y)?;
+    let (statistic, z, p_value) = mann_whitney_values(&x, &y)?;
 
     Ok(result_dict(vec![
-        (
-            "statistic",
-            Value::Float(statistic),
-        ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "z",
-            Value::Float(z),
-        ),
+        ("statistic", Value::Float(statistic)),
+        ("p_value", Value::Float(p_value)),
+        ("z", Value::Float(z)),
         (
             "method",
-            Value::Str(
-                Rc::new(
-                    "Mann-Whitney U test"
-                        .to_string()
-                )
-            ),
+            Value::Str(Rc::new("Mann-Whitney U test".to_string())),
         ),
     ]))
 }
 
-fn wilcoxon_variance(
-    n: usize,
-    tie_sizes: &[usize],
-) -> f64 {
+fn wilcoxon_variance(n: usize, tie_sizes: &[usize]) -> f64 {
     let n = n as f64;
 
-    let base =
-        n * (n + 1.0) * (2.0 * n + 1.0)
-            / 24.0;
+    let base = n * (n + 1.0) * (2.0 * n + 1.0) / 24.0;
 
-    let tie_correction =
-        tie_sizes
-            .iter()
-            .map(|size| {
-                let t = *size as f64;
+    let tie_correction = tie_sizes
+        .iter()
+        .map(|size| {
+            let t = *size as f64;
 
-                t * (t + 1.0) * (2.0 * t + 1.0)
-                    / 48.0
-            })
-            .sum::<f64>();
+            t * (t + 1.0) * (2.0 * t + 1.0) / 48.0
+        })
+        .sum::<f64>();
 
     base - tie_correction
 }
 
-fn wilcoxon_values(
-    x: &[f64],
-    y: &[f64],
-) -> Result<(f64, f64, f64, usize), String> {
+fn wilcoxon_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, usize), String> {
     if x.len() != y.len() {
-        return Err(
-            "wilcoxon() requires equal-length Series"
-                .into()
-        );
+        return Err("wilcoxon() requires equal-length Series".into());
     }
 
-    let mut differences =
-        Vec::<f64>::new();
+    let mut differences = Vec::<f64>::new();
 
-    for (x_value, y_value)
-        in x.iter().zip(y.iter())
-    {
-        let difference =
-            *x_value - *y_value;
+    for (x_value, y_value) in x.iter().zip(y.iter()) {
+        let difference = *x_value - *y_value;
 
         if difference != 0.0 {
-            differences.push(
-                difference
-            );
+            differences.push(difference);
         }
     }
 
     let n = differences.len();
 
     if n < 2 {
-        return Err(
-            "wilcoxon() requires at least 2 non-zero differences"
-                .into()
-        );
+        return Err("wilcoxon() requires at least 2 non-zero differences".into());
     }
 
-    let absolute =
-        differences
-            .iter()
-            .map(|value| value.abs())
-            .collect::<Vec<_>>();
+    let absolute = differences
+        .iter()
+        .map(|value| value.abs())
+        .collect::<Vec<_>>();
 
-    let ranks =
-        average_ranks(&absolute);
+    let ranks = average_ranks(&absolute);
 
     let mut w_plus = 0.0;
     let mut w_minus = 0.0;
 
-    for (difference, rank)
-        in differences.iter().zip(ranks.iter())
-    {
+    for (difference, rank) in differences.iter().zip(ranks.iter()) {
         if *difference > 0.0 {
             w_plus += rank;
         } else {
@@ -1932,101 +1371,46 @@ fn wilcoxon_values(
         }
     }
 
-    let statistic =
-        w_plus.min(w_minus);
+    let statistic = w_plus.min(w_minus);
 
     let n_f = n as f64;
 
-    let mean =
-        n_f * (n_f + 1.0) / 4.0;
+    let mean = n_f * (n_f + 1.0) / 4.0;
 
-    let tie_sizes =
-        tie_group_sizes(&absolute);
+    let tie_sizes = tie_group_sizes(&absolute);
 
-    let variance =
-        wilcoxon_variance(
-            n,
-            &tie_sizes,
-        );
+    let variance = wilcoxon_variance(n, &tie_sizes);
 
-    if variance <= 0.0
-        || !variance.is_finite()
-    {
-        return Err(
-            "wilcoxon() normal approximation is undefined"
-                .into()
-        );
+    if variance <= 0.0 || !variance.is_finite() {
+        return Err("wilcoxon() normal approximation is undefined".into());
     }
 
-    let z =
-        continuity_corrected_z(
-            statistic,
-            mean,
-            variance.sqrt(),
-        )?;
+    let z = continuity_corrected_z(statistic, mean, variance.sqrt())?;
 
-    let p_value =
-        two_sided_normal_p_value(z)?;
+    let p_value = two_sided_normal_p_value(z)?;
 
-    Ok((
-        statistic,
-        z,
-        p_value,
-        n,
-    ))
+    Ok((statistic, z, p_value, n))
 }
 
-pub fn wilcoxon(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn wilcoxon(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "wilcoxon() expects exactly 2 Series"
-                .into()
-        );
+        return Err("wilcoxon() expects exactly 2 Series".into());
     }
 
-    let x =
-        numeric_series_values(&args[0])?;
+    let x = numeric_series_values(&args[0])?;
 
-    let y =
-        numeric_series_values(&args[1])?;
+    let y = numeric_series_values(&args[1])?;
 
-    let (
-        statistic,
-        z,
-        p_value,
-        n,
-    ) = wilcoxon_values(
-        &x,
-        &y,
-    )?;
+    let (statistic, z, p_value, n) = wilcoxon_values(&x, &y)?;
 
     Ok(result_dict(vec![
-        (
-            "statistic",
-            Value::Float(statistic),
-        ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "z",
-            Value::Float(z),
-        ),
-        (
-            "n",
-            Value::Int(n as i64),
-        ),
+        ("statistic", Value::Float(statistic)),
+        ("p_value", Value::Float(p_value)),
+        ("z", Value::Float(z)),
+        ("n", Value::Int(n as i64)),
         (
             "method",
-            Value::Str(
-                Rc::new(
-                    "Wilcoxon signed-rank test"
-                        .to_string()
-                )
-            ),
+            Value::Str(Rc::new("Wilcoxon signed-rank test".to_string())),
         ),
     ]))
 }
@@ -2042,117 +1426,75 @@ enum CategoryKey {
     Str(String),
 }
 
-fn category_key(
-    value: &Value,
-) -> Result<Option<CategoryKey>, String> {
+fn category_key(value: &Value) -> Result<Option<CategoryKey>, String> {
     match value {
         Value::Null => Ok(None),
 
-        Value::Int(value) => {
-            Ok(Some(CategoryKey::Int(*value)))
-        }
+        Value::Int(value) => Ok(Some(CategoryKey::Int(*value))),
 
         Value::Float(value) => {
             if !value.is_finite() {
-                return Err(
-                    "categorical factor contains non-finite Float"
-                        .into()
-                );
+                return Err("categorical factor contains non-finite Float".into());
             }
 
-            Ok(Some(
-                CategoryKey::Float(
-                    value.to_bits()
-                )
-            ))
-        }
+            Ok(Some(CategoryKey::Float(value.to_bits())))
+        },
 
-        Value::Bool(value) => {
-            Ok(Some(CategoryKey::Bool(*value)))
-        }
+        Value::Bool(value) => Ok(Some(CategoryKey::Bool(*value))),
 
-        Value::Str(value) => {
-            Ok(Some(
-                CategoryKey::Str(
-                    value.as_ref().clone()
-                )
-            ))
-        }
+        Value::Str(value) => Ok(Some(CategoryKey::Str(value.as_ref().clone()))),
 
-        other => {
-            Err(format!(
-                "unsupported categorical value: {}",
-                other.type_name()
-            ))
-        }
+        other => Err(format!(
+            "unsupported categorical value: {}",
+            other.type_name()
+        )),
     }
 }
 
-fn anova_groups(
-    response: &SeriesRef,
-    factor: &SeriesRef,
-) -> Result<Vec<Vec<f64>>, String> {
+fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>>, String> {
     if response.len() != factor.len() {
-        return Err(
-            "anova() requires response and factor with equal lengths"
-                .into()
-        );
+        return Err("anova() requires response and factor with equal lengths".into());
     }
 
-    let mut groups =
-        HashMap::<CategoryKey, Vec<f64>>::new();
+    let mut groups = HashMap::<CategoryKey, Vec<f64>>::new();
 
     for index in 0..response.len() {
-        let factor_value =
-            factor.get(index)
-                .ok_or_else(|| {
-                    "factor index out of bounds".to_string()
-                })?;
+        let factor_value = factor
+            .get(index)
+            .ok_or_else(|| "factor index out of bounds".to_string())?;
 
-        let Some(key) =
-            category_key(&factor_value)?
-        else {
+        let Some(key) = category_key(&factor_value)? else {
             continue;
         };
 
-        let response_value =
-            response.get(index)
-                .ok_or_else(|| {
-                    "response index out of bounds".to_string()
-                })?;
+        let response_value = response
+            .get(index)
+            .ok_or_else(|| "response index out of bounds".to_string())?;
 
         let value = match response_value {
-            Value::Int(value) => {
-                value as f64
-            }
+            Value::Int(value) => value as f64,
 
             Value::Float(value) => {
                 if !value.is_finite() {
-                    return Err(
-                        "anova() response contains non-finite value"
-                            .into()
-                    );
+                    return Err("anova() response contains non-finite value".into());
                 }
 
                 value
-            }
+            },
 
             Value::Null => {
                 continue;
-            }
+            },
 
             other => {
                 return Err(format!(
                     "anova() response must be numeric, got {}",
                     other.type_name()
                 ));
-            }
+            },
         };
 
-        groups
-            .entry(key)
-            .or_default()
-            .push(value);
+        groups.entry(key).or_default().push(value);
     }
 
     Ok(groups.into_values().collect())
@@ -2160,228 +1502,192 @@ fn anova_groups(
 
 fn one_way_anova_values(
     groups: &[Vec<f64>],
-) -> Result<(f64, f64, f64, f64), String> {
+) -> Result<(f64, f64, f64, f64, f64, f64, f64), String> {
     if groups.len() < 2 {
-        return Err(
-            "anova() requires at least 2 groups"
-                .into()
-        );
+        return Err("anova() requires at least 2 groups".into());
     }
 
     if groups.iter().any(Vec::is_empty) {
-        return Err(
-            "anova() groups must not be empty"
-                .into()
-        );
+        return Err("anova() groups must not be empty".into());
     }
 
-    let total_n =
-        groups
-            .iter()
-            .map(Vec::len)
-            .sum::<usize>();
+    let total_n = groups.iter().map(Vec::len).sum::<usize>();
 
     if total_n <= groups.len() {
-        return Err(
-            "anova() requires positive within-group degrees of freedom"
-                .into()
-        );
+        return Err("anova() requires positive within-group degrees of freedom".into());
     }
 
-    let grand_sum =
-        groups
-            .iter()
-            .flat_map(|group| group.iter())
-            .sum::<f64>();
+    let grand_sum = groups.iter().flat_map(|group| group.iter()).sum::<f64>();
 
-    let grand_mean =
-        grand_sum / total_n as f64;
+    let grand_mean = grand_sum / total_n as f64;
 
     let mut ss_between = 0.0;
     let mut ss_within = 0.0;
 
     for group in groups {
-        let n =
-            group.len() as f64;
+        let n = group.len() as f64;
 
-        let mean =
-            group.iter().sum::<f64>()
-                / n;
+        let mean = group.iter().sum::<f64>() / n;
 
-        let mean_difference =
-            mean - grand_mean;
+        let difference = mean - grand_mean;
 
-        ss_between +=
-            n * mean_difference
-                * mean_difference;
+        ss_between += n * difference * difference;
 
         for value in group {
-            let difference =
-                *value - mean;
+            let difference = *value - mean;
 
-            ss_within +=
-                difference * difference;
+            ss_within += difference * difference;
         }
     }
 
-    let df_between =
-        (groups.len() - 1) as f64;
+    let ss_total = ss_between + ss_within;
 
-    let df_within =
-        (total_n - groups.len()) as f64;
+    let df_between = (groups.len() - 1) as f64;
 
-    let ms_between =
-        ss_between / df_between;
+    let df_within = (total_n - groups.len()) as f64;
 
-    let ms_within =
-        ss_within / df_within;
+    let ms_between = ss_between / df_between;
 
-    if ms_within == 0.0 {
-        if ss_between == 0.0 {
-            return Err(
-                "anova() has zero within-group and between-group variance"
-                    .into()
-            );
+    let ms_within = ss_within / df_within;
+
+    let statistic = if ms_within == 0.0 {
+        if ms_between == 0.0 {
+            return Err("anova() has zero between-group and within-group variance".into());
         }
 
-        return Ok((
-            f64::INFINITY,
-            df_between,
-            df_within,
-            0.0,
-        ));
-    }
+        f64::INFINITY
+    } else {
+        ms_between / ms_within
+    };
 
-    let f =
-        ms_between / ms_within;
+    let p_value = if statistic.is_infinite() {
+        0.0
+    } else {
+        let distribution =
+            FisherSnedecor::new(df_between, df_within).map_err(|error| error.to_string())?;
 
-    let distribution =
-        FisherSnedecor::new(
-            df_between,
-            df_within,
-        )
-        .map_err(|error| error.to_string())?;
-
-    let p_value =
-        distribution.sf(f);
+        distribution.sf(statistic)
+    };
 
     Ok((
-        f,
-        df_between,
-        df_within,
-        p_value,
+        statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total,
     ))
 }
 
-pub fn anova(
-    args: Vec<Value>,
+fn eta_squared(ss_between: f64, ss_total: f64) -> Result<f64, String> {
+    if !ss_total.is_finite() || ss_total <= 0.0 {
+        return Err("eta squared is undefined because total variance is zero".into());
+    }
+
+    Ok(ss_between / ss_total)
+}
+
+fn omega_squared(
+    ss_between: f64,
+    ms_within: f64,
+    df_between: f64,
+    ss_total: f64,
+) -> Result<f64, String> {
+    if !ss_total.is_finite() || ss_total <= 0.0 {
+        return Err("omega squared is undefined because total variance is zero".into());
+    }
+
+    let denominator = ss_total + ms_within;
+
+    if denominator <= 0.0 || !denominator.is_finite() {
+        return Err("omega squared denominator is invalid".into());
+    }
+
+    let numerator = ss_between - df_between * ms_within;
+
+    Ok(numerator / denominator)
+}
+
+fn anova_result(
+    statistic: f64,
+    p_value: f64,
+    df_between: f64,
+    df_within: f64,
+    ss_between: f64,
+    ss_within: f64,
+    ss_total: f64,
 ) -> Result<Value, String> {
+    let eta2 = eta_squared(ss_between, ss_total)?;
+
+    let ms_within = ss_within / df_within;
+
+    let omega2 = omega_squared(ss_between, ms_within, df_between, ss_total)?;
+
+    Ok(result_dict(vec![
+        ("statistic", Value::Float(statistic)),
+        ("p_value", Value::Float(p_value)),
+        ("df_between", Value::Float(df_between)),
+        ("df_within", Value::Float(df_within)),
+        ("effect_size", Value::Float(eta2)),
+        (
+            "effect_size_name",
+            Value::Str(Rc::new("Eta squared".to_string())),
+        ),
+        ("omega_squared", Value::Float(omega2)),
+        ("confidence_interval", Value::Null),
+        ("method", Value::Str(Rc::new("One-way ANOVA".to_string()))),
+    ]))
+}
+
+pub fn anova(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 3 {
-        return Err(
-            "anova() expects DataFrame, response column, and factor column"
-                .into()
-        );
+        return Err("anova() expects DataFrame, response column, and factor column".into());
     }
 
     let df = match &args[0] {
-        Value::DataFrame(df) => {
-            df.clone()
-        }
+        Value::DataFrame(df) => df.clone(),
 
         other => {
             return Err(format!(
                 "anova() first argument must be DataFrame, got {}",
                 other.type_name()
             ));
-        }
+        },
     };
 
-    let response_name =
-        match &args[1] {
-            Value::Str(value) => {
-                value.as_str()
-            }
+    let response_name = match &args[1] {
+        Value::Str(value) => value.as_str(),
 
-            other => {
-                return Err(format!(
-                    "anova() response column must be Str, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        other => {
+            return Err(format!(
+                "anova() response column must be Str, got {}",
+                other.type_name()
+            ));
+        },
+    };
 
-    let factor_name =
-        match &args[2] {
-            Value::Str(value) => {
-                value.as_str()
-            }
+    let factor_name = match &args[2] {
+        Value::Str(value) => value.as_str(),
 
-            other => {
-                return Err(format!(
-                    "anova() factor column must be Str, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        other => {
+            return Err(format!(
+                "anova() factor column must be Str, got {}",
+                other.type_name()
+            ));
+        },
+    };
 
-    let response =
-        df.column(response_name)
-            .ok_or_else(|| {
-                format!(
-                    "anova() unknown response column '{}'",
-                    response_name
-                )
-            })?;
+    let response = df
+        .column(response_name)
+        .ok_or_else(|| format!("anova() unknown response column '{}'", response_name))?;
 
-    let factor =
-        df.column(factor_name)
-            .ok_or_else(|| {
-                format!(
-                    "anova() unknown factor column '{}'",
-                    factor_name
-                )
-            })?;
+    let factor = df
+        .column(factor_name)
+        .ok_or_else(|| format!("anova() unknown factor column '{}'", factor_name))?;
 
-    let groups =
-        anova_groups(
-            &response,
-            &factor,
-        )?;
+    let groups = anova_groups(&response, &factor)?;
 
-    let (
-        statistic,
-        df_between,
-        df_within,
-        p_value,
-    ) =
+    let (statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total) =
         one_way_anova_values(&groups)?;
 
-    Ok(result_dict(vec![
-        (
-            "statistic",
-            Value::Float(statistic),
-        ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "df_between",
-            Value::Float(df_between),
-        ),
-        (
-            "df_within",
-            Value::Float(df_within),
-        ),
-        (
-            "method",
-            Value::Str(
-                Rc::new(
-                    "One-way ANOVA".to_string()
-                )
-            ),
-        ),
-    ]))
+    anova_result(
+        statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total,
+    )
 }
 
 //=========================
@@ -2389,47 +1695,32 @@ pub fn anova(
 //=========================
 fn chi_square_independence_values(
     table: &[Vec<usize>],
-) -> Result<(f64, f64, usize), String> {
+) -> Result<(f64, f64, usize, usize), String> {
     let rows = table.len();
 
     if rows < 2 {
-        return Err(
-            "chi_square() requires at least 2 rows"
-                .into()
-        );
+        return Err("chi_square() requires at least 2 rows".into());
     }
 
-    let columns =
-        table[0].len();
+    let columns = table[0].len();
 
     if columns < 2 {
-        return Err(
-            "chi_square() requires at least 2 columns"
-                .into()
-        );
+        return Err("chi_square() requires at least 2 columns".into());
     }
 
-    if table.iter().any(
-        |row| row.len() != columns
-    ) {
-        return Err(
-            "chi_square() contingency table must be rectangular"
-                .into()
-        );
+    if table.iter().any(|row| row.len() != columns) {
+        return Err("chi_square() contingency table must be rectangular".into());
     }
 
-    let mut row_totals =
-        vec![0usize; rows];
+    let mut row_totals = vec![0usize; rows];
 
-    let mut column_totals =
-        vec![0usize; columns];
+    let mut column_totals = vec![0usize; columns];
 
     let mut total = 0usize;
 
     for row in 0..rows {
         for column in 0..columns {
-            let value =
-                table[row][column];
+            let value = table[row][column];
 
             row_totals[row] += value;
             column_totals[column] += value;
@@ -2438,286 +1729,193 @@ fn chi_square_independence_values(
     }
 
     if total == 0 {
-        return Err(
-            "chi_square() contingency table is empty"
-                .into()
-        );
+        return Err("chi_square() contingency table is empty".into());
     }
 
-    let total_f =
-        total as f64;
+    let total_f = total as f64;
 
     let mut statistic = 0.0;
 
     for row in 0..rows {
         for column in 0..columns {
-            let expected =
-                row_totals[row] as f64
-                    * column_totals[column] as f64
-                    / total_f;
+            let expected = row_totals[row] as f64 * column_totals[column] as f64 / total_f;
 
             if expected == 0.0 {
                 continue;
             }
 
-            let observed =
-                table[row][column] as f64;
+            let observed = table[row][column] as f64;
 
-            let difference =
-                observed - expected;
+            let difference = observed - expected;
 
-            statistic +=
-                difference * difference
-                    / expected;
+            statistic += difference * difference / expected;
         }
     }
 
-    let df =
-        (rows - 1)
-            * (columns - 1);
+    let df = (rows - 1) * (columns - 1);
 
-    let distribution =
-        ChiSquared::new(df as f64)
-            .map_err(|error| {
-                error.to_string()
-            })?;
+    let distribution = ChiSquared::new(df as f64).map_err(|error| error.to_string())?;
 
-    let p_value =
-        distribution.sf(statistic);
+    let p_value = distribution.sf(statistic);
 
-    Ok((
-        statistic,
-        p_value,
-        df,
-    ))
+    Ok((statistic, p_value, df, total))
 }
 
-fn chi_square_table(
-    first: &SeriesRef,
-    second: &SeriesRef,
-) -> Result<Vec<Vec<usize>>, String> {
+fn chi_square_table(first: &SeriesRef, second: &SeriesRef) -> Result<Vec<Vec<usize>>, String> {
     if first.len() != second.len() {
-        return Err(
-            "chi_square() requires equal-length columns"
-                .into()
-        );
+        return Err("chi_square() requires equal-length columns".into());
     }
 
-    let mut row_keys =
-        Vec::<CategoryKey>::new();
+    let mut row_keys = Vec::<CategoryKey>::new();
 
-    let mut column_keys =
-        Vec::<CategoryKey>::new();
+    let mut column_keys = Vec::<CategoryKey>::new();
 
-    let mut row_index =
-        HashMap::<CategoryKey, usize>::new();
+    let mut row_index = HashMap::<CategoryKey, usize>::new();
 
-    let mut column_index =
-        HashMap::<CategoryKey, usize>::new();
+    let mut column_index = HashMap::<CategoryKey, usize>::new();
 
-    let mut observations =
-        Vec::<(usize, usize)>::new();
+    let mut observations = Vec::<(usize, usize)>::new();
 
     for index in 0..first.len() {
-        let first_value =
-            first.get(index)
-                .ok_or_else(|| {
-                    "first column index out of bounds"
-                        .to_string()
-                })?;
+        let first_value = first
+            .get(index)
+            .ok_or_else(|| "first column index out of bounds".to_string())?;
 
-        let second_value =
-            second.get(index)
-                .ok_or_else(|| {
-                    "second column index out of bounds"
-                        .to_string()
-                })?;
+        let second_value = second
+            .get(index)
+            .ok_or_else(|| "second column index out of bounds".to_string())?;
 
-        let Some(first_key) =
-            category_key(&first_value)?
-        else {
+        let Some(first_key) = category_key(&first_value)? else {
             continue;
         };
 
-        let Some(second_key) =
-            category_key(&second_value)?
-        else {
+        let Some(second_key) = category_key(&second_value)? else {
             continue;
         };
 
-        let first_position =
-            if let Some(position) =
-                row_index.get(&first_key)
-            {
-                *position
-            } else {
-                let position =
-                    row_keys.len();
+        let first_position = if let Some(position) = row_index.get(&first_key) {
+            *position
+        } else {
+            let position = row_keys.len();
 
-                row_index.insert(
-                    first_key.clone(),
-                    position,
-                );
+            row_index.insert(first_key.clone(), position);
 
-                row_keys.push(first_key);
+            row_keys.push(first_key);
 
-                position
-            };
+            position
+        };
 
-        let second_position =
-            if let Some(position) =
-                column_index.get(&second_key)
-            {
-                *position
-            } else {
-                let position =
-                    column_keys.len();
+        let second_position = if let Some(position) = column_index.get(&second_key) {
+            *position
+        } else {
+            let position = column_keys.len();
 
-                column_index.insert(
-                    second_key.clone(),
-                    position,
-                );
+            column_index.insert(second_key.clone(), position);
 
-                column_keys.push(second_key);
+            column_keys.push(second_key);
 
-                position
-            };
+            position
+        };
 
-        observations.push((
-            first_position,
-            second_position,
-        ));
+        observations.push((first_position, second_position));
     }
 
-    if row_keys.len() < 2
-        || column_keys.len() < 2
-    {
-        return Err(
-            "chi_square() requires at least 2 categories in each variable"
-                .into()
-        );
+    if row_keys.len() < 2 || column_keys.len() < 2 {
+        return Err("chi_square() requires at least 2 categories in each variable".into());
     }
 
-    let mut table =
-        vec![
-            vec![0usize; column_keys.len()];
-            row_keys.len()
-        ];
+    let mut table = vec![vec![0usize; column_keys.len()]; row_keys.len()];
 
-    for (row, column)
-        in observations
-    {
+    for (row, column) in observations {
         table[row][column] += 1;
     }
 
     Ok(table)
 }
 
-pub fn chi_square(
-    args: Vec<Value>,
-) -> Result<Value, String> {
+fn cramers_v(statistic: f64, total_n: usize, rows: usize, columns: usize) -> Result<f64, String> {
+    if total_n == 0 {
+        return Err("Cramer's V requires a non-empty contingency table".into());
+    }
+
+    let minimum_dimension = (rows - 1).min(columns - 1);
+
+    if minimum_dimension == 0 {
+        return Err("Cramer's V requires at least 2 categories per dimension".into());
+    }
+
+    Ok((statistic / (total_n as f64 * minimum_dimension as f64)).sqrt())
+}
+
+pub fn chi_square(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 3 {
-        return Err(
-            "chi_square() expects DataFrame and two column names"
-                .into()
-        );
+        return Err("chi_square() expects DataFrame and two column names".into());
     }
 
     let df = match &args[0] {
-        Value::DataFrame(df) => {
-            df.clone()
-        }
+        Value::DataFrame(df) => df.clone(),
 
         other => {
             return Err(format!(
                 "chi_square() first argument must be DataFrame, got {}",
                 other.type_name()
             ));
-        }
+        },
     };
 
-    let first_name =
-        match &args[1] {
-            Value::Str(value) => {
-                value.as_str()
-            }
+    let first_name = match &args[1] {
+        Value::Str(value) => value.as_str(),
 
-            other => {
-                return Err(format!(
-                    "chi_square() first column name must be Str, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        other => {
+            return Err(format!(
+                "chi_square() first column name must be Str, got {}",
+                other.type_name()
+            ));
+        },
+    };
 
-    let second_name =
-        match &args[2] {
-            Value::Str(value) => {
-                value.as_str()
-            }
+    let second_name = match &args[2] {
+        Value::Str(value) => value.as_str(),
 
-            other => {
-                return Err(format!(
-                    "chi_square() second column name must be Str, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        other => {
+            return Err(format!(
+                "chi_square() second column name must be Str, got {}",
+                other.type_name()
+            ));
+        },
+    };
 
-    let first =
-        df.column(first_name)
-            .ok_or_else(|| {
-                format!(
-                    "chi_square() unknown column '{}'",
-                    first_name
-                )
-            })?;
+    let first = df
+        .column(first_name)
+        .ok_or_else(|| format!("chi_square() unknown column '{}'", first_name))?;
 
-    let second =
-        df.column(second_name)
-            .ok_or_else(|| {
-                format!(
-                    "chi_square() unknown column '{}'",
-                    second_name
-                )
-            })?;
+    let second = df
+        .column(second_name)
+        .ok_or_else(|| format!("chi_square() unknown column '{}'", second_name))?;
 
-    let table =
-        chi_square_table(
-            &first,
-            &second,
-        )?;
+    let table = chi_square_table(&first, &second)?;
 
-    let (
-        statistic,
-        p_value,
-        df_value,
-    ) =
-        chi_square_independence_values(
-            &table
-        )?;
+    let (statistic, p_value, df_value, total_n) = chi_square_independence_values(&table)?;
+
+    let rows = table.len();
+
+    let columns = table[0].len();
+
+    let effect_size = cramers_v(statistic, total_n, rows, columns)?;
 
     Ok(result_dict(vec![
+        ("statistic", Value::Float(statistic)),
+        ("p_value", Value::Float(p_value)),
+        ("df", Value::Int(df_value as i64)),
+        ("effect_size", Value::Float(effect_size)),
         (
-            "statistic",
-            Value::Float(statistic),
+            "effect_size_name",
+            Value::Str(Rc::new("Cramer's V".to_string())),
         ),
-        (
-            "p_value",
-            Value::Float(p_value),
-        ),
-        (
-            "df",
-            Value::Int(df_value as i64),
-        ),
+        ("confidence_interval", Value::Null),
         (
             "method",
-            Value::Str(
-                Rc::new(
-                    "Chi-square test of independence"
-                        .to_string()
-                )
-            ),
+            Value::Str(Rc::new("Chi-square test of independence".to_string())),
         ),
     ]))
 }
