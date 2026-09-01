@@ -41,6 +41,21 @@ fn function_specs() -> &'static [FunctionSpec] {
             receiver: Some(ReceiverKind::Series),
         },
         FunctionSpec {
+            name: "range",
+            function: range,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "skewness",
+            function: skewness,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "kurtosis",
+            function: kurtosis,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
             name: "median",
             function: median,
             receiver: Some(ReceiverKind::Series),
@@ -58,6 +73,11 @@ fn function_specs() -> &'static [FunctionSpec] {
         FunctionSpec {
             name: "std",
             function: std,
+            receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "covariance",
+            function: covariance,
             receiver: Some(ReceiverKind::Series),
         },
         FunctionSpec {
@@ -95,6 +115,32 @@ pub fn register_extensions(registry: &mut ExtensionRegistry) {
         };
 
         registry.register(receiver, spec.name, Value::Builtin(spec.function));
+    }
+}
+
+fn numeric_series_values(value: &Value) -> Result<Vec<f64>, String> {
+    match value {
+        Value::Series(series) => series.numeric_values(),
+
+        other => Err(format!(
+            "stats function expects Series, got {}",
+            other.type_name()
+        )),
+    }
+}
+
+fn expect_series(args: &[Value], index: usize, function: &str) -> Result<SeriesRef, String> {
+    match args.get(index) {
+        Some(Value::Series(series)) => Ok(series.clone()),
+
+        Some(other) => Err(format!(
+            "{}() expects Series at argument {}, got {}",
+            function,
+            index,
+            other.type_name()
+        )),
+
+        None => Err(format!("{}() missing argument {}", function, index)),
     }
 }
 
@@ -301,6 +347,116 @@ pub fn mean(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(sum / values.len() as f64))
 }
 
+pub fn range(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("range() expects exactly 1 argument".into());
+    }
+
+    let values = numeric_series_values(&args[0])?;
+
+    if values.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    Ok(Value::Float(max - min))
+}
+
+pub fn skewness(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("skewness() expects exactly 1 argument".into());
+    }
+
+    let values = numeric_series_values(&args[0])?;
+
+    Ok(match sample_skewness(&values) {
+        Some(value) => Value::Float(value),
+        None => Value::Null,
+    })
+}
+
+fn sample_skewness(values: &[f64]) -> Option<f64> {
+    let n = values.len();
+
+    if n < 3 {
+        return None;
+    }
+
+    let mean = values.iter().sum::<f64>() / n as f64;
+
+    let mut m2 = 0.0;
+    let mut m3 = 0.0;
+
+    for &value in values {
+        let d = value - mean;
+
+        m2 += d * d;
+        m3 += d * d * d;
+    }
+
+    let s2 = m2 / (n - 1) as f64;
+
+    if s2 == 0.0 {
+        return Some(0.0);
+    }
+
+    let s = s2.sqrt();
+
+    let g1 = (n as f64) / ((n - 1) as f64 * (n - 2) as f64) * (m3 / s.powi(3));
+
+    Some(g1)
+}
+
+pub fn kurtosis(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("kurtosis() expects exactly 1 argument".into());
+    }
+
+    let values = numeric_series_values(&args[0])?;
+
+    Ok(match sample_excess_kurtosis(&values) {
+        Some(value) => Value::Float(value),
+        None => Value::Null,
+    })
+}
+
+fn sample_excess_kurtosis(values: &[f64]) -> Option<f64> {
+    let n = values.len();
+
+    if n < 4 {
+        return None;
+    }
+
+    let mean = values.iter().sum::<f64>() / n as f64;
+
+    let mut m2 = 0.0;
+    let mut m4 = 0.0;
+
+    for &value in values {
+        let d = value - mean;
+
+        let d2 = d * d;
+
+        m2 += d2;
+        m4 += d2 * d2;
+    }
+
+    if m2 == 0.0 {
+        return Some(0.0);
+    }
+
+    let n = n as f64;
+
+    let term1 = n * (n + 1.0) * m4 / ((n - 1.0) * (n - 2.0) * (n - 3.0) * m2.powi(2));
+
+    let term2 = 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
+
+    Some(term1 - term2)
+}
+
 fn quantile_sorted(sorted: &[f64], q: f64) -> f64 {
     if sorted.len() == 1 {
         return sorted[0];
@@ -419,6 +575,41 @@ pub fn std(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(variance.sqrt()))
 }
 
+pub fn covariance(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("covariance() expects exactly 2 Series".into());
+    }
+
+    let x = numeric_series_values(&args[0])?;
+
+    let y = numeric_series_values(&args[1])?;
+
+    Ok(Value::Float(covariance_value(&x, &y)?))
+}
+
+fn covariance_value(x: &[f64], y: &[f64]) -> Result<f64, String> {
+    if x.len() != y.len() {
+        return Err("covariance() requires equal-length Series".into());
+    }
+
+    if x.len() < 2 {
+        return Err("covariance() requires at least 2 observations".into());
+    }
+
+    let mean_x = x.iter().sum::<f64>() / x.len() as f64;
+
+    let mean_y = y.iter().sum::<f64>() / y.len() as f64;
+
+    let covariance = x
+        .iter()
+        .zip(y.iter())
+        .map(|(x, y)| (*x - mean_x) * (*y - mean_y))
+        .sum::<f64>()
+        / (x.len() - 1) as f64;
+
+    Ok(covariance)
+}
+
 fn pearson_correlation(x: &[f64], y: &[f64]) -> Result<f64, String> {
     if x.len() != y.len() {
         return Err("correlation() requires equal-length Series".into());
@@ -428,27 +619,31 @@ fn pearson_correlation(x: &[f64], y: &[f64]) -> Result<f64, String> {
         return Err("correlation() requires at least 2 observations".into());
     }
 
+    let covariance = covariance_value(x, y)?;
+
     let mean_x = x.iter().sum::<f64>() / x.len() as f64;
 
     let mean_y = y.iter().sum::<f64>() / y.len() as f64;
 
-    let mut covariance = 0.0;
+    let variance_x = x
+        .iter()
+        .map(|value| {
+            let diff = *value - mean_x;
 
-    let mut variance_x = 0.0;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (x.len() - 1) as f64;
 
-    let mut variance_y = 0.0;
+    let variance_y = y
+        .iter()
+        .map(|value| {
+            let diff = *value - mean_y;
 
-    for (x_value, y_value) in x.iter().zip(y.iter()) {
-        let dx = *x_value - mean_x;
-
-        let dy = *y_value - mean_y;
-
-        covariance += dx * dy;
-
-        variance_x += dx * dx;
-
-        variance_y += dy * dy;
-    }
+            diff * diff
+        })
+        .sum::<f64>()
+        / (y.len() - 1) as f64;
 
     if variance_x == 0.0 || variance_y == 0.0 {
         return Ok(f64::NAN);
@@ -462,11 +657,17 @@ pub fn correlation(args: Vec<Value>) -> Result<Value, String> {
         return Err("correlation() expects exactly 2 Series".into());
     }
 
-    let x = series_values(&args[0])?;
+    let x = numeric_series_values(&args[0])?;
 
-    let y = series_values(&args[1])?;
+    let y = numeric_series_values(&args[1])?;
 
     Ok(Value::Float(pearson_correlation(&x, &y)?))
+}
+
+fn t_distribution_p_value(t: f64, df: f64) -> Result<f64, String> {
+    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
+
+    Ok(2.0 * distribution.sf(t.abs()))
 }
 
 pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
@@ -517,9 +718,7 @@ pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
 
     let df = (n - 1) as f64;
 
-    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
-
-    let p_value = 2.0 * distribution.sf(t.abs());
+    let p_value = t_distribution_p_value(t, df)?;
 
     Ok(result_dict(vec![
         ("statistic", Value::Float(t)),
@@ -572,9 +771,7 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
 
     let df = numerator / denominator;
 
-    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
-
-    let p_value = 2.0 * distribution.sf(t.abs());
+    let p_value = t_distribution_p_value(t, df)?;
 
     Ok(result_dict(vec![
         ("statistic", Value::Float(t)),
