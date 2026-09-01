@@ -5,7 +5,7 @@ use crate::runtime::{
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use statrs::distribution::{ContinuousCDF, Normal, StudentsT};
+use statrs::distribution::{ContinuousCDF, Normal, StudentsT, FisherSnedecor, ChiSquared};
 
 struct FunctionSpec {
     name: &'static str,
@@ -105,10 +105,19 @@ fn function_specs() -> &'static [FunctionSpec] {
             function: mann_whitney,
             receiver: None,
         },
-
         FunctionSpec {
             name: "wilcoxon",
             function: wilcoxon,
+            receiver: None,
+        },
+        FunctionSpec {
+            name: "anova",
+            function: anova,
+            receiver: None,
+        },
+        FunctionSpec {
+            name: "chi_square",
+            function: chi_square,
             receiver: None,
         },
     ]
@@ -895,6 +904,35 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
 //=========================
 // non-parametric tests
 //=========================
+fn continuity_corrected_z(
+    statistic: f64,
+    mean: f64,
+    standard_deviation: f64,
+) -> Result<f64, String> {
+    if !standard_deviation.is_finite()
+        || standard_deviation <= 0.0
+    {
+        return Err(
+            "normal approximation standard deviation must be positive and finite"
+                .into()
+        );
+    }
+
+    let correction =
+        if statistic < mean {
+            0.5
+        } else if statistic > mean {
+            -0.5
+        } else {
+            0.0
+        };
+
+    Ok(
+        (statistic - mean + correction)
+            / standard_deviation
+    )
+}
+
 fn two_sided_normal_p_value(
     z: f64,
 ) -> Result<f64, String> {
@@ -914,6 +952,14 @@ fn two_sided_normal_p_value(
     )
 }
 
+fn rank_value(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value
+    }
+}
+
 fn average_ranks(
     values: &[f64],
 ) -> Vec<f64> {
@@ -921,6 +967,7 @@ fn average_ranks(
         values
             .iter()
             .copied()
+            .map(rank_value)
             .enumerate()
             .collect::<Vec<_>>();
 
@@ -1017,11 +1064,8 @@ fn mann_whitney_values(
         );
     }
 
-    let nx =
-        x.len();
-
-    let ny =
-        y.len();
+    let nx = x.len();
+    let ny = y.len();
 
     let mut combined =
         Vec::with_capacity(nx + ny);
@@ -1065,36 +1109,15 @@ fn mann_whitney_values(
         (nx * ny) as f64
             - u_x;
 
-    /*
-     * Use U for the group with the smaller
-     * sample size only for reporting symmetry.
-     */
-    let u =
-        u_x.min(u_y);
+    let u = u_x.min(u_y);
 
-    let n_x =
-        nx as f64;
-
-    let n_y =
-        ny as f64;
-
-    let n =
-        (nx + ny) as f64;
+    let nx_f = nx as f64;
+    let ny_f = ny as f64;
+    let n = (nx + ny) as f64;
 
     let mean_u =
-        n_x * n_y / 2.0;
+        nx_f * ny_f / 2.0;
 
-    /*
-     * Tie correction:
-     *
-     * Var(U)
-     * =
-     * nx ny / 12 *
-     * [
-     *   N + 1
-     *   - Σ(t^3 - t)/(N(N-1))
-     * ]
-     */
     let tie_sizes =
         tie_group_sizes(&values);
 
@@ -1102,15 +1125,14 @@ fn mann_whitney_values(
         tie_sizes
             .iter()
             .map(|size| {
-                let t =
-                    *size as f64;
+                let t = *size as f64;
 
                 t.powi(3) - t
             })
             .sum::<f64>();
 
     let variance_u =
-        n_x * n_y / 12.0
+        nx_f * ny_f / 12.0
             * (
                 n + 1.0
                 - tie_term
@@ -1126,21 +1148,12 @@ fn mann_whitney_values(
         );
     }
 
-    /*
-     * Continuity correction.
-     */
-    let correction =
-        if u < mean_u {
-            0.5
-        } else if u > mean_u {
-            -0.5
-        } else {
-            0.0
-        };
-
     let z =
-        (u - mean_u - correction)
-            / variance_u.sqrt();
+        continuity_corrected_z(
+            u,
+            mean_u,
+            variance_u.sqrt(),
+        )?;
 
     let p_value =
         two_sided_normal_p_value(z)?;
@@ -1192,6 +1205,30 @@ pub fn mann_whitney(
     ]))
 }
 
+fn wilcoxon_variance(
+    n: usize,
+    tie_sizes: &[usize],
+) -> f64 {
+    let n = n as f64;
+
+    let base =
+        n * (n + 1.0) * (2.0 * n + 1.0)
+            / 24.0;
+
+    let tie_correction =
+        tie_sizes
+            .iter()
+            .map(|size| {
+                let t = *size as f64;
+
+                t * (t + 1.0) * (2.0 * t + 1.0)
+                    / 48.0
+            })
+            .sum::<f64>();
+
+    base - tie_correction
+}
+
 fn wilcoxon_values(
     x: &[f64],
     y: &[f64],
@@ -1219,8 +1256,7 @@ fn wilcoxon_values(
         }
     }
 
-    let n =
-        differences.len();
+    let n = differences.len();
 
     if n < 2 {
         return Err(
@@ -1238,11 +1274,8 @@ fn wilcoxon_values(
     let ranks =
         average_ranks(&absolute);
 
-    let mut w_plus =
-        0.0;
-
-    let mut w_minus =
-        0.0;
+    let mut w_plus = 0.0;
+    let mut w_minus = 0.0;
 
     for (difference, rank)
         in differences.iter().zip(ranks.iter())
@@ -1254,52 +1287,22 @@ fn wilcoxon_values(
         }
     }
 
-    /*
-     * The Wilcoxon statistic is
-     * conventionally the smaller signed-rank sum.
-     */
     let statistic =
         w_plus.min(w_minus);
 
-    let n_f =
-        n as f64;
+    let n_f = n as f64;
 
     let mean =
-        n_f * (n_f + 1.0)
-            / 4.0;
+        n_f * (n_f + 1.0) / 4.0;
 
-    /*
-     * Base variance:
-     *
-     * n(n+1)(2n+1) / 24
-     */
-    let mut variance =
-        n_f
-            * (n_f + 1.0)
-            * (2.0 * n_f + 1.0)
-            / 24.0;
-
-    /*
-     * Tie correction:
-     *
-     * Σ(t^3 - t) / 48
-     */
     let tie_sizes =
         tie_group_sizes(&absolute);
 
-    let tie_term =
-        tie_sizes
-            .iter()
-            .map(|size| {
-                let t =
-                    *size as f64;
-
-                t.powi(3) - t
-            })
-            .sum::<f64>();
-
-    variance -=
-        tie_term / 48.0;
+    let variance =
+        wilcoxon_variance(
+            n,
+            &tie_sizes,
+        );
 
     if variance <= 0.0
         || !variance.is_finite()
@@ -1310,21 +1313,12 @@ fn wilcoxon_values(
         );
     }
 
-    /*
-     * Continuity correction.
-     */
-    let correction =
-        if statistic < mean {
-            0.5
-        } else if statistic > mean {
-            -0.5
-        } else {
-            0.0
-        };
-
     let z =
-        (statistic - mean - correction)
-            / variance.sqrt();
+        continuity_corrected_z(
+            statistic,
+            mean,
+            variance.sqrt(),
+        )?;
 
     let p_value =
         two_sided_normal_p_value(z)?;
@@ -1392,4 +1386,693 @@ pub fn wilcoxon(
     ]))
 }
 
+//=========================
+// anova
+//=========================
+#[derive(Hash, Eq, PartialEq, Clone)]
+enum CategoryKey {
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+    Str(String),
+}
 
+fn category_key(
+    value: &Value,
+) -> Result<Option<CategoryKey>, String> {
+    match value {
+        Value::Null => Ok(None),
+
+        Value::Int(value) => {
+            Ok(Some(CategoryKey::Int(*value)))
+        }
+
+        Value::Float(value) => {
+            if !value.is_finite() {
+                return Err(
+                    "categorical factor contains non-finite Float"
+                        .into()
+                );
+            }
+
+            Ok(Some(
+                CategoryKey::Float(
+                    value.to_bits()
+                )
+            ))
+        }
+
+        Value::Bool(value) => {
+            Ok(Some(CategoryKey::Bool(*value)))
+        }
+
+        Value::Str(value) => {
+            Ok(Some(
+                CategoryKey::Str(
+                    value.as_ref().clone()
+                )
+            ))
+        }
+
+        other => {
+            Err(format!(
+                "unsupported categorical value: {}",
+                other.type_name()
+            ))
+        }
+    }
+}
+
+fn anova_groups(
+    response: &SeriesRef,
+    factor: &SeriesRef,
+) -> Result<Vec<Vec<f64>>, String> {
+    if response.len() != factor.len() {
+        return Err(
+            "anova() requires response and factor with equal lengths"
+                .into()
+        );
+    }
+
+    let mut groups =
+        HashMap::<CategoryKey, Vec<f64>>::new();
+
+    for index in 0..response.len() {
+        let factor_value =
+            factor.get(index)
+                .ok_or_else(|| {
+                    "factor index out of bounds".to_string()
+                })?;
+
+        let Some(key) =
+            category_key(&factor_value)?
+        else {
+            continue;
+        };
+
+        let response_value =
+            response.get(index)
+                .ok_or_else(|| {
+                    "response index out of bounds".to_string()
+                })?;
+
+        let value = match response_value {
+            Value::Int(value) => {
+                value as f64
+            }
+
+            Value::Float(value) => {
+                if !value.is_finite() {
+                    return Err(
+                        "anova() response contains non-finite value"
+                            .into()
+                    );
+                }
+
+                value
+            }
+
+            Value::Null => {
+                continue;
+            }
+
+            other => {
+                return Err(format!(
+                    "anova() response must be numeric, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+        groups
+            .entry(key)
+            .or_default()
+            .push(value);
+    }
+
+    Ok(groups.into_values().collect())
+}
+
+fn one_way_anova_values(
+    groups: &[Vec<f64>],
+) -> Result<(f64, f64, f64, f64), String> {
+    if groups.len() < 2 {
+        return Err(
+            "anova() requires at least 2 groups"
+                .into()
+        );
+    }
+
+    if groups.iter().any(Vec::is_empty) {
+        return Err(
+            "anova() groups must not be empty"
+                .into()
+        );
+    }
+
+    let total_n =
+        groups
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>();
+
+    if total_n <= groups.len() {
+        return Err(
+            "anova() requires positive within-group degrees of freedom"
+                .into()
+        );
+    }
+
+    let grand_sum =
+        groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .sum::<f64>();
+
+    let grand_mean =
+        grand_sum / total_n as f64;
+
+    let mut ss_between = 0.0;
+    let mut ss_within = 0.0;
+
+    for group in groups {
+        let n =
+            group.len() as f64;
+
+        let mean =
+            group.iter().sum::<f64>()
+                / n;
+
+        let mean_difference =
+            mean - grand_mean;
+
+        ss_between +=
+            n * mean_difference
+                * mean_difference;
+
+        for value in group {
+            let difference =
+                *value - mean;
+
+            ss_within +=
+                difference * difference;
+        }
+    }
+
+    let df_between =
+        (groups.len() - 1) as f64;
+
+    let df_within =
+        (total_n - groups.len()) as f64;
+
+    let ms_between =
+        ss_between / df_between;
+
+    let ms_within =
+        ss_within / df_within;
+
+    if ms_within == 0.0 {
+        if ss_between == 0.0 {
+            return Err(
+                "anova() has zero within-group and between-group variance"
+                    .into()
+            );
+        }
+
+        return Ok((
+            f64::INFINITY,
+            df_between,
+            df_within,
+            0.0,
+        ));
+    }
+
+    let f =
+        ms_between / ms_within;
+
+    let distribution =
+        FisherSnedecor::new(
+            df_between,
+            df_within,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let p_value =
+        distribution.sf(f);
+
+    Ok((
+        f,
+        df_between,
+        df_within,
+        p_value,
+    ))
+}
+
+pub fn anova(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 3 {
+        return Err(
+            "anova() expects DataFrame, response column, and factor column"
+                .into()
+        );
+    }
+
+    let df = match &args[0] {
+        Value::DataFrame(df) => {
+            df.clone()
+        }
+
+        other => {
+            return Err(format!(
+                "anova() first argument must be DataFrame, got {}",
+                other.type_name()
+            ));
+        }
+    };
+
+    let response_name =
+        match &args[1] {
+            Value::Str(value) => {
+                value.as_str()
+            }
+
+            other => {
+                return Err(format!(
+                    "anova() response column must be Str, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let factor_name =
+        match &args[2] {
+            Value::Str(value) => {
+                value.as_str()
+            }
+
+            other => {
+                return Err(format!(
+                    "anova() factor column must be Str, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let response =
+        df.column(response_name)
+            .ok_or_else(|| {
+                format!(
+                    "anova() unknown response column '{}'",
+                    response_name
+                )
+            })?;
+
+    let factor =
+        df.column(factor_name)
+            .ok_or_else(|| {
+                format!(
+                    "anova() unknown factor column '{}'",
+                    factor_name
+                )
+            })?;
+
+    let groups =
+        anova_groups(
+            &response,
+            &factor,
+        )?;
+
+    let (
+        statistic,
+        df_between,
+        df_within,
+        p_value,
+    ) =
+        one_way_anova_values(&groups)?;
+
+    Ok(result_dict(vec![
+        (
+            "statistic",
+            Value::Float(statistic),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "df_between",
+            Value::Float(df_between),
+        ),
+        (
+            "df_within",
+            Value::Float(df_within),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(
+                    "One-way ANOVA".to_string()
+                )
+            ),
+        ),
+    ]))
+}
+
+//=========================
+// chi-squared test
+//=========================
+fn chi_square_independence_values(
+    table: &[Vec<usize>],
+) -> Result<(f64, f64, usize), String> {
+    let rows = table.len();
+
+    if rows < 2 {
+        return Err(
+            "chi_square() requires at least 2 rows"
+                .into()
+        );
+    }
+
+    let columns =
+        table[0].len();
+
+    if columns < 2 {
+        return Err(
+            "chi_square() requires at least 2 columns"
+                .into()
+        );
+    }
+
+    if table.iter().any(
+        |row| row.len() != columns
+    ) {
+        return Err(
+            "chi_square() contingency table must be rectangular"
+                .into()
+        );
+    }
+
+    let mut row_totals =
+        vec![0usize; rows];
+
+    let mut column_totals =
+        vec![0usize; columns];
+
+    let mut total = 0usize;
+
+    for row in 0..rows {
+        for column in 0..columns {
+            let value =
+                table[row][column];
+
+            row_totals[row] += value;
+            column_totals[column] += value;
+            total += value;
+        }
+    }
+
+    if total == 0 {
+        return Err(
+            "chi_square() contingency table is empty"
+                .into()
+        );
+    }
+
+    let total_f =
+        total as f64;
+
+    let mut statistic = 0.0;
+
+    for row in 0..rows {
+        for column in 0..columns {
+            let expected =
+                row_totals[row] as f64
+                    * column_totals[column] as f64
+                    / total_f;
+
+            if expected == 0.0 {
+                continue;
+            }
+
+            let observed =
+                table[row][column] as f64;
+
+            let difference =
+                observed - expected;
+
+            statistic +=
+                difference * difference
+                    / expected;
+        }
+    }
+
+    let df =
+        (rows - 1)
+            * (columns - 1);
+
+    let distribution =
+        ChiSquared::new(df as f64)
+            .map_err(|error| {
+                error.to_string()
+            })?;
+
+    let p_value =
+        distribution.sf(statistic);
+
+    Ok((
+        statistic,
+        p_value,
+        df,
+    ))
+}
+
+fn chi_square_table(
+    first: &SeriesRef,
+    second: &SeriesRef,
+) -> Result<Vec<Vec<usize>>, String> {
+    if first.len() != second.len() {
+        return Err(
+            "chi_square() requires equal-length columns"
+                .into()
+        );
+    }
+
+    let mut row_keys =
+        Vec::<CategoryKey>::new();
+
+    let mut column_keys =
+        Vec::<CategoryKey>::new();
+
+    let mut row_index =
+        HashMap::<CategoryKey, usize>::new();
+
+    let mut column_index =
+        HashMap::<CategoryKey, usize>::new();
+
+    let mut observations =
+        Vec::<(usize, usize)>::new();
+
+    for index in 0..first.len() {
+        let first_value =
+            first.get(index)
+                .ok_or_else(|| {
+                    "first column index out of bounds"
+                        .to_string()
+                })?;
+
+        let second_value =
+            second.get(index)
+                .ok_or_else(|| {
+                    "second column index out of bounds"
+                        .to_string()
+                })?;
+
+        let Some(first_key) =
+            category_key(&first_value)?
+        else {
+            continue;
+        };
+
+        let Some(second_key) =
+            category_key(&second_value)?
+        else {
+            continue;
+        };
+
+        let first_position =
+            if let Some(position) =
+                row_index.get(&first_key)
+            {
+                *position
+            } else {
+                let position =
+                    row_keys.len();
+
+                row_index.insert(
+                    first_key.clone(),
+                    position,
+                );
+
+                row_keys.push(first_key);
+
+                position
+            };
+
+        let second_position =
+            if let Some(position) =
+                column_index.get(&second_key)
+            {
+                *position
+            } else {
+                let position =
+                    column_keys.len();
+
+                column_index.insert(
+                    second_key.clone(),
+                    position,
+                );
+
+                column_keys.push(second_key);
+
+                position
+            };
+
+        observations.push((
+            first_position,
+            second_position,
+        ));
+    }
+
+    if row_keys.len() < 2
+        || column_keys.len() < 2
+    {
+        return Err(
+            "chi_square() requires at least 2 categories in each variable"
+                .into()
+        );
+    }
+
+    let mut table =
+        vec![
+            vec![0usize; column_keys.len()];
+            row_keys.len()
+        ];
+
+    for (row, column)
+        in observations
+    {
+        table[row][column] += 1;
+    }
+
+    Ok(table)
+}
+
+pub fn chi_square(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 3 {
+        return Err(
+            "chi_square() expects DataFrame and two column names"
+                .into()
+        );
+    }
+
+    let df = match &args[0] {
+        Value::DataFrame(df) => {
+            df.clone()
+        }
+
+        other => {
+            return Err(format!(
+                "chi_square() first argument must be DataFrame, got {}",
+                other.type_name()
+            ));
+        }
+    };
+
+    let first_name =
+        match &args[1] {
+            Value::Str(value) => {
+                value.as_str()
+            }
+
+            other => {
+                return Err(format!(
+                    "chi_square() first column name must be Str, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let second_name =
+        match &args[2] {
+            Value::Str(value) => {
+                value.as_str()
+            }
+
+            other => {
+                return Err(format!(
+                    "chi_square() second column name must be Str, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let first =
+        df.column(first_name)
+            .ok_or_else(|| {
+                format!(
+                    "chi_square() unknown column '{}'",
+                    first_name
+                )
+            })?;
+
+    let second =
+        df.column(second_name)
+            .ok_or_else(|| {
+                format!(
+                    "chi_square() unknown column '{}'",
+                    second_name
+                )
+            })?;
+
+    let table =
+        chi_square_table(
+            &first,
+            &second,
+        )?;
+
+    let (
+        statistic,
+        p_value,
+        df_value,
+    ) =
+        chi_square_independence_values(
+            &table
+        )?;
+
+    Ok(result_dict(vec![
+        (
+            "statistic",
+            Value::Float(statistic),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "df",
+            Value::Int(df_value as i64),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(
+                    "Chi-square test of independence"
+                        .to_string()
+                )
+            ),
+        ),
+    ]))
+}
