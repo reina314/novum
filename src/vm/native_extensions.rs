@@ -1,8 +1,8 @@
 use crate::{
     error::{Error, ErrorKind, Result},
     runtime::{
-        ClosureRef, ExtensionHost, ExtensionRegistry, IterResult, IteratorObj, IteratorRef, List,
-        NativeExtensionFn, ReceiverKind, Value,
+        ClosureRef, ExtensionHost, ExtensionRegistry, GroupedDataFrame, IterResult, IteratorObj,
+        IteratorRef, List, NativeExtensionFn, ReceiverKind, Value,
     },
     syntax::BinOp,
 };
@@ -146,6 +146,8 @@ pub fn register_native_extensions(registry: &mut ExtensionRegistry) {
 
     register_dataframe_extensions(registry);
 
+    register_grouped_dataframe_extensions(registry);
+
     register_iterator_extensions(registry);
 
     register_range_extensions(registry);
@@ -240,9 +242,37 @@ fn register_dataframe_extensions(registry: &mut ExtensionRegistry) {
 
     registry.register_native(ReceiverKind::DataFrame, "head", dataframe_head);
 
+    registry.register_native(ReceiverKind::DataFrame, "tail", dataframe_tail);
+
     registry.register_native(ReceiverKind::DataFrame, "to_matrix", dataframe_to_matrix);
 
     registry.register_native(ReceiverKind::DataFrame, "iter", dataframe_iter);
+
+    registry.register_native(ReceiverKind::DataFrame, "filter", dataframe_filter);
+
+    registry.register_native(ReceiverKind::DataFrame, "group_by", dataframe_group_by);
+}
+
+fn register_grouped_dataframe_extensions(registry: &mut ExtensionRegistry) {
+    registry.register_native(
+        ReceiverKind::GroupedDataFrame,
+        "aggregate",
+        grouped_dataframe_aggregate,
+    );
+
+    registry.register_native(
+        ReceiverKind::GroupedDataFrame,
+        "count",
+        grouped_dataframe_count,
+    );
+
+    registry.register_native(
+        ReceiverKind::GroupedDataFrame,
+        "mean",
+        grouped_dataframe_mean,
+    );
+
+    registry.register_native(ReceiverKind::GroupedDataFrame, "sum", grouped_dataframe_sum);
 }
 
 fn register_iterator_extensions(registry: &mut ExtensionRegistry) {
@@ -1153,12 +1183,53 @@ fn dataframe_head(
         unreachable!();
     };
 
-    expect_arity("head", &args, 1)?;
+    let n = match args.len() {
+        0 => 5,
 
-    let n = expect_usize_index("head", &args[0])?;
+        1 => expect_usize_index("head", &args[0])?,
+
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Arity,
+                format!("head() expects 0 or 1 argument(s), got {}", args.len()),
+                None,
+            ));
+        },
+    };
 
     let result = df
         .head(n)
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(result)))
+}
+
+fn dataframe_tail(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::DataFrame(df) = receiver else {
+        unreachable!();
+    };
+
+    let n = match args.len() {
+        0 => 5,
+
+        1 => expect_usize_index("tail", &args[0])?,
+
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Arity,
+                format!("tail() expects 0 or 1 argument(s), got {}", args.len()),
+                None,
+            ));
+        },
+    };
+
+    let result = df
+        .tail(n)
         .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
 
     Ok(Value::DataFrame(Rc::new(result)))
@@ -1198,6 +1269,209 @@ fn dataframe_iter(
     let iterator = host.make_iterator(Value::DataFrame(df))?;
 
     Ok(Value::Iterator(iterator))
+}
+
+fn dataframe_filter(
+    host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::DataFrame(df) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("filter", &args, 1)?;
+
+    let closure = expect_closure_arg("filter", &args)?;
+
+    let mut keep = Vec::with_capacity(df.nrows());
+
+    for index in 0..df.nrows() {
+        let row = df.row(index).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Index,
+                format!("DataFrame row index out of bounds: {}", index),
+                None,
+            )
+        })?;
+
+        let result =
+            host.call_closure_sync_named(closure.clone(), vec![Value::Dict(row)], &[None])?;
+
+        let Value::Bool(value) = result else {
+            return Err(Error::new(
+                ErrorKind::Type,
+                format!(
+                    "DataFrame filter predicate must return Bool, got {}",
+                    result.type_name()
+                ),
+                None,
+            ));
+        };
+
+        keep.push(value);
+    }
+
+    let result = df
+        .filter_rows(&keep)
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(result)))
+}
+
+fn dataframe_group_by(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::DataFrame(df) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("group_by", &args, 1)?;
+
+    let Value::Str(column) = &args[0] else {
+        return Err(Error::new(
+            ErrorKind::Type,
+            format!("group_by() expects Str, got {}", args[0].type_name()),
+            None,
+        ));
+    };
+
+    let grouped = GroupedDataFrame::from_columns(df, &[column.as_ref().clone()])
+        .map_err(|message| Error::new(ErrorKind::Name, message, None))?;
+
+    Ok(Value::GroupedDataFrame(Rc::new(grouped)))
+}
+
+//============================
+// GroupedDataFrame
+//============================
+fn grouped_dataframe_aggregate(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::GroupedDataFrame(grouped) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("aggregate", &args, 2)?;
+
+    let Value::Str(column) = &args[0] else {
+        return Err(Error::new(
+            ErrorKind::Type,
+            format!(
+                "aggregate() expects first argument as Str, got {}",
+                args[0].type_name()
+            ),
+            None,
+        ));
+    };
+
+    let Value::List(functions) = &args[1] else {
+        return Err(Error::new(
+            ErrorKind::Type,
+            format!("aggregate() expects List, got {}", args[1].type_name()),
+            None,
+        ));
+    };
+
+    let mut names = Vec::with_capacity(functions.len());
+
+    for value in functions.iter_cloned() {
+        let Value::Str(name) = value else {
+            return Err(Error::new(
+                ErrorKind::Type,
+                "aggregate() function names must be Str",
+                None,
+            ));
+        };
+
+        names.push(name.as_ref().clone());
+    }
+
+    let result = grouped
+        .aggregate(column.as_str(), &names)
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(result)))
+}
+
+fn grouped_dataframe_count(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::GroupedDataFrame(grouped) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("count", &args, 0)?;
+
+    let dataframe = grouped
+        .count()
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(dataframe)))
+}
+
+fn grouped_dataframe_mean(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::GroupedDataFrame(grouped) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("mean", &args, 1)?;
+
+    let Value::Str(column) = &args[0] else {
+        return Err(Error::new(
+            ErrorKind::Type,
+            format!("mean() expects Str, got {}", args[0].type_name()),
+            None,
+        ));
+    };
+
+    let dataframe = grouped
+        .mean(column.as_str())
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(dataframe)))
+}
+
+fn grouped_dataframe_sum(
+    _host: &mut dyn ExtensionHost,
+    receiver: Value,
+    args: Vec<Value>,
+    _names: &[Option<String>],
+) -> Result<Value> {
+    let Value::GroupedDataFrame(grouped) = receiver else {
+        unreachable!();
+    };
+
+    expect_arity("sum", &args, 1)?;
+
+    let Value::Str(column) = &args[0] else {
+        return Err(Error::new(
+            ErrorKind::Type,
+            format!("sum() expects Str, got {}", args[0].type_name()),
+            None,
+        ));
+    };
+
+    let dataframe = grouped
+        .sum(column.as_str())
+        .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
+
+    Ok(Value::DataFrame(Rc::new(dataframe)))
 }
 
 //============================

@@ -2952,3 +2952,92 @@ fn method_call_and_function_call_share_call_path() {
         60,
     );
 }
+
+#[test]
+fn vm_pipeline_wildcard_lambda() {
+    assert_list(
+        r#"
+        (1..5)
+            .map(|_| 42)
+            .collect()
+        "#,
+        &[42, 42, 42, 42],
+    );
+}
+
+#[test]
+fn vm_pipeline_tuple_lambda() {
+    assert_list(
+        r#"
+        [(1, 2), (3, 4)]
+            .map(|(x, y)| x + y)
+            .collect()
+        "#,
+        &[3, 7],
+    );
+}
+
+#[test]
+fn vm_logical_and() {
+    assert_bool(
+        r#"
+        true and true
+        "#,
+        true,
+    );
+
+    assert_bool(
+        r#"
+        true and false
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        false and true
+        "#,
+        false,
+    );
+}
+
+#[test]
+fn vm_logical_or() {
+    assert_bool(
+        r#"
+        false or false
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        false or true
+        "#,
+        true,
+    );
+
+    assert_bool(
+        r#"
+        true or false
+        "#,
+        true,
+    );
+}
+
+#[test]
+fn vm_logical_not() {
+    assert_bool(
+        r#"
+        not true
+        "#,
+        false,
+    );
+
+    assert_bool(
+        r#"
+        not false
+        "#,
+        true,
+    );
+}

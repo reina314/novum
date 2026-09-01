@@ -38,6 +38,9 @@ pub fn extension_registry() -> ExtensionRegistry {
 
     math::register_extensions(&mut registry);
     stats::register_extensions(&mut registry);
+    linalg::register_extensions(&mut registry);
+    fs::register_extensions(&mut registry);
+    process::register_extensions(&mut registry);
 
     registry
 }

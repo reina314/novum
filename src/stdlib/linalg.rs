@@ -1,31 +1,89 @@
-use crate::runtime::{List, Matrix, Module, ModuleRef, Value};
+use crate::runtime::{ExtensionRegistry, List, Matrix, Module, ModuleRef, ReceiverKind, Value};
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+struct FunctionSpec {
+    name: &'static str,
+    function: fn(Vec<Value>) -> Result<Value, String>,
+    receiver: Option<ReceiverKind>,
+}
+
+fn function_specs() -> &'static [FunctionSpec] {
+    &[
+        FunctionSpec {
+            name: "vector",
+            function: vector,
+            receiver: Some(ReceiverKind::List),
+        },
+        FunctionSpec {
+            name: "matrix",
+            function: matrix,
+            receiver: Some(ReceiverKind::List),
+        },
+        FunctionSpec {
+            name: "transpose",
+            function: transpose,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "det",
+            function: det,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "inverse",
+            function: inverse,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "solve",
+            function: solve,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "solve_lstsq",
+            function: solve_lstsq,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "shape",
+            function: shape,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "rows",
+            function: rows,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "cols",
+            function: cols,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+        FunctionSpec {
+            name: "linear_regression",
+            function: linear_regression,
+            receiver: Some(ReceiverKind::Matrix),
+        },
+    ]
+}
+
+pub fn register_extensions(registry: &mut ExtensionRegistry) {
+    for spec in function_specs() {
+        let Some(receiver) = spec.receiver else {
+            continue;
+        };
+
+        registry.register(receiver, spec.name, Value::Builtin(spec.function));
+    }
+}
 
 pub fn module() -> ModuleRef {
     let mut module = Module::new("linalg");
 
-    module.set_exported("vector", Value::Builtin(vector));
-
-    module.set_exported("matrix", Value::Builtin(matrix));
-
-    module.set_exported("transpose", Value::Builtin(transpose));
-
-    module.set_exported("det", Value::Builtin(det));
-
-    module.set_exported("inverse", Value::Builtin(inverse));
-
-    module.set_exported("solve", Value::Builtin(solve));
-
-    module.set_exported("solve_lstsq", Value::Builtin(solve_lstsq));
-
-    module.set_exported("shape", Value::Builtin(shape));
-
-    module.set_exported("rows", Value::Builtin(rows));
-
-    module.set_exported("cols", Value::Builtin(cols));
-
-    module.set_exported("linear_regression", Value::Builtin(linear_regression));
+    for spec in function_specs() {
+        module.set_exported(spec.name, Value::Builtin(spec.function));
+    }
 
     Rc::new(RefCell::new(module))
 }

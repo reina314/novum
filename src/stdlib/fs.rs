@@ -1,30 +1,94 @@
 use crate::{
-    runtime::{List, Module, ModuleRef, Value},
+    runtime::{ExtensionRegistry, List, Module, ModuleRef, ReceiverKind, Value},
     stdlib::{result_err, result_ok},
 };
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+#[derive(Clone, Copy)]
+enum ReceiverSpec {
+    None,
+    StrOrPath,
+}
+
+struct FunctionSpec {
+    name: &'static str,
+    function: fn(Vec<Value>) -> Result<Value, String>,
+    receiver: ReceiverSpec,
+}
+
+fn function_specs() -> &'static [FunctionSpec] {
+    &[
+        FunctionSpec {
+            name: "read",
+            function: read,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "write",
+            function: write,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "append",
+            function: append,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "exists",
+            function: exists,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "remove",
+            function: remove,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "mkdir",
+            function: mkdir,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "rename",
+            function: rename,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "copy",
+            function: copy,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+        FunctionSpec {
+            name: "list_dir",
+            function: list_dir,
+            receiver: ReceiverSpec::StrOrPath,
+        },
+    ]
+}
+
+pub fn register_extensions(registry: &mut ExtensionRegistry) {
+    for spec in function_specs() {
+        match spec.receiver {
+            ReceiverSpec::None => {},
+
+            ReceiverSpec::StrOrPath => {
+                registry.register(ReceiverKind::Str, spec.name, Value::Builtin(spec.function));
+
+                if spec.name != "exists" {
+                    registry.register(ReceiverKind::Path, spec.name, Value::Builtin(spec.function));
+                }
+            },
+        }
+    }
+}
+
 pub fn module() -> ModuleRef {
     let mut module = Module::new("fs");
 
-    module.set_exported("read", Value::Builtin(read));
-
-    module.set_exported("write", Value::Builtin(write));
-
-    module.set_exported("append", Value::Builtin(append));
-
-    module.set_exported("exists", Value::Builtin(exists));
-
-    module.set_exported("remove", Value::Builtin(remove));
-
-    module.set_exported("mkdir", Value::Builtin(mkdir));
-
-    module.set_exported("rename", Value::Builtin(rename));
-
-    module.set_exported("copy", Value::Builtin(copy));
-
-    module.set_exported("list_dir", Value::Builtin(list_dir));
+    for spec in function_specs() {
+        module.set_exported(spec.name, Value::Builtin(spec.function));
+    }
 
     Rc::new(RefCell::new(module))
 }

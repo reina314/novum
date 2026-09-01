@@ -1,22 +1,68 @@
 use std::{cell::RefCell, collections::HashMap, process::Command, rc::Rc};
 
 use crate::{
-    runtime::{List, Module, ModuleRef, PathValue, Value},
+    runtime::{ExtensionRegistry, List, Module, ModuleRef, PathValue, ReceiverKind, Value},
     stdlib::{option_none, option_some, result_err, result_ok},
 };
+
+#[derive(Clone, Copy)]
+enum ReceiverSpec {
+    None,
+    Str,
+}
+
+struct FunctionSpec {
+    name: &'static str,
+    function: fn(Vec<Value>) -> Result<Value, String>,
+    receiver: ReceiverSpec,
+}
+
+fn function_specs() -> &'static [FunctionSpec] {
+    &[
+        FunctionSpec {
+            name: "args",
+            function: args,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "env",
+            function: env,
+            receiver: ReceiverSpec::Str,
+        },
+        FunctionSpec {
+            name: "cwd",
+            function: cwd,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "set_env",
+            function: set_env,
+            receiver: ReceiverSpec::Str,
+        },
+        FunctionSpec {
+            name: "run",
+            function: run,
+            receiver: ReceiverSpec::Str,
+        },
+    ]
+}
+
+pub fn register_extensions(registry: &mut ExtensionRegistry) {
+    for spec in function_specs() {
+        let ReceiverSpec::Str = spec.receiver else {
+            continue;
+        };
+
+        registry.register(ReceiverKind::Str, spec.name, Value::Builtin(spec.function));
+    }
+}
 
 pub fn module() -> ModuleRef {
     let mut module = Module::new("process");
 
-    module.set_exported("args", Value::Builtin(args));
-
-    module.set_exported("env", Value::Builtin(env));
-
-    module.set_exported("cwd", Value::Builtin(cwd));
-
-    module.set_exported("set_env", Value::Builtin(set_env));
-
-    module.set_exported("run", Value::Builtin(run));
+    for spec in function_specs() {
+        module.set_exported(spec.name, Value::Builtin(spec.function));
+    }
 
     Rc::new(RefCell::new(module))
 }

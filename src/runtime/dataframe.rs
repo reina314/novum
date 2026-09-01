@@ -385,6 +385,16 @@ impl DataFrame {
         Self::from_series(columns)
     }
 
+    pub fn tail(&self, n: usize) -> Result<Self, String> {
+        let count = n.min(self.nrows);
+
+        let start = self.nrows - count;
+
+        let indices = (start..self.nrows).collect::<Vec<_>>();
+
+        self.take_rows(&indices)
+    }
+
     pub fn crosstab(&self, row_column: &str, column_column: &str) -> Result<Self, String> {
         let row_series = self
             .column(row_column)

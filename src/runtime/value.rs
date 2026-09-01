@@ -1,23 +1,7 @@
 use super::{
-    ClassRef,
-    ClosureRef,
-    DataFrameRef,
-    EnumConstructor,
-    EnumRef,
-    EnumValueRef,
-    FunctionRef,
-    IteratorRef,
-    MatrixRef,
-    // GroupedDataFrameRef,
-    ModuleRef,
-    ObjectRef,
-    PathRef,
-    ReceiverKind,
-    SeriesRef,
-    SetRef,
-    StructTypeRef,
-    StructValueRef,
-    VectorRef,
+    ClassRef, ClosureRef, DataFrameRef, EnumConstructor, EnumRef, EnumValueRef, FunctionRef,
+    GroupedDataFrameRef, IteratorRef, MatrixRef, ModuleRef, ObjectRef, PathRef, ReceiverKind,
+    SeriesRef, SetRef, StructTypeRef, StructValueRef, VectorRef,
 };
 
 use std::{
@@ -155,7 +139,7 @@ pub enum Value {
 
     Series(SeriesRef),
     DataFrame(DataFrameRef),
-    // GroupedDataFrame(GroupedDataFrameRef),
+    GroupedDataFrame(GroupedDataFrameRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -199,7 +183,7 @@ impl Value {
 
             Self::Series(_) => "Series",
             Self::DataFrame(_) => "DataFrame",
-            // Self::GroupedDataFrame(_) => "GroupedDataFrame",
+            Self::GroupedDataFrame(_) => "GroupedDataFrame",
             Self::Module(_) => "Module",
 
             Self::Enum(_) => "Enum",
@@ -245,6 +229,8 @@ impl Value {
             Self::Series(_) => ReceiverKind::Series,
 
             Self::DataFrame(_) => ReceiverKind::DataFrame,
+
+            Self::GroupedDataFrame(_) => ReceiverKind::GroupedDataFrame,
 
             Self::Iterator(_) => ReceiverKind::Iterator,
 
@@ -499,7 +485,8 @@ impl fmt::Debug for Value {
 
             Self::DataFrame(df) => write!(f, "{:?}", df),
 
-            // Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
+            Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {:?}>", grouped),
+
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Class(class) => write!(f, "<class {}>", class.name()),
