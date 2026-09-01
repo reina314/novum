@@ -101,6 +101,16 @@ fn function_specs() -> &'static [FunctionSpec] {
             receiver: Some(ReceiverKind::Series),
         },
         FunctionSpec {
+            name: "cohens_d",
+            function: cohens_d,
+            receiver: None,
+        },
+        FunctionSpec {
+            name: "hedges_g",
+            function: hedges_g,
+            receiver: None,
+        },
+        FunctionSpec {
             name: "mann_whitney",
             function: mann_whitney,
             receiver: None,
@@ -936,19 +946,137 @@ fn paired_effect_size(differences: &[f64]) -> Result<f64, String> {
     Ok(mean / std)
 }
 
-fn welch_effect_size(
+fn paired_effect_size_confidence_interval(
+    d: f64,
+    n: usize,
+    confidence: f64,
+) -> Result<(f64, f64), String> {
+    if n < 2 {
+        return Err("paired effect size confidence interval requires at least 2 pairs".into());
+    }
+
+    let se = (1.0 / n as f64 + d.powi(2) / (2.0 * n as f64)).sqrt();
+
+    let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
+
+    let alpha = 1.0 - confidence;
+
+    let critical = normal.inverse_cdf(1.0 - alpha / 2.0);
+
+    let margin = critical * se;
+
+    Ok((d - margin, d + margin))
+}
+
+fn cohens_d_independent(
     mean_x: f64,
     mean_y: f64,
     variance_x: f64,
     variance_y: f64,
+    nx: usize,
+    ny: usize,
 ) -> Result<f64, String> {
-    let reference_sd = ((variance_x + variance_y) / 2.0).sqrt();
-
-    if !reference_sd.is_finite() || reference_sd == 0.0 {
-        return Err("Welch effect size standard deviation is zero or non-finite".into());
+    if nx < 2 || ny < 2 {
+        return Err("Cohen's d requires at least 2 observations per group".into());
     }
 
-    Ok((mean_x - mean_y) / reference_sd)
+    if !mean_x.is_finite()
+        || !mean_y.is_finite()
+        || !variance_x.is_finite()
+        || !variance_y.is_finite()
+        || variance_x < 0.0
+        || variance_y < 0.0
+    {
+        return Err("Cohen's d received invalid statistics".into());
+    }
+
+    let numerator = ((nx - 1) as f64) * variance_x + ((ny - 1) as f64) * variance_y;
+
+    let denominator = (nx + ny - 2) as f64;
+
+    let pooled_variance = numerator / denominator;
+
+    if pooled_variance <= 0.0 || !pooled_variance.is_finite() {
+        return Err("Cohen's d pooled standard deviation is zero or non-finite".into());
+    }
+
+    let pooled_std = pooled_variance.sqrt();
+
+    Ok((mean_x - mean_y) / pooled_std)
+}
+
+fn hedges_g_from_d(d: f64, df: f64) -> Result<f64, String> {
+    if !d.is_finite() || !df.is_finite() || df <= 0.0 {
+        return Err("Hedges' g received invalid parameters".into());
+    }
+
+    let correction = 1.0 - 3.0 / (4.0 * df - 1.0);
+
+    Ok(correction * d)
+}
+
+fn cohens_d_se(d: f64, nx: usize, ny: usize) -> Result<f64, String> {
+    if nx < 2 || ny < 2 {
+        return Err("Cohen's d standard error requires at least 2 observations per group".into());
+    }
+
+    if !d.is_finite() {
+        return Err("Cohen's d is non-finite".into());
+    }
+
+    let total = (nx + ny) as f64;
+
+    let sample_term = (nx + ny) as f64 / (nx as f64 * ny as f64);
+
+    let effect_term = d.powi(2) / (2.0 * total);
+
+    Ok((sample_term + effect_term).sqrt())
+}
+
+fn cohens_d_confidence_interval(d: f64, se: f64, confidence: f64) -> Result<(f64, f64), String> {
+    if !d.is_finite() || !se.is_finite() || se < 0.0 {
+        return Err("invalid Cohen's d confidence interval parameters".into());
+    }
+
+    if !confidence.is_finite() || !(0.0 < confidence && confidence < 1.0) {
+        return Err("confidence level must be in (0, 1)".into());
+    }
+
+    let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
+
+    let alpha = 1.0 - confidence;
+
+    let critical = normal.inverse_cdf(1.0 - alpha / 2.0);
+
+    let margin = critical * se;
+
+    Ok((d - margin, d + margin))
+}
+
+fn standardized_mean_difference_result(
+    d: f64,
+    confidence: f64,
+    nx: usize,
+    ny: usize,
+) -> Result<(Value, Value), String> {
+    let se = cohens_d_se(d, nx, ny)?;
+
+    let (lower, upper) = cohens_d_confidence_interval(d, se, confidence)?;
+
+    let df = (nx + ny - 2) as f64;
+
+    let g = hedges_g_from_d(d, df)?;
+
+    let correction = if d == 0.0 { 1.0 } else { g / d };
+
+    let g_se = se * correction.abs();
+
+    let (g_lower, g_upper) = cohens_d_confidence_interval(g, g_se, confidence)?;
+
+    Ok((
+        confidence_interval_dict(lower, upper, confidence),
+        confidence_interval_dict(g_lower, g_upper, confidence),
+    ))
 }
 
 fn welch_confidence_interval(
@@ -1024,6 +1152,9 @@ pub fn paired_ttest(args: Vec<Value>) -> Result<Value, String> {
      */
     let effect_size = paired_effect_size(&differences)?;
 
+    let (effect_lower, effect_upper) =
+        paired_effect_size_confidence_interval(effect_size, differences.len(), confidence)?;
+
     let Value::Dict(dict) = result else {
         unreachable!();
     };
@@ -1034,6 +1165,11 @@ pub fn paired_ttest(args: Vec<Value>) -> Result<Value, String> {
     dict.borrow_mut().insert(
         "effect_size_name".into(),
         Value::Str(Rc::new("Cohen's dz".to_string())),
+    );
+
+    dict.borrow_mut().insert(
+        "effect_size_ci".into(),
+        confidence_interval_dict(effect_lower, effect_upper, confidence),
     );
 
     Ok(Value::Dict(dict))
@@ -1106,7 +1242,12 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
         confidence,
     )?;
 
-    let effect_size = welch_effect_size(mean_x, mean_y, var_x, var_y)?;
+    let effect_size = cohens_d_independent(mean_x, mean_y, var_x, var_y, x.len(), y.len())?;
+
+    let (d_confidence_interval, g_confidence_interval) =
+        standardized_mean_difference_result(effect_size, confidence, x.len(), y.len())?;
+
+    let hedges_g = hedges_g_from_d(effect_size, (x.len() + y.len() - 2) as f64)?;
 
     Ok(result_dict(vec![
         ("statistic", Value::Float(t)),
@@ -1116,14 +1257,80 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
         ("effect_size", Value::Float(effect_size)),
         (
             "effect_size_name",
-            Value::Str(Rc::new("Standardized mean difference".to_string())),
+            Value::Str(Rc::new("Cohen's d".to_string())),
         ),
+        ("effect_size_ci", d_confidence_interval),
+        ("hedges_g", Value::Float(hedges_g)),
+        ("hedges_g_ci", g_confidence_interval),
         (
             "confidence_interval",
             confidence_interval_dict(ci_lower, ci_upper, confidence),
         ),
         ("method", Value::Str(Rc::new("Welch's t-test".to_string()))),
     ]))
+}
+
+//=========================
+// effect size
+//=========================
+pub fn cohens_d(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("cohens_d() expects exactly 2 Series".into());
+    }
+
+    let x = numeric_series_values(&args[0])?;
+
+    let y = numeric_series_values(&args[1])?;
+
+    if x.len() < 2 || y.len() < 2 {
+        return Err("cohens_d() requires at least 2 observations per group".into());
+    }
+
+    let nx = x.len() as f64;
+
+    let ny = y.len() as f64;
+
+    let mean_x = x.iter().sum::<f64>() / nx;
+
+    let mean_y = y.iter().sum::<f64>() / ny;
+
+    let variance_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
+
+    let variance_y = y.iter().map(|value| (*value - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
+
+    let d = cohens_d_independent(mean_x, mean_y, variance_x, variance_y, x.len(), y.len())?;
+
+    Ok(Value::Float(d))
+}
+
+pub fn hedges_g(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("hedges_g() expects exactly 2 Series".into());
+    }
+
+    let x = numeric_series_values(&args[0])?;
+
+    let y = numeric_series_values(&args[1])?;
+
+    if x.len() < 2 || y.len() < 2 {
+        return Err("hedges_g() requires at least 2 observations per group".into());
+    }
+
+    let nx = x.len() as f64;
+
+    let ny = y.len() as f64;
+
+    let mean_x = x.iter().sum::<f64>() / nx;
+
+    let mean_y = y.iter().sum::<f64>() / ny;
+
+    let variance_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
+
+    let variance_y = y.iter().map(|value| (*value - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
+
+    let d = cohens_d_independent(mean_x, mean_y, variance_x, variance_y, x.len(), y.len())?;
+
+    hedges_g_from_d(d, (x.len() + y.len() - 2) as f64).map(Value::Float)
 }
 
 //=========================
@@ -1628,7 +1835,11 @@ fn anova_result(
             "effect_size_name",
             Value::Str(Rc::new("Eta squared".to_string())),
         ),
-        ("omega_squared", Value::Float(omega2)),
+        ("alternative_effect_size", Value::Float(omega2)),
+        (
+            "alternative_effect_size_name",
+            Value::Str(Rc::new("Omega squared".to_string())),
+        ),
         ("confidence_interval", Value::Null),
         ("method", Value::Str(Rc::new("One-way ANOVA".to_string()))),
     ]))
