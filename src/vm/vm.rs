@@ -2022,11 +2022,13 @@ impl Vm {
                 Ok(Value::List(List::new(values)))
             },
 
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("DataFrame has no property '{}'", name),
-                None,
-            )),
+            _ => df.column(name).map(Value::Series).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Name,
+                    format!("unknown DataFrame column '{}'", name),
+                    None,
+                )
+            }),
         }
     }
 
