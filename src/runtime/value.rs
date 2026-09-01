@@ -8,7 +8,7 @@ use super::{
     FunctionRef,
     IteratorRef,
     MatrixRef,
-    // GroupedDataFrameRef,
+    GroupedDataFrameRef,
     ModuleRef,
     ObjectRef,
     PathRef,
@@ -155,7 +155,7 @@ pub enum Value {
 
     Series(SeriesRef),
     DataFrame(DataFrameRef),
-    // GroupedDataFrame(GroupedDataFrameRef),
+    GroupedDataFrame(GroupedDataFrameRef),
     Module(ModuleRef),
 
     Enum(EnumRef),
@@ -199,7 +199,7 @@ impl Value {
 
             Self::Series(_) => "Series",
             Self::DataFrame(_) => "DataFrame",
-            // Self::GroupedDataFrame(_) => "GroupedDataFrame",
+            Self::GroupedDataFrame(_) => "GroupedDataFrame",
             Self::Module(_) => "Module",
 
             Self::Enum(_) => "Enum",
@@ -245,6 +245,8 @@ impl Value {
             Self::Series(_) => ReceiverKind::Series,
 
             Self::DataFrame(_) => ReceiverKind::DataFrame,
+
+            Self::GroupedDataFrame(_) => ReceiverKind::GroupedDataFrame,
 
             Self::Iterator(_) => ReceiverKind::Iterator,
 
@@ -499,7 +501,8 @@ impl fmt::Debug for Value {
 
             Self::DataFrame(df) => write!(f, "{:?}", df),
 
-            // Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {}>", grouped.group_column()),
+            Self::GroupedDataFrame(grouped) => write!(f, "<grouped dataframe: {:?}>", grouped),
+
             Self::Object(v) => write!(f, "{:?}", v.borrow()),
 
             Self::Class(class) => write!(f, "<class {}>", class.name()),

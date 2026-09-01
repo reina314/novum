@@ -5,7 +5,7 @@ pub mod operator;
 pub mod series;
 pub mod set;
 pub mod vector;
-// pub mod grouped_dataframe;
+pub mod grouped_dataframe;
 pub mod class;
 pub mod r#enum;
 pub mod extension;
@@ -26,10 +26,10 @@ pub use iterator::{IterResult, IteratorObj, IteratorRef};
 pub use matrix::{Matrix, MatrixRef};
 pub use series::{Series, SeriesRef};
 pub use vector::{Vector, VectorRef};
-// pub use grouped_dataframe::{
-//     GroupedDataFrame,
-//     GroupedDataFrameRef,
-// };
+pub use grouped_dataframe::{
+    GroupedDataFrame,
+    GroupedDataFrameRef,
+};
 pub use class::{Class, ClassRef, FieldDefinition};
 pub use extension::{
     ExtensionHost, ExtensionRegistry, ExtensionTarget, NativeExtensionFn, ReceiverKind,

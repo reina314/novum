@@ -64,6 +64,7 @@ pub enum ReceiverKind {
 
     Series,
     DataFrame,
+    GroupedDataFrame,
 
     Iterator,
     Range,

@@ -17,13 +17,13 @@ pub type GroupedDataFrameRef = Rc<GroupedDataFrame>;
 #[derive(Clone)]
 pub struct GroupedDataFrame {
     dataframe: DataFrameRef,
-    group_column: String,
+    group_columns: Vec<String>,
     groups: Vec<Group>,
 }
 
 #[derive(Clone)]
 pub struct Group {
-    key: Value,
+    key: Vec<Value>,
     rows: Vec<usize>,
 }
 
@@ -543,6 +543,7 @@ impl GroupedDataFrame {
     ) -> usize {
         self.groups.len()
     }
+
 }
 
 enum NumericAggregate {
