@@ -23,7 +23,7 @@ See [Builtins](builtin.md).
 
 ## Standard modules
 
-The `vm` branch currently exposes these modules:
+Novum provides the following standard modules:
 
 | Module | Purpose |
 |---|---|
@@ -33,6 +33,7 @@ The `vm` branch currently exposes these modules:
 | [`fs`](fs.md) | File and directory operations |
 | [`process`](process.md) | Environment variables, command-line arguments, and child processes |
 | [`linalg`](linalg.md) | Vectors, matrices, linear systems, and linear regression |
+| [`stats`](stats.md) | Descriptive statistics and statistical tests |
 
 Import a module with:
 

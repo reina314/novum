@@ -1,6 +1,6 @@
 # Novum Documentation
 
-This directory contains the user-facing documentation for the `vm` branch of Novum.
+This directory contains the user-facing documentation for Novum.
 
 The site is organized into:
 
@@ -8,4 +8,4 @@ The site is organized into:
 - `stdlib/` — public standard-library API reference
 - `reference/` — concise language reference
 
-Implementation details are intentionally excluded from this documentation. The authoritative behavior is the implementation in the corresponding `vm` branch.
+Implementation details are intentionally excluded from this documentation.
