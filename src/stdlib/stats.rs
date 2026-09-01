@@ -184,6 +184,25 @@ fn series_values(value: &Value) -> Result<Vec<f64>, String> {
     }
 }
 
+fn expect_series_value(
+    value: &Value,
+    function: &str,
+    index: usize,
+) -> Result<SeriesRef, String> {
+    match value {
+        Value::Series(series) => {
+            Ok(series.clone())
+        }
+
+        other => Err(format!(
+            "{}() argument {} must be Series, got {}",
+            function,
+            index,
+            other.type_name()
+        )),
+    }
+}
+
 fn result_dict(fields: Vec<(&str, Value)>) -> Value {
     let map = fields
         .into_iter()
@@ -193,6 +212,26 @@ fn result_dict(fields: Vec<(&str, Value)>) -> Value {
     Value::Dict(Rc::new(RefCell::new(map)))
 }
 
+fn confidence_interval_dict(
+    lower: f64,
+    upper: f64,
+    level: f64,
+) -> Value {
+    result_dict(vec![
+        (
+            "lower",
+            Value::Float(lower),
+        ),
+        (
+            "upper",
+            Value::Float(upper),
+        ),
+        (
+            "level",
+            Value::Float(level),
+        ),
+    ])
+}
 
 
 //=========================
@@ -697,6 +736,7 @@ fn one_sample_ttest_values(
     values: &[f64],
     mu0: f64,
     method: &str,
+    confidence: f64,
 ) -> Result<Value, String> {
     if !mu0.is_finite() {
         return Err(
@@ -712,7 +752,9 @@ fn one_sample_ttest_values(
         );
     }
 
-    if values.iter().any(|value| !value.is_finite()) {
+    if values.iter().any(
+        |value| !value.is_finite()
+    ) {
         return Err(
             "t-test data contains non-finite value"
                 .into()
@@ -722,18 +764,21 @@ fn one_sample_ttest_values(
     let n =
         values.len();
 
+    let n_f =
+        n as f64;
+
     let mean =
         values.iter().sum::<f64>()
-            / n as f64;
+            / n_f;
 
     let variance =
         values
             .iter()
             .map(|value| {
-                let diff =
+                let difference =
                     *value - mean;
 
-                diff * diff
+                difference * difference
             })
             .sum::<f64>()
             / (n - 1) as f64;
@@ -755,9 +800,14 @@ fn one_sample_ttest_values(
         );
     }
 
+    let estimate =
+        mean - mu0;
+
+    let standard_error =
+        std / n_f.sqrt();
+
     let t =
-        (mean - mu0)
-            / (std / (n as f64).sqrt());
+        estimate / standard_error;
 
     let df =
         (n - 1) as f64;
@@ -767,6 +817,20 @@ fn one_sample_ttest_values(
             t,
             df,
         )?;
+
+    let (
+        ci_lower,
+        ci_upper,
+    ) =
+        t_confidence_interval(
+            estimate,
+            standard_error,
+            df,
+            confidence,
+        )?;
+
+    let effect_size =
+        estimate / std;
 
     Ok(result_dict(vec![
         (
@@ -780,6 +844,31 @@ fn one_sample_ttest_values(
         (
             "df",
             Value::Float(df),
+        ),
+        (
+            "estimate",
+            Value::Float(estimate),
+        ),
+        (
+            "effect_size",
+            Value::Float(effect_size),
+        ),
+        (
+            "effect_size_name",
+            Value::Str(
+                Rc::new(
+                    "Cohen's d"
+                        .to_string()
+                )
+            ),
+        ),
+        (
+            "confidence_interval",
+            confidence_interval_dict(
+                ci_lower,
+                ci_upper,
+                confidence,
+            ),
         ),
         (
             "method",
@@ -925,82 +1014,262 @@ fn paired_numeric_values(
     ))
 }
 
+fn t_confidence_interval(
+    estimate: f64,
+    standard_error: f64,
+    df: f64,
+    confidence: f64,
+) -> Result<(f64, f64), String> {
+    if !estimate.is_finite()
+        || !standard_error.is_finite()
+        || standard_error < 0.0
+        || !df.is_finite()
+        || df <= 0.0
+    {
+        return Err(
+            "invalid parameters for t confidence interval"
+                .into()
+        );
+    }
+
+    if !confidence.is_finite()
+        || !(0.0 < confidence && confidence < 1.0)
+    {
+        return Err(
+            "confidence level must be in (0, 1)"
+                .into()
+        );
+    }
+
+    let distribution =
+        StudentsT::new(
+            0.0,
+            1.0,
+            df,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let alpha =
+        1.0 - confidence;
+
+    let critical =
+        distribution.inverse_cdf(
+            1.0 - alpha / 2.0
+        );
+
+    let margin =
+        critical * standard_error;
+
+    Ok((
+        estimate - margin,
+        estimate + margin,
+    ))
+}
+
+fn confidence_level_from_args(
+    args: &[Value],
+    index: usize,
+    function: &str,
+) -> Result<f64, String> {
+    let value =
+        match args.get(index) {
+            Some(Value::Int(value)) => {
+                *value as f64
+            }
+
+            Some(Value::Float(value)) => {
+                *value
+            }
+
+            Some(other) => {
+                return Err(format!(
+                    "{}() confidence level must be numeric, got {}",
+                    function,
+                    other.type_name()
+                ));
+            }
+
+            None => {
+                return Ok(0.95);
+            }
+        };
+
+    if !value.is_finite()
+        || !(0.0 < value && value < 1.0)
+    {
+        return Err(format!(
+            "{}() confidence level must be in (0, 1)",
+            function
+        ));
+    }
+
+    Ok(value)
+}
+
+fn paired_effect_size(
+    differences: &[f64],
+) -> Result<f64, String> {
+    if differences.len() < 2 {
+        return Err(
+            "paired effect size requires at least 2 pairs"
+                .into()
+        );
+    }
+
+    let mean =
+        differences.iter()
+            .sum::<f64>()
+            / differences.len() as f64;
+
+    let variance =
+        sample_variance(differences)
+            .ok_or_else(|| {
+                "paired effect size variance is undefined"
+                    .to_string()
+            })?;
+
+    let std =
+        variance.sqrt();
+
+    if std == 0.0 {
+        return Err(
+            "paired effect size standard deviation is zero"
+                .into()
+        );
+    }
+
+    Ok(mean / std)
+}
+
+fn welch_effect_size(
+    mean_x: f64,
+    mean_y: f64,
+    variance_x: f64,
+    variance_y: f64,
+) -> Result<f64, String> {
+    let reference_sd =
+        ((variance_x + variance_y) / 2.0)
+            .sqrt();
+
+    if !reference_sd.is_finite()
+        || reference_sd == 0.0
+    {
+        return Err(
+            "Welch effect size standard deviation is zero or non-finite"
+                .into()
+        );
+    }
+
+    Ok(
+        (mean_x - mean_y)
+            / reference_sd
+    )
+}
+
+fn welch_confidence_interval(
+    mean_x: f64,
+    mean_y: f64,
+    variance_x: f64,
+    variance_y: f64,
+    nx: usize,
+    ny: usize,
+    df: f64,
+    confidence: f64,
+) -> Result<(f64, f64), String> {
+    let estimate =
+        mean_x - mean_y;
+
+    let standard_error =
+        (
+            variance_x / nx as f64
+                + variance_y / ny as f64
+        )
+        .sqrt();
+
+    t_confidence_interval(
+        estimate,
+        standard_error,
+        df,
+        confidence,
+    )
+}
+
 pub fn ttest(
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if args.len() != 2 {
+    if !(2..=3).contains(&args.len()) {
         return Err(
-            "ttest() expects Series and mu0"
+            "ttest() expects Series, mu0, and optional confidence level"
                 .into()
         );
     }
 
     let values =
-        numeric_series_values(&args[0])?;
+        numeric_series_values(
+            &args[0]
+        )?;
 
-    let mu0 = match &args[1] {
-        Value::Int(value) => {
-            *value as f64
-        }
+    let mu0 =
+        match &args[1] {
+            Value::Int(value) => {
+                *value as f64
+            }
 
-        Value::Float(value) => {
-            *value
-        }
+            Value::Float(value) => {
+                *value
+            }
 
-        other => {
-            return Err(format!(
-                "ttest() mu0 must be numeric, got {}",
-                other.type_name()
-            ));
-        }
-    };
+            other => {
+                return Err(format!(
+                    "ttest() mu0 must be numeric, got {}",
+                    other.type_name()
+                ));
+            }
+        };
+
+    let confidence =
+        confidence_level_from_args(
+            &args,
+            2,
+            "ttest",
+        )?;
 
     one_sample_ttest_values(
         &values,
         mu0,
         "One-sample t-test",
+        confidence,
     )
 }
 
 pub fn paired_ttest(
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if args.len() != 2 {
+    if !(2..=3).contains(&args.len()) {
         return Err(
-            "paired_ttest() expects exactly 2 Series"
+            "paired_ttest() expects 2 Series and optional confidence level"
                 .into()
         );
     }
 
     let first =
-        match &args[0] {
-            Value::Series(series) => {
-                series.clone()
-            }
-
-            other => {
-                return Err(format!(
-                    "paired_ttest() first argument must be Series, got {}",
-                    other.type_name()
-                ));
-            }
-        };
+        expect_series_value(
+            &args[0],
+            "paired_ttest",
+            0,
+        )?;
 
     let second =
-        match &args[1] {
-            Value::Series(series) => {
-                series.clone()
-            }
+        expect_series_value(
+            &args[1],
+            "paired_ttest",
+            1,
+        )?;
 
-            other => {
-                return Err(format!(
-                    "paired_ttest() second argument must be Series, got {}",
-                    other.type_name()
-                ));
-            }
-        };
-
-    let (first_values, second_values) =
+    let (
+        first_values,
+        second_values,
+    ) =
         paired_numeric_values(
             &first,
             &second,
@@ -1022,28 +1291,72 @@ pub fn paired_ttest(
             })
             .collect::<Vec<_>>();
 
-    one_sample_ttest_values(
-        &differences,
-        0.0,
-        "Paired t-test",
-    )
+    let confidence =
+        confidence_level_from_args(
+            &args,
+            2,
+            "paired_ttest",
+        )?;
+
+    let result =
+        one_sample_ttest_values(
+            &differences,
+            0.0,
+            "Paired t-test",
+            confidence,
+        )?;
+
+    /*
+     * Replace the generic one-sample Cohen's d
+     * with the paired-samples effect size d_z.
+     */
+    let effect_size =
+        paired_effect_size(
+            &differences
+        )?;
+
+    let Value::Dict(dict) =
+        result
+    else {
+        unreachable!();
+    };
+
+    dict.borrow_mut().insert(
+        "effect_size".into(),
+        Value::Float(effect_size),
+    );
+
+    dict.borrow_mut().insert(
+        "effect_size_name".into(),
+        Value::Str(
+            Rc::new(
+                "Cohen's dz".to_string()
+            )
+        ),
+    );
+
+    Ok(Value::Dict(dict))
 }
 
 pub fn welch(
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if args.len() != 2 {
+    if !(2..=3).contains(&args.len()) {
         return Err(
-            "welch() expects exactly 2 Series"
+            "welch() expects 2 Series and optional confidence level"
                 .into()
         );
     }
 
     let x =
-        numeric_series_values(&args[0])?;
+        numeric_series_values(
+            &args[0]
+        )?;
 
     let y =
-        numeric_series_values(&args[1])?;
+        numeric_series_values(
+            &args[1]
+        )?;
 
     if x.len() < 2
         || y.len() < 2
@@ -1054,14 +1367,25 @@ pub fn welch(
         );
     }
 
-    if x.iter().any(|v| !v.is_finite())
-        || y.iter().any(|v| !v.is_finite())
+    if x.iter().any(
+        |value| !value.is_finite()
+    )
+        || y.iter().any(
+            |value| !value.is_finite()
+        )
     {
         return Err(
             "welch() data contains non-finite value"
                 .into()
         );
     }
+
+    let confidence =
+        confidence_level_from_args(
+            &args,
+            2,
+            "welch",
+        )?;
 
     let nx =
         x.len() as f64;
@@ -1070,23 +1394,25 @@ pub fn welch(
         y.len() as f64;
 
     let mean_x =
-        x.iter().sum::<f64>() / nx;
+        x.iter().sum::<f64>()
+            / nx;
 
     let mean_y =
-        y.iter().sum::<f64>() / ny;
+        y.iter().sum::<f64>()
+            / ny;
 
     let var_x =
         x.iter()
-            .map(|v| {
-                (*v - mean_x).powi(2)
+            .map(|value| {
+                (*value - mean_x).powi(2)
             })
             .sum::<f64>()
             / (nx - 1.0);
 
     let var_y =
         y.iter()
-            .map(|v| {
-                (*v - mean_y).powi(2)
+            .map(|value| {
+                (*value - mean_y).powi(2)
             })
             .sum::<f64>()
             / (ny - 1.0);
@@ -1104,9 +1430,15 @@ pub fn welch(
         );
     }
 
+    let standard_error =
+        se2.sqrt();
+
+    let estimate =
+        mean_x - mean_y;
+
     let t =
-        (mean_x - mean_y)
-            / se2.sqrt();
+        estimate
+            / standard_error;
 
     let numerator =
         se2.powi(2);
@@ -1141,6 +1473,29 @@ pub fn welch(
             df,
         )?;
 
+    let (
+        ci_lower,
+        ci_upper,
+    ) =
+        welch_confidence_interval(
+            mean_x,
+            mean_y,
+            var_x,
+            var_y,
+            x.len(),
+            y.len(),
+            df,
+            confidence,
+        )?;
+
+    let effect_size =
+        welch_effect_size(
+            mean_x,
+            mean_y,
+            var_x,
+            var_y,
+        )?;
+
     Ok(result_dict(vec![
         (
             "statistic",
@@ -1153,6 +1508,31 @@ pub fn welch(
         (
             "df",
             Value::Float(df),
+        ),
+        (
+            "estimate",
+            Value::Float(estimate),
+        ),
+        (
+            "effect_size",
+            Value::Float(effect_size),
+        ),
+        (
+            "effect_size_name",
+            Value::Str(
+                Rc::new(
+                    "Standardized mean difference"
+                        .to_string()
+                )
+            ),
+        ),
+        (
+            "confidence_interval",
+            confidence_interval_dict(
+                ci_lower,
+                ci_upper,
+                confidence,
+            ),
         ),
         (
             "method",
