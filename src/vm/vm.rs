@@ -2,12 +2,12 @@ use crate::{
     error::{Error, ErrorKind, Result},
     runtime::{
         apply_binop, CallFrame, CellRef, Class, ClassRef, Closure, ClosureRef, DataFrameRef,
-        EnumConstructor, EnumRef, EnumValue, ExtensionRegistry, FieldDefinition, FunctionParameter, NativeExtensionFn,
-        FunctionProto, FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath, ExtensionHost,
-        ModuleRef, ObjectRef, RangeCursor, ReceiverKind, SeriesRef, StructTypeRef, StructValue,
-        UpvalueSpec, Value,
+        EnumConstructor, EnumRef, EnumValue, ExtensionHost, ExtensionRegistry, ExtensionTarget,
+        FieldDefinition, FunctionParameter, FunctionProto, FunctionRef, IterResult, IteratorObj,
+        IteratorRef, List, Module, ModulePath, ModuleRef, NativeExtensionFn, ObjectRef,
+        RangeCursor, ReceiverKind, SeriesRef, StructTypeRef, StructValue, UpvalueSpec, Value,
     },
-    stdlib::{decode_class_counts, option_none, option_some},
+    stdlib::decode_class_counts,
     syntax::BinOp,
 };
 
@@ -68,54 +68,36 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-    let mut extension_registry =
-        crate::stdlib::extension_registry();
+        let mut extension_registry = crate::stdlib::extension_registry();
 
-    crate::vm::native_extensions::
-        register_native_extensions(
-            &mut extension_registry
-        );
+        crate::vm::native_extensions::register_native_extensions(&mut extension_registry);
 
-    Self {
-        stack: Vec::with_capacity(256),
-        frames: Vec::with_capacity(32),
+        Self {
+            stack: Vec::with_capacity(256),
+            frames: Vec::with_capacity(32),
 
-        repl_locals: Vec::with_capacity(64),
-        repl_cells: Vec::with_capacity(64),
+            repl_locals: Vec::with_capacity(64),
+            repl_cells: Vec::with_capacity(64),
 
-        repl_module:
-            Rc::new(
-                RefCell::new(
-                    Module::new("<repl>")
-                )
+            repl_module: Rc::new(RefCell::new(Module::new("<repl>"))),
+
+            module_loader: ModuleLoader::new(
+                std::env::current_dir().expect("failed to get current directory"),
             ),
 
-        module_loader:
-            ModuleLoader::new(
-                std::env::current_dir()
-                    .expect(
-                        "failed to get current directory"
-                    ),
-            ),
+            modules: HashMap::new(),
 
-        modules:
-            HashMap::new(),
+            loading_modules: Vec::new(),
 
-        loading_modules:
-            Vec::new(),
+            stdlib_modules: HashMap::new(),
 
-        stdlib_modules:
-            HashMap::new(),
+            module_namespaces: HashMap::new(),
 
-        module_namespaces:
-            HashMap::new(),
+            extension_registry,
 
-        extension_registry,
-
-        call_target_cache:
-            HashMap::new(),
+            call_target_cache: HashMap::new(),
+        }
     }
-}
 
     #[inline]
     fn push(&mut self, value: Value) {
@@ -2048,63 +2030,29 @@ impl Vm {
         }
     }
 
-    fn resolve_method(
-    &self,
-    receiver: &Value,
-    name: &str,
-) -> Result<Option<CallTarget>> {
-    if let Value::Object(object) =
-        receiver
-    {
-        let class =
-            object.borrow().class();
+    fn resolve_method(&self, receiver: &Value, name: &str) -> Result<Option<CallTarget>> {
+        if let Value::Object(object) = receiver {
+            let class = object.borrow().class();
 
-        if let Some(method) =
-            class.method(name)
-        {
-            return Ok(
-                Some(
-                    CallTarget::Callable(
-                        Value::Closure(method)
-                    )
-                )
-            );
+            if let Some(method) = class.method(name) {
+                return Ok(Some(CallTarget::Callable(Value::Closure(method))));
+            }
         }
-    }
 
-    let receiver_kind =
-        receiver.receiver_kind();
+        let receiver_kind = receiver.receiver_kind();
 
-    let Some(target) =
-        self.extension_registry.get(
-            receiver_kind,
-            name,
-        )
-    else {
-        return Ok(None);
-    };
-
-    let target =
-        match target {
-            ExtensionTarget::Callable(
-                value
-            ) => {
-                CallTarget::Callable(
-                    value.clone()
-                )
-            }
-
-            ExtensionTarget::Native(
-                function
-            ) => {
-                CallTarget::Native(
-                    *function
-                )
-            }
+        let Some(target) = self.extension_registry.get(receiver_kind, name) else {
+            return Ok(None);
         };
 
-    Ok(Some(target))
-}
+        let target = match target {
+            ExtensionTarget::Callable(value) => CallTarget::Callable(value.clone()),
+
+            ExtensionTarget::Native(function) => CallTarget::Native(*function),
+        };
+
+        Ok(Some(target))
+    }
 
     fn resolve_namespace_method(
         &mut self,
@@ -4155,106 +4103,60 @@ impl Vm {
     /// Handles any type of method dispatches
     /// List, Struct, Object, ... etc
     fn invoke_method(
-    &mut self,
-    receiver: Value,
-    name: &str,
-    args: Vec<Value>,
-    names: &[Option<String>],
-) -> Result<Value> {
-    match receiver {
-        Value::Module(module) =>
-            self.invoke_module_member(
-                module,
-                name,
-                args,
-                names,
-            ),
+        &mut self,
+        receiver: Value,
+        name: &str,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        match receiver {
+            Value::Module(module) => self.invoke_module_member(module, name, args, names),
 
-        Value::Object(object) =>
-            self.invoke_object_method(
-                object,
-                name,
-                args,
-                names,
-            ),
+            Value::Object(object) => self.invoke_object_method(object, name, args, names),
 
-        Value::Enum(enum_def) =>
-            self.invoke_enum_constructor(
-                enum_def,
-                name,
-                args,
-            ),
+            Value::Enum(enum_def) => self.invoke_enum_constructor(enum_def, name, args),
 
-        other =>
-            Err(
-                Error::new(
-                    ErrorKind::Type,
-                    format!(
-                        "method '{}' is not supported for this value ({})",
-                        name,
-                        other.type_name(),
-                    ),
-                    None,
-                )
-            ),
+            other => Err(Error::new(
+                ErrorKind::Type,
+                format!(
+                    "method '{}' is not supported for this value ({})",
+                    name,
+                    other.type_name(),
+                ),
+                None,
+            )),
+        }
     }
-}
 
     fn invoke_call_target(
-    &mut self,
-    target: CallTarget,
-    receiver: Value,
-    name: &str,
-    args: Vec<Value>,
-    names: &[Option<String>],
-) -> Result<Value> {
-    match target {
-        CallTarget::Callable(value) => {
-            let mut call_args =
-                Vec::with_capacity(
-                    args.len() + 1
-                );
+        &mut self,
+        target: CallTarget,
+        receiver: Value,
+        name: &str,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        match target {
+            CallTarget::Callable(value) => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
 
-            let mut call_names =
-                Vec::with_capacity(
-                    names.len() + 1
-                );
+                let mut call_names = Vec::with_capacity(names.len() + 1);
 
-            call_args.push(receiver);
-            call_names.push(None);
+                call_args.push(receiver);
+                call_names.push(None);
 
-            call_args.extend(args);
+                call_args.extend(args);
 
-            call_names.extend(
-                names.iter().cloned()
-            );
+                call_names.extend(names.iter().cloned());
 
-            self.call_value(
-                value,
-                call_args,
-                &call_names,
-            )
-        }
+                self.call_value(value, call_args, &call_names)
+            },
 
-        CallTarget::Native(function) => {
-            function(
-                self,
-                receiver,
-                args,
-                names,
-            )
-        }
+            CallTarget::Native(function) => function(self, receiver, args, names),
 
-        CallTarget::Legacy => {
-            self.invoke_method(
-                receiver,
-                name,
-                args,
-                names,
-            )
+            CallTarget::Legacy => self.invoke_method(receiver, name, args, names),
         }
     }
-}
 
     fn invoke_module_member(
         &mut self,
@@ -4295,654 +4197,6 @@ impl Vm {
                 ),
                 None,
             )),
-        }
-    }
-
-    fn invoke_string_method(
-        &mut self,
-        string: Rc<String>,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        match name {
-            "chars" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let iterator = IteratorObj::Str {
-                    data: string,
-                    byte_index: 0,
-                };
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(iterator))))
-            },
-
-            "len" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Int(string.chars().count() as i64))
-            },
-
-            "trim" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Str(Rc::new(string.trim().to_owned())))
-            },
-
-            "to_upper" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Str(Rc::new(string.to_uppercase())))
-            },
-
-            "to_lower" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Str(Rc::new(string.to_lowercase())))
-            },
-
-            "contains" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(needle) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("contains() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                Ok(Value::Bool(string.contains(needle.as_str())))
-            },
-
-            "starts_with" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(prefix) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("starts_with() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                Ok(Value::Bool(string.starts_with(prefix.as_str())))
-            },
-
-            "ends_with" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(suffix) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("ends_with() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                Ok(Value::Bool(string.ends_with(suffix.as_str())))
-            },
-
-            "split" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(separator) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("split() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                let values = string
-                    .split(separator.as_str())
-                    .map(|part| Value::Str(Rc::new(part.to_owned())))
-                    .collect::<Vec<_>>();
-
-                Ok(Value::List(List::new(values)))
-            },
-
-            "replace" => {
-                self.expect_arity(name, &args, 2)?;
-
-                let Value::Str(from) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!(
-                            "replace() expects Str as first argument, got {}",
-                            args[0].type_name()
-                        ),
-                        None,
-                    ));
-                };
-
-                let Value::Str(to) = &args[1] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!(
-                            "replace() expects Str as second argument, got {}",
-                            args[1].type_name()
-                        ),
-                        None,
-                    ));
-                };
-
-                Ok(Value::Str(Rc::new(
-                    string.replace(from.as_str(), to.as_str()),
-                )))
-            },
-
-            "repeat" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Int(count) = args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("repeat() expects Int, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                if count < 0 {
-                    return Err(Error::new(
-                        ErrorKind::Value,
-                        "repeat() does not accept negative counts",
-                        None,
-                    ));
-                }
-
-                Ok(Value::Str(Rc::new(string.repeat(count as usize))))
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("Str has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
-    fn invoke_list_method(&mut self, list: List, name: &str, args: Vec<Value>) -> Result<Value> {
-        match name {
-            "len" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Int(list.len() as i64))
-            },
-
-            "push" => {
-                self.expect_arity(name, &args, 1)?;
-
-                list.push(args[0].clone());
-
-                Ok(Value::Unit)
-            },
-
-            "iter" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let iterator = IteratorObj::from_value(Value::List(list))
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))?;
-
-                Ok(Value::Iterator(iterator))
-            },
-
-            "map" | "filter" | "enumerate" | "zip" | "take" | "skip" | "collect" | "reduce"
-            | "fold" | "any" | "all" | "sum" | "product" | "min" | "max" => {
-                let iterator = IteratorObj::from_value(Value::List(list))
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))?;
-
-                self.invoke_iterator_method(iterator, name, args)
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("List has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
-    fn invoke_series_method(
-        &mut self,
-        series: SeriesRef,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        match name {
-            "is_null" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Series(Rc::new(series.is_null())))
-            },
-
-            "is_not_null" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Series(Rc::new(series.is_not_null())))
-            },
-
-            "dropna" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Series(Rc::new(series.dropna())))
-            },
-
-            "unique" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let value = series
-                    .unique()
-                    .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
-
-                Ok(Value::Series(Rc::new(value)))
-            },
-
-            "mean" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .mean()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "sum" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .sum()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "min" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .min()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "max" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .max()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "std" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .std()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "median" => {
-                self.expect_arity(name, &args, 0)?;
-
-                series
-                    .median()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))
-            },
-
-            "quantile" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let q = match args[0] {
-                    Value::Float(q) => q,
-
-                    Value::Int(q) => q as f64,
-
-                    ref other => {
-                        return Err(Error::new(
-                            ErrorKind::Type,
-                            format!("quantile() expects Float or Int, got {}", other.type_name()),
-                            None,
-                        ))
-                    },
-                };
-
-                series
-                    .quantile(q)
-                    .map_err(|message| Error::new(ErrorKind::Value, message, None))
-            },
-
-            "with_name" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(new_name) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("with_name() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                Ok(Value::Series(Rc::new(series.with_name(new_name.as_str()))))
-            },
-
-            "to_matrix" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let matrix = series
-                    .to_matrix()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))?;
-
-                Ok(Value::Matrix(Rc::new(RefCell::new(matrix))))
-            },
-
-            "iter" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let iterator = self.make_iterator(Value::Series(series))?;
-
-                Ok(Value::Iterator(iterator))
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("Series has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
-    fn invoke_dataframe_method(
-        &mut self,
-        df: DataFrameRef,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        match name {
-            "column" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let Value::Str(name) = &args[0] else {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("column() expects Str, got {}", args[0].type_name()),
-                        None,
-                    ));
-                };
-
-                let column = df.column(name.as_str()).ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Name,
-                        format!("unknown DataFrame column '{}'", name),
-                        None,
-                    )
-                })?;
-
-                Ok(Value::Series(column))
-            },
-
-            "row" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let index = self.expect_usize_index(name, &args[0])?;
-
-                let row = df.row(index).ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Index,
-                        format!("DataFrame row index out of bounds: {}", index),
-                        None,
-                    )
-                })?;
-
-                Ok(Value::Dict(row))
-            },
-
-            "take_rows" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let indices = self.expect_usize_indices(name, &args[0])?;
-
-                let result = df
-                    .take_rows(&indices)
-                    .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
-
-                Ok(Value::DataFrame(Rc::new(result)))
-            },
-
-            "head" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let n = self.expect_usize_index(name, &args[0])?;
-
-                let result = df
-                    .head(n)
-                    .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
-
-                Ok(Value::DataFrame(Rc::new(result)))
-            },
-
-            "describe" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let result = df
-                    .describe()
-                    .map_err(|message| Error::new(ErrorKind::Runtime, message, None))?;
-
-                Ok(Value::DataFrame(Rc::new(result)))
-            },
-
-            "to_matrix" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let result = df
-                    .to_matrix()
-                    .map_err(|message| Error::new(ErrorKind::Type, message, None))?;
-
-                Ok(Value::Matrix(Rc::new(RefCell::new(result))))
-            },
-
-            "iter" => {
-                self.expect_arity(name, &args, 0)?;
-
-                let iterator = self.make_iterator(Value::DataFrame(df))?;
-
-                Ok(Value::Iterator(iterator))
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("DataFrame has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
-    fn invoke_iterator_method(
-        &mut self,
-        iterator: IteratorRef,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        match name {
-            "next" => {
-                self.expect_arity(name, &args, 0)?;
-
-                match self.iterator_next(iterator)? {
-                    IterResult::Item(value) => {
-                        Ok(Value::Tuple(Rc::new(vec![value, Value::Bool(true)])))
-                    },
-
-                    IterResult::End => {
-                        Ok(Value::Tuple(Rc::new(vec![Value::Unit, Value::Bool(false)])))
-                    },
-                }
-            },
-
-            "map" => {
-                let closure = Self::expect_closure_arg(name, &args)?;
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(IteratorObj::Map {
-                    source: iterator,
-                    function: closure,
-                }))))
-            },
-
-            "filter" => {
-                let closure = Self::expect_closure_arg(name, &args)?;
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(
-                    IteratorObj::Filter {
-                        source: iterator,
-                        predicate: closure,
-                    },
-                ))))
-            },
-
-            "enumerate" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(
-                    IteratorObj::Enumerate {
-                        source: iterator,
-                        index: 0,
-                    },
-                ))))
-            },
-
-            "zip" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let other = match &args[0] {
-                    Value::Iterator(iterator) => iterator.clone(),
-
-                    value => IteratorObj::from_value(value.clone())
-                        .map_err(|message| Error::new(ErrorKind::Type, message, None))?,
-                };
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(IteratorObj::Zip {
-                    left: iterator,
-                    right: other,
-                }))))
-            },
-
-            "take" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let count = Self::expect_int_arg(name, &args[0])?;
-
-                if count < 0 {
-                    return Err(Error::new(
-                        ErrorKind::Value,
-                        "take() count must be non-negative",
-                        None,
-                    ));
-                }
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(IteratorObj::Take {
-                    source: iterator,
-                    remaining: count as usize,
-                }))))
-            },
-
-            "skip" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let count = Self::expect_int_arg(name, &args[0])?;
-
-                if count < 0 {
-                    return Err(Error::new(
-                        ErrorKind::Value,
-                        "skip() count must be non-negative",
-                        None,
-                    ));
-                }
-
-                Ok(Value::Iterator(Rc::new(RefCell::new(IteratorObj::Skip {
-                    source: iterator,
-                    remaining: count as usize,
-                }))))
-            },
-
-            "collect" => {
-                self.expect_arity(name, &args, 0)?;
-
-                self.collect_iterator(iterator)
-            },
-
-            "reduce" => {
-                let closure = Self::expect_closure_arg(name, &args)?;
-
-                self.reduce_iterator(iterator, closure)
-            },
-
-            "fold" => {
-                self.expect_arity(name, &args, 2)?;
-
-                let initial = args[0].clone();
-
-                let closure = Self::expect_closure_arg_at(name, &args, 1)?;
-
-                self.fold_iterator(iterator, initial, closure)
-            },
-
-            "any" => {
-                let closure = Self::expect_closure_arg(name, &args)?;
-
-                self.any_iterator(iterator, closure)
-            },
-
-            "all" => {
-                let closure = Self::expect_closure_arg(name, &args)?;
-
-                self.all_iterator(iterator, closure)
-            },
-
-            "sum" => {
-                self.expect_arity(name, &args, 0)?;
-
-                self.numeric_reduce(iterator, BinOp::Add)
-            },
-
-            "product" => {
-                self.expect_arity(name, &args, 0)?;
-
-                self.numeric_reduce(iterator, BinOp::Mul)
-            },
-
-            "min" => {
-                self.expect_arity(name, &args, 0)?;
-
-                self.extreme_iterator(iterator, false)
-            },
-
-            "max" => {
-                self.expect_arity(name, &args, 0)?;
-
-                self.extreme_iterator(iterator, true)
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("Iterator has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
-    fn invoke_range_method(
-        &mut self,
-        start: i64,
-        end: i64,
-        inclusive: bool,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        let iterator = IteratorObj::from_value(Value::Range(start, end, inclusive))
-            .map_err(|message| Error::new(ErrorKind::Type, message, None))?;
-
-        match name {
-            "iter" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Iterator(iterator))
-            },
-
-            _ => self.invoke_iterator_method(iterator, name, args),
         }
     }
 
@@ -4991,165 +4245,6 @@ impl Vm {
         self.call_closure_sync_named(method, call_args, &call_names)
     }
 
-    fn invoke_path_method(
-        &mut self,
-        path: crate::runtime::PathRef,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        match name {
-            /*
-             * ----------------------------------------------------
-             * name()
-             * ----------------------------------------------------
-             *
-             * Returns the final component of the path.
-             *
-             *     path("foo/bar.txt").name()
-             *         -> Some("bar.txt")
-             */
-            "name" => {
-                self.expect_arity(name, &args, 0)?;
-
-                match path.name() {
-                    Some(value) => Ok(option_some(Value::Str(Rc::new(value)))),
-
-                    None => Ok(option_none()),
-                }
-            },
-
-            /*
-             * ----------------------------------------------------
-             * extension()
-             * ----------------------------------------------------
-             */
-            "extension" => {
-                self.expect_arity(name, &args, 0)?;
-
-                match path.extension() {
-                    Some(value) => Ok(option_some(Value::Str(Rc::new(value)))),
-
-                    None => Ok(option_none()),
-                }
-            },
-
-            /*
-             * ----------------------------------------------------
-             * stem()
-             * ----------------------------------------------------
-             */
-            "stem" => {
-                self.expect_arity(name, &args, 0)?;
-
-                match path.stem() {
-                    Some(value) => Ok(option_some(Value::Str(Rc::new(value)))),
-
-                    None => Ok(option_none()),
-                }
-            },
-
-            /*
-             * ----------------------------------------------------
-             * parent()
-             * ----------------------------------------------------
-             */
-            "parent" => {
-                self.expect_arity(name, &args, 0)?;
-
-                match path.parent() {
-                    Some(parent) => Ok(option_some(Value::Path(Rc::new(parent)))),
-
-                    None => Ok(option_none()),
-                }
-            },
-
-            /*
-             * ----------------------------------------------------
-             * join(path)
-             * ----------------------------------------------------
-             *
-             * Accept both Str and Path:
-             *
-             *     p.join("file.txt")
-             *     p.join(path("file.txt"))
-             */
-            "join" => {
-                self.expect_arity(name, &args, 1)?;
-
-                let child = match &args[0] {
-                    Value::Str(value) => std::path::PathBuf::from(value.as_ref()),
-
-                    Value::Path(value) => value.to_path_buf(),
-
-                    other => {
-                        return Err(Error::new(
-                            ErrorKind::Type,
-                            format!("join() expects Str or Path, got {}", other.type_name()),
-                            None,
-                        ));
-                    },
-                };
-
-                Ok(Value::Path(Rc::new(path.join(&child))))
-            },
-
-            /*
-             * ----------------------------------------------------
-             * exists()
-             * ----------------------------------------------------
-             */
-            "exists" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Bool(path.exists()))
-            },
-
-            /*
-             * ----------------------------------------------------
-             * is_file()
-             * ----------------------------------------------------
-             */
-            "is_file" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Bool(path.is_file()))
-            },
-
-            /*
-             * ----------------------------------------------------
-             * is_dir()
-             * ----------------------------------------------------
-             */
-            "is_dir" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Bool(path.is_dir()))
-            },
-
-            /*
-             * ----------------------------------------------------
-             * string()
-             * ----------------------------------------------------
-             *
-             * Explicit conversion method.
-             *
-             * `str(path)` already exists, but `string()` makes
-             * Path's public API self-contained.
-             */
-            "string" => {
-                self.expect_arity(name, &args, 0)?;
-
-                Ok(Value::Str(Rc::new(path.to_string_lossy())))
-            },
-
-            _ => Err(Error::new(
-                ErrorKind::Name,
-                format!("Path has no method '{}'", name),
-                None,
-            )),
-        }
-    }
-
     fn invoke_enum_constructor(
         &mut self,
         enum_def: EnumRef,
@@ -5194,160 +4289,23 @@ impl Vm {
     fn current_frame_mut(&mut self) -> &mut CallFrame {
         self.frames.last_mut().expect("VM has no current frame")
     }
-
-    fn expect_arity(&self, name: &str, args: &[Value], expected: usize) -> Result<()> {
-        if args.len() != expected {
-            return Err(Error::new(
-                ErrorKind::Arity,
-                format!(
-                    "{}() expects {} argument(s), got {}",
-                    name,
-                    expected,
-                    args.len()
-                ),
-                None,
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn expect_int_arg(name: &str, value: &Value) -> Result<i64> {
-        match value {
-            Value::Int(value) => Ok(*value),
-
-            other => Err(Error::new(
-                ErrorKind::Type,
-                format!("{}() expects Int, got {}", name, other.type_name()),
-                None,
-            )),
-        }
-    }
-
-    fn expect_closure_arg(name: &str, args: &[Value]) -> Result<ClosureRef> {
-        Self::expect_closure_arg_at(name, args, 0)
-    }
-
-    fn expect_closure_arg_at(name: &str, args: &[Value], index: usize) -> Result<ClosureRef> {
-        let value = args.get(index).ok_or_else(|| {
-            Error::new(
-                ErrorKind::Arity,
-                format!("{}() missing closure argument", name),
-                None,
-            )
-        })?;
-
-        match value {
-            Value::Closure(closure) => Ok(closure.clone()),
-
-            other => Err(Error::new(
-                ErrorKind::Type,
-                format!("{}() expects a function, got {}", name, other.type_name()),
-                None,
-            )),
-        }
-    }
-
-    fn expect_usize_index(&self, name: &str, value: &Value) -> Result<usize> {
-        match value {
-            Value::Int(index) if *index >= 0 => Ok(*index as usize),
-
-            Value::Int(_) => Err(Error::new(
-                ErrorKind::Index,
-                format!("{}() index must be non-negative", name),
-                None,
-            )),
-
-            other => Err(Error::new(
-                ErrorKind::Type,
-                format!("{}() expects Int, got {}", name, other.type_name()),
-                None,
-            )),
-        }
-    }
-
-    fn expect_usize_indices(&self, name: &str, value: &Value) -> Result<Vec<usize>> {
-        let Value::List(list) = value else {
-            return Err(Error::new(
-                ErrorKind::Type,
-                format!("{}() expects List[Int]", name),
-                None,
-            ));
-        };
-
-        let values = list.as_vec();
-
-        let mut result = Vec::with_capacity(values.len());
-
-        for value in values.iter() {
-            match value {
-                Value::Int(index) if *index >= 0 => {
-                    result.push(*index as usize);
-                },
-
-                Value::Int(_) => {
-                    return Err(Error::new(
-                        ErrorKind::Index,
-                        format!("{}() index must be non-negative", name),
-                        None,
-                    ));
-                },
-
-                other => {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        format!("{}() expects List[Int], found {}", name, other.type_name()),
-                        None,
-                    ));
-                },
-            }
-        }
-
-        Ok(result)
-    }
 }
 
 impl ExtensionHost for Vm {
-    fn make_iterator(
-        &self,
-        value: Value,
-    ) -> Result<IteratorRef> {
-        Vm::make_iterator(
-            self,
-            value,
-        )
+    fn make_iterator(&self, value: Value) -> Result<IteratorRef> {
+        Vm::make_iterator(self, value)
     }
 
-    fn iterator_next(
-        &mut self,
-        iterator: IteratorRef,
-    ) -> Result<IterResult> {
-        Vm::iterator_next(
-            self,
-            iterator,
-        )
+    fn iterator_next(&mut self, iterator: IteratorRef) -> Result<IterResult> {
+        Vm::iterator_next(self, iterator)
     }
 
-    fn collect_iterator(
-        &mut self,
-        iterator: IteratorRef,
-    ) -> Result<Value> {
-        Vm::collect_iterator(
-            self,
-            iterator,
-        )
+    fn collect_iterator(&mut self, iterator: IteratorRef) -> Result<Value> {
+        Vm::collect_iterator(self, iterator)
     }
 
-    fn reduce_iterator(
-        &mut self,
-        iterator: IteratorRef,
-        closure: ClosureRef,
-    ) -> Result<Value> {
-        Vm::reduce_iterator(
-            self,
-            iterator,
-            closure,
-        )
+    fn reduce_iterator(&mut self, iterator: IteratorRef, closure: ClosureRef) -> Result<Value> {
+        Vm::reduce_iterator(self, iterator, closure)
     }
 
     fn fold_iterator(
@@ -5356,60 +4314,23 @@ impl ExtensionHost for Vm {
         initial: Value,
         closure: ClosureRef,
     ) -> Result<Value> {
-        Vm::fold_iterator(
-            self,
-            iterator,
-            initial,
-            closure,
-        )
+        Vm::fold_iterator(self, iterator, initial, closure)
     }
 
-    fn any_iterator(
-        &mut self,
-        iterator: IteratorRef,
-        closure: ClosureRef,
-    ) -> Result<Value> {
-        Vm::any_iterator(
-            self,
-            iterator,
-            closure,
-        )
+    fn any_iterator(&mut self, iterator: IteratorRef, closure: ClosureRef) -> Result<Value> {
+        Vm::any_iterator(self, iterator, closure)
     }
 
-    fn all_iterator(
-        &mut self,
-        iterator: IteratorRef,
-        closure: ClosureRef,
-    ) -> Result<Value> {
-        Vm::all_iterator(
-            self,
-            iterator,
-            closure,
-        )
+    fn all_iterator(&mut self, iterator: IteratorRef, closure: ClosureRef) -> Result<Value> {
+        Vm::all_iterator(self, iterator, closure)
     }
 
-    fn numeric_reduce(
-        &mut self,
-        iterator: IteratorRef,
-        op: BinOp,
-    ) -> Result<Value> {
-        Vm::numeric_reduce(
-            self,
-            iterator,
-            op,
-        )
+    fn numeric_reduce(&mut self, iterator: IteratorRef, op: BinOp) -> Result<Value> {
+        Vm::numeric_reduce(self, iterator, op)
     }
 
-    fn extreme_iterator(
-        &mut self,
-        iterator: IteratorRef,
-        maximum: bool,
-    ) -> Result<Value> {
-        Vm::extreme_iterator(
-            self,
-            iterator,
-            maximum,
-        )
+    fn extreme_iterator(&mut self, iterator: IteratorRef, maximum: bool) -> Result<Value> {
+        Vm::extreme_iterator(self, iterator, maximum)
     }
 
     fn call_closure_sync_named(
@@ -5418,12 +4339,7 @@ impl ExtensionHost for Vm {
         args: Vec<Value>,
         names: &[Option<String>],
     ) -> Result<Value> {
-        Vm::call_closure_sync_named(
-            self,
-            closure,
-            args,
-            names,
-        )
+        Vm::call_closure_sync_named(self, closure, args, names)
     }
 }
 
