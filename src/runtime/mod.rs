@@ -31,7 +31,7 @@ pub use vector::{Vector, VectorRef};
 //     GroupedDataFrameRef,
 // };
 pub use class::{Class, ClassRef, FieldDefinition};
-pub use extension::{ExtensionRegistry, ReceiverKind};
+pub use extension::{ExtensionHost, ExtensionRegistry, ExtensionTarget, NativeExtensionFn, ReceiverKind};
 pub use function::{
     CallFrame, CellRef, Closure, ClosureRef, FunctionParameter, FunctionProto, FunctionRef,
     RangeCursor, UpvalueSpec,

@@ -2,8 +2,8 @@ use crate::{
     error::{Error, ErrorKind, Result},
     runtime::{
         apply_binop, CallFrame, CellRef, Class, ClassRef, Closure, ClosureRef, DataFrameRef,
-        EnumConstructor, EnumRef, EnumValue, ExtensionRegistry, FieldDefinition, FunctionParameter,
-        FunctionProto, FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath,
+        EnumConstructor, EnumRef, EnumValue, ExtensionRegistry, FieldDefinition, FunctionParameter, NativeExtensionFn,
+        FunctionProto, FunctionRef, IterResult, IteratorObj, IteratorRef, List, Module, ModulePath, ExtensionHost,
         ModuleRef, ObjectRef, RangeCursor, ReceiverKind, SeriesRef, StructTypeRef, StructValue,
         UpvalueSpec, Value,
     },
@@ -27,6 +27,7 @@ use std::{
 #[derive(Clone)]
 enum CallTarget {
     Callable(Value),
+    Native(NativeExtensionFn),
     Legacy,
 }
 
@@ -67,24 +68,54 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Self {
-            stack: Vec::with_capacity(256),
-            frames: Vec::with_capacity(32),
-            repl_locals: Vec::with_capacity(64),
-            repl_cells: Vec::with_capacity(64),
-            repl_module: Rc::new(RefCell::new(Module::new("<repl>"))),
-            module_loader: ModuleLoader::new(
-                std::env::current_dir().expect("failed to get current directory"),
-            ),
-            modules: HashMap::new(),
-            loading_modules: Vec::new(),
-            stdlib_modules: HashMap::new(),
-            module_namespaces: HashMap::new(),
+    let mut extension_registry =
+        crate::stdlib::extension_registry();
 
-            extension_registry: crate::stdlib::extension_registry(),
-            call_target_cache: HashMap::new(),
-        }
+    crate::vm::native_extensions::
+        register_native_extensions(
+            &mut extension_registry
+        );
+
+    Self {
+        stack: Vec::with_capacity(256),
+        frames: Vec::with_capacity(32),
+
+        repl_locals: Vec::with_capacity(64),
+        repl_cells: Vec::with_capacity(64),
+
+        repl_module:
+            Rc::new(
+                RefCell::new(
+                    Module::new("<repl>")
+                )
+            ),
+
+        module_loader:
+            ModuleLoader::new(
+                std::env::current_dir()
+                    .expect(
+                        "failed to get current directory"
+                    ),
+            ),
+
+        modules:
+            HashMap::new(),
+
+        loading_modules:
+            Vec::new(),
+
+        stdlib_modules:
+            HashMap::new(),
+
+        module_namespaces:
+            HashMap::new(),
+
+        extension_registry,
+
+        call_target_cache:
+            HashMap::new(),
     }
+}
 
     #[inline]
     fn push(&mut self, value: Value) {
@@ -2017,23 +2048,63 @@ impl Vm {
         }
     }
 
-    fn resolve_method(&self, receiver: &Value, name: &str) -> Result<Option<CallTarget>> {
-        if let Value::Object(object) = receiver {
-            let class = object.borrow().class();
+    fn resolve_method(
+    &self,
+    receiver: &Value,
+    name: &str,
+) -> Result<Option<CallTarget>> {
+    if let Value::Object(object) =
+        receiver
+    {
+        let class =
+            object.borrow().class();
 
-            if let Some(method) = class.method(name) {
-                return Ok(Some(CallTarget::Callable(Value::Closure(method))));
-            }
+        if let Some(method) =
+            class.method(name)
+        {
+            return Ok(
+                Some(
+                    CallTarget::Callable(
+                        Value::Closure(method)
+                    )
+                )
+            );
         }
-
-        let receiver_kind = receiver.receiver_kind();
-
-        if let Some(function) = self.extension_registry.get(receiver_kind, name) {
-            return Ok(Some(CallTarget::Callable(function.clone())));
-        }
-
-        Ok(None)
     }
+
+    let receiver_kind =
+        receiver.receiver_kind();
+
+    let Some(target) =
+        self.extension_registry.get(
+            receiver_kind,
+            name,
+        )
+    else {
+        return Ok(None);
+    };
+
+    let target =
+        match target {
+            ExtensionTarget::Callable(
+                value
+            ) => {
+                CallTarget::Callable(
+                    value.clone()
+                )
+            }
+
+            ExtensionTarget::Native(
+                function
+            ) => {
+                CallTarget::Native(
+                    *function
+                )
+            }
+        };
+
+    Ok(Some(target))
+}
 
     fn resolve_namespace_method(
         &mut self,
@@ -4084,75 +4155,106 @@ impl Vm {
     /// Handles any type of method dispatches
     /// List, Struct, Object, ... etc
     fn invoke_method(
-        &mut self,
-        receiver: Value,
-        name: &str,
-        args: Vec<Value>,
-        names: &[Option<String>],
-    ) -> Result<Value> {
-        match receiver {
-            Value::Module(module) => self.invoke_module_member(module, name, args, names),
+    &mut self,
+    receiver: Value,
+    name: &str,
+    args: Vec<Value>,
+    names: &[Option<String>],
+) -> Result<Value> {
+    match receiver {
+        Value::Module(module) =>
+            self.invoke_module_member(
+                module,
+                name,
+                args,
+                names,
+            ),
 
-            Value::Object(object) => self.invoke_object_method(object, name, args, names),
+        Value::Object(object) =>
+            self.invoke_object_method(
+                object,
+                name,
+                args,
+                names,
+            ),
 
-            Value::List(list) => self.invoke_list_method(list, name, args),
+        Value::Enum(enum_def) =>
+            self.invoke_enum_constructor(
+                enum_def,
+                name,
+                args,
+            ),
 
-            Value::Str(string) => self.invoke_string_method(string, name, args),
-
-            Value::Series(series) => self.invoke_series_method(series, name, args),
-
-            Value::DataFrame(df) => self.invoke_dataframe_method(df, name, args),
-
-            Value::Iterator(iterator) => self.invoke_iterator_method(iterator, name, args),
-
-            Value::Range(start, end, inclusive) => {
-                self.invoke_range_method(start, end, inclusive, name, args)
-            },
-
-            Value::Enum(enum_def) => self.invoke_enum_constructor(enum_def, name, args),
-
-            Value::Path(path) => self.invoke_path_method(path, name, args),
-
-            other => Err(Error::new(
-                ErrorKind::Type,
-                format!(
-                    "method '{}' is not supported for this value ({})",
-                    name,
-                    other.type_name(),
-                ),
-                None,
-            )),
-        }
+        other =>
+            Err(
+                Error::new(
+                    ErrorKind::Type,
+                    format!(
+                        "method '{}' is not supported for this value ({})",
+                        name,
+                        other.type_name(),
+                    ),
+                    None,
+                )
+            ),
     }
+}
 
     fn invoke_call_target(
-        &mut self,
-        target: CallTarget,
-        receiver: Value,
-        name: &str,
-        args: Vec<Value>,
-        names: &[Option<String>],
-    ) -> Result<Value> {
-        match target {
-            CallTarget::Callable(value) => {
-                let mut call_args = Vec::with_capacity(args.len() + 1);
+    &mut self,
+    target: CallTarget,
+    receiver: Value,
+    name: &str,
+    args: Vec<Value>,
+    names: &[Option<String>],
+) -> Result<Value> {
+    match target {
+        CallTarget::Callable(value) => {
+            let mut call_args =
+                Vec::with_capacity(
+                    args.len() + 1
+                );
 
-                let mut call_names = Vec::with_capacity(names.len() + 1);
+            let mut call_names =
+                Vec::with_capacity(
+                    names.len() + 1
+                );
 
-                call_args.push(receiver);
+            call_args.push(receiver);
+            call_names.push(None);
 
-                call_names.push(None);
+            call_args.extend(args);
 
-                call_args.extend(args);
+            call_names.extend(
+                names.iter().cloned()
+            );
 
-                call_names.extend(names.iter().cloned());
+            self.call_value(
+                value,
+                call_args,
+                &call_names,
+            )
+        }
 
-                self.call_value(value, call_args, &call_names)
-            },
+        CallTarget::Native(function) => {
+            function(
+                self,
+                receiver,
+                args,
+                names,
+            )
+        }
 
-            CallTarget::Legacy => self.invoke_method(receiver, name, args, names),
+        CallTarget::Legacy => {
+            self.invoke_method(
+                receiver,
+                name,
+                args,
+                names,
+            )
         }
     }
+}
 
     fn invoke_module_member(
         &mut self,
@@ -5202,6 +5304,126 @@ impl Vm {
         }
 
         Ok(result)
+    }
+}
+
+impl ExtensionHost for Vm {
+    fn make_iterator(
+        &self,
+        value: Value,
+    ) -> Result<IteratorRef> {
+        Vm::make_iterator(
+            self,
+            value,
+        )
+    }
+
+    fn iterator_next(
+        &mut self,
+        iterator: IteratorRef,
+    ) -> Result<IterResult> {
+        Vm::iterator_next(
+            self,
+            iterator,
+        )
+    }
+
+    fn collect_iterator(
+        &mut self,
+        iterator: IteratorRef,
+    ) -> Result<Value> {
+        Vm::collect_iterator(
+            self,
+            iterator,
+        )
+    }
+
+    fn reduce_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        closure: ClosureRef,
+    ) -> Result<Value> {
+        Vm::reduce_iterator(
+            self,
+            iterator,
+            closure,
+        )
+    }
+
+    fn fold_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        initial: Value,
+        closure: ClosureRef,
+    ) -> Result<Value> {
+        Vm::fold_iterator(
+            self,
+            iterator,
+            initial,
+            closure,
+        )
+    }
+
+    fn any_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        closure: ClosureRef,
+    ) -> Result<Value> {
+        Vm::any_iterator(
+            self,
+            iterator,
+            closure,
+        )
+    }
+
+    fn all_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        closure: ClosureRef,
+    ) -> Result<Value> {
+        Vm::all_iterator(
+            self,
+            iterator,
+            closure,
+        )
+    }
+
+    fn numeric_reduce(
+        &mut self,
+        iterator: IteratorRef,
+        op: BinOp,
+    ) -> Result<Value> {
+        Vm::numeric_reduce(
+            self,
+            iterator,
+            op,
+        )
+    }
+
+    fn extreme_iterator(
+        &mut self,
+        iterator: IteratorRef,
+        maximum: bool,
+    ) -> Result<Value> {
+        Vm::extreme_iterator(
+            self,
+            iterator,
+            maximum,
+        )
+    }
+
+    fn call_closure_sync_named(
+        &mut self,
+        closure: ClosureRef,
+        args: Vec<Value>,
+        names: &[Option<String>],
+    ) -> Result<Value> {
+        Vm::call_closure_sync_named(
+            self,
+            closure,
+            args,
+            names,
+        )
     }
 }
 

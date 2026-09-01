@@ -2,6 +2,7 @@ pub mod chunk;
 pub mod compiler;
 pub mod instruction;
 pub mod module_loader;
+pub mod native_extensions;
 pub mod pipeline;
 pub mod vm;
 
