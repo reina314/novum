@@ -2221,18 +2221,13 @@ impl Vm {
                 })
             },
 
-            Value::Dict(dict) => {
-    dict.borrow()
-        .get(field)
-        .cloned()
-        .ok_or_else(|| {
-            Error::new(
-                ErrorKind::Name,
-                format!("Dict has no field '{}'", field),
-                None,
-            )
-        })
-}
+            Value::Dict(dict) => dict.borrow().get(field).cloned().ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Name,
+                    format!("Dict has no field '{}'", field),
+                    None,
+                )
+            }),
 
             Value::Series(series) => self.get_series_property(series, field),
 

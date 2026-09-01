@@ -1,23 +1,7 @@
 use super::{
-    ClassRef,
-    ClosureRef,
-    DataFrameRef,
-    EnumConstructor,
-    EnumRef,
-    EnumValueRef,
-    FunctionRef,
-    IteratorRef,
-    MatrixRef,
-    GroupedDataFrameRef,
-    ModuleRef,
-    ObjectRef,
-    PathRef,
-    ReceiverKind,
-    SeriesRef,
-    SetRef,
-    StructTypeRef,
-    StructValueRef,
-    VectorRef,
+    ClassRef, ClosureRef, DataFrameRef, EnumConstructor, EnumRef, EnumValueRef, FunctionRef,
+    GroupedDataFrameRef, IteratorRef, MatrixRef, ModuleRef, ObjectRef, PathRef, ReceiverKind,
+    SeriesRef, SetRef, StructTypeRef, StructValueRef, VectorRef,
 };
 
 use std::{
