@@ -5,7 +5,7 @@ use crate::runtime::{
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use statrs::distribution::{ContinuousCDF, StudentsT};
+use statrs::distribution::{ContinuousCDF, Normal, StudentsT};
 
 struct FunctionSpec {
     name: &'static str,
@@ -91,9 +91,25 @@ fn function_specs() -> &'static [FunctionSpec] {
             receiver: None,
         },
         FunctionSpec {
+            name: "paired_ttest",
+            function: paired_ttest,
+            receiver: None,
+        },
+        FunctionSpec {
             name: "welch",
             function: welch,
             receiver: Some(ReceiverKind::Series),
+        },
+        FunctionSpec {
+            name: "mann_whitney",
+            function: mann_whitney,
+            receiver: None,
+        },
+
+        FunctionSpec {
+            name: "wilcoxon",
+            function: wilcoxon,
+            receiver: None,
         },
     ]
 }
@@ -118,6 +134,10 @@ pub fn register_extensions(registry: &mut ExtensionRegistry) {
     }
 }
 
+
+//=========================
+// general helpers
+//=========================
 fn numeric_series_values(value: &Value) -> Result<Vec<f64>, String> {
     match value {
         Value::Series(series) => series.numeric_values(),
@@ -126,21 +146,6 @@ fn numeric_series_values(value: &Value) -> Result<Vec<f64>, String> {
             "stats function expects Series, got {}",
             other.type_name()
         )),
-    }
-}
-
-fn expect_series(args: &[Value], index: usize, function: &str) -> Result<SeriesRef, String> {
-    match args.get(index) {
-        Some(Value::Series(series)) => Ok(series.clone()),
-
-        Some(other) => Err(format!(
-            "{}() expects Series at argument {}, got {}",
-            function,
-            index,
-            other.type_name()
-        )),
-
-        None => Err(format!("{}() missing argument {}", function, index)),
     }
 }
 
@@ -179,6 +184,11 @@ fn result_dict(fields: Vec<(&str, Value)>) -> Value {
     Value::Dict(Rc::new(RefCell::new(map)))
 }
 
+
+
+//=========================
+// descriptive statistics
+//=========================
 fn describe_series(
     series: &SeriesRef,
 ) -> Result<
@@ -365,19 +375,6 @@ pub fn range(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(max - min))
 }
 
-pub fn skewness(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err("skewness() expects exactly 1 argument".into());
-    }
-
-    let values = numeric_series_values(&args[0])?;
-
-    Ok(match sample_skewness(&values) {
-        Some(value) => Value::Float(value),
-        None => Value::Null,
-    })
-}
-
 fn sample_skewness(values: &[f64]) -> Option<f64> {
     let n = values.len();
 
@@ -410,14 +407,14 @@ fn sample_skewness(values: &[f64]) -> Option<f64> {
     Some(g1)
 }
 
-pub fn kurtosis(args: Vec<Value>) -> Result<Value, String> {
+pub fn skewness(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err("kurtosis() expects exactly 1 argument".into());
+        return Err("skewness() expects exactly 1 argument".into());
     }
 
     let values = numeric_series_values(&args[0])?;
 
-    Ok(match sample_excess_kurtosis(&values) {
+    Ok(match sample_skewness(&values) {
         Some(value) => Value::Float(value),
         None => Value::Null,
     })
@@ -455,6 +452,19 @@ fn sample_excess_kurtosis(values: &[f64]) -> Option<f64> {
     let term2 = 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
 
     Some(term1 - term2)
+}
+
+pub fn kurtosis(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("kurtosis() expects exactly 1 argument".into());
+    }
+
+    let values = numeric_series_values(&args[0])?;
+
+    Ok(match sample_excess_kurtosis(&values) {
+        Some(value) => Value::Float(value),
+        None => Value::Null,
+    })
 }
 
 fn quantile_sorted(sorted: &[f64], q: f64) -> f64 {
@@ -575,18 +585,6 @@ pub fn std(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(variance.sqrt()))
 }
 
-pub fn covariance(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err("covariance() expects exactly 2 Series".into());
-    }
-
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
-
-    Ok(Value::Float(covariance_value(&x, &y)?))
-}
-
 fn covariance_value(x: &[f64], y: &[f64]) -> Result<f64, String> {
     if x.len() != y.len() {
         return Err("covariance() requires equal-length Series".into());
@@ -608,6 +606,18 @@ fn covariance_value(x: &[f64], y: &[f64]) -> Result<f64, String> {
         / (x.len() - 1) as f64;
 
     Ok(covariance)
+}
+
+pub fn covariance(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("covariance() expects exactly 2 Series".into());
+    }
+
+    let x = numeric_series_values(&args[0])?;
+
+    let y = numeric_series_values(&args[1])?;
+
+    Ok(Value::Float(covariance_value(&x, &y)?))
 }
 
 fn pearson_correlation(x: &[f64], y: &[f64]) -> Result<f64, String> {
@@ -664,71 +674,172 @@ pub fn correlation(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Float(pearson_correlation(&x, &y)?))
 }
 
+
+//=========================
+// t-tests
+//=========================
 fn t_distribution_p_value(t: f64, df: f64) -> Result<f64, String> {
     let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
 
     Ok(2.0 * distribution.sf(t.abs()))
 }
 
-pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
-    if args.len() != 2 {
-        return Err("ttest() expects Series and mu0".into());
+fn one_sample_ttest_values(
+    values: &[f64],
+    mu0: f64,
+    method: &str,
+) -> Result<Value, String> {
+    let n = values.len();
+
+    if n < 2 {
+        return Err(
+            "t-test requires at least 2 observations".into()
+        );
     }
 
-    let values = series_values(&args[0])?;
+    let mean =
+        values.iter().sum::<f64>()
+            / n as f64;
+
+    let variance =
+        values
+            .iter()
+            .map(|value| {
+                let diff =
+                    *value - mean;
+
+                diff * diff
+            })
+            .sum::<f64>()
+            / (n - 1) as f64;
+
+    if !variance.is_finite() {
+        return Err(
+            "t-test variance is not finite".into()
+        );
+    }
+
+    let std = variance.sqrt();
+
+    if std == 0.0 {
+        return Err(
+            "t-test sample standard deviation is zero"
+                .into()
+        );
+    }
+
+    let t =
+        (mean - mu0)
+            / (std / (n as f64).sqrt());
+
+    let df =
+        (n - 1) as f64;
+
+    let p_value = t_distribution_p_value(t, df)?;
+
+    Ok(result_dict(vec![
+        (
+            "statistic",
+            Value::Float(t),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "df",
+            Value::Float(df),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(method.to_owned())
+            ),
+        ),
+    ]))
+}
+
+pub fn ttest(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "ttest() expects Series and mu0"
+                .into()
+        );
+    }
+
+    let values =
+        numeric_series_values(&args[0])?;
 
     let mu0 = match &args[1] {
-        Value::Int(v) => *v as f64,
+        Value::Int(value) => {
+            *value as f64
+        }
 
-        Value::Float(v) => *v,
+        Value::Float(value) => {
+            *value
+        }
 
         other => {
             return Err(format!(
                 "ttest() mu0 must be numeric, got {}",
                 other.type_name()
             ));
-        },
+        }
     };
 
-    let n = values.len();
+    one_sample_ttest_values(
+        &values,
+        mu0,
+        "One-sample t-test",
+    )
+}
 
-    if n < 2 {
-        return Err("ttest() requires at least 2 observations".into());
+pub fn paired_ttest(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "paired_ttest() expects exactly 2 Series"
+                .into()
+        );
     }
 
-    let mean = values.iter().sum::<f64>() / n as f64;
+    let before =
+        numeric_series_values(&args[0])?;
 
-    let variance = values
-        .iter()
-        .map(|x| {
-            let d = *x - mean;
+    let after =
+        numeric_series_values(&args[1])?;
 
-            d * d
-        })
-        .sum::<f64>()
-        / (n - 1) as f64;
-
-    let std = variance.sqrt();
-
-    if std == 0.0 {
-        return Err("ttest() sample standard deviation is zero".into());
+    if before.len() != after.len() {
+        return Err(
+            "paired_ttest() requires equal-length Series"
+                .into()
+        );
     }
 
-    let t = (mean - mu0) / (std / (n as f64).sqrt());
+    if before.len() < 2 {
+        return Err(
+            "paired_ttest() requires at least 2 pairs"
+                .into()
+        );
+    }
 
-    let df = (n - 1) as f64;
+    let differences =
+        before
+            .iter()
+            .zip(after.iter())
+            .map(|(before, after)| {
+                before - after
+            })
+            .collect::<Vec<_>>();
 
-    let p_value = t_distribution_p_value(t, df)?;
-
-    Ok(result_dict(vec![
-        ("statistic", Value::Float(t)),
-        ("p_value", Value::Float(p_value)),
-        ("df", Value::Float(df)),
-        (
-            "method",
-            Value::Str(Rc::new("One-sample t-test".to_string())),
-        ),
-    ]))
+    one_sample_ttest_values(
+        &differences,
+        0.0,
+        "Paired t-test",
+    )
 }
 
 pub fn welch(args: Vec<Value>) -> Result<Value, String> {
@@ -780,3 +891,505 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
         ("method", Value::Str(Rc::new("Welch's t-test".to_string()))),
     ]))
 }
+
+//=========================
+// non-parametric tests
+//=========================
+fn two_sided_normal_p_value(
+    z: f64,
+) -> Result<f64, String> {
+    if !z.is_finite() {
+        return Err(
+            "normal approximation produced a non-finite z-score"
+                .into()
+        );
+    }
+
+    let normal =
+        Normal::new(0.0, 1.0)
+            .map_err(|error| error.to_string())?;
+
+    Ok(
+        2.0 * normal.sf(z.abs())
+    )
+}
+
+fn average_ranks(
+    values: &[f64],
+) -> Vec<f64> {
+    let mut indexed =
+        values
+            .iter()
+            .copied()
+            .enumerate()
+            .collect::<Vec<_>>();
+
+    indexed.sort_by(
+        |(_, left), (_, right)| {
+            left.total_cmp(right)
+        }
+    );
+
+    let mut ranks =
+        vec![0.0; values.len()];
+
+    let mut index = 0usize;
+
+    while index < indexed.len() {
+        let start = index;
+
+        let value =
+            indexed[index].1;
+
+        while index < indexed.len()
+            && indexed[index].1 == value
+        {
+            index += 1;
+        }
+
+        let end = index;
+
+        let rank_start =
+            start as f64 + 1.0;
+
+        let rank_end =
+            end as f64;
+
+        let average =
+            (rank_start + rank_end)
+                / 2.0;
+
+        for position in start..end {
+            let original_index =
+                indexed[position].0;
+
+            ranks[original_index] =
+                average;
+        }
+    }
+
+    ranks
+}
+
+fn tie_group_sizes(
+    values: &[f64],
+) -> Vec<usize> {
+    let mut sorted =
+        values.to_vec();
+
+    sorted.sort_by(
+        |left, right| {
+            left.total_cmp(right)
+        }
+    );
+
+    let mut sizes =
+        Vec::new();
+
+    let mut index = 0usize;
+
+    while index < sorted.len() {
+        let start = index;
+
+        let value =
+            sorted[index];
+
+        while index < sorted.len()
+            && sorted[index] == value
+        {
+            index += 1;
+        }
+
+        sizes.push(index - start);
+    }
+
+    sizes
+}
+
+fn mann_whitney_values(
+    x: &[f64],
+    y: &[f64],
+) -> Result<(f64, f64, f64), String> {
+    if x.is_empty() || y.is_empty() {
+        return Err(
+            "mann_whitney() requires non-empty Series"
+                .into()
+        );
+    }
+
+    let nx =
+        x.len();
+
+    let ny =
+        y.len();
+
+    let mut combined =
+        Vec::with_capacity(nx + ny);
+
+    combined.extend(
+        x.iter()
+            .copied()
+            .map(|value| (value, 0usize))
+    );
+
+    combined.extend(
+        y.iter()
+            .copied()
+            .map(|value| (value, 1usize))
+    );
+
+    let values =
+        combined
+            .iter()
+            .map(|(value, _)| *value)
+            .collect::<Vec<_>>();
+
+    let ranks =
+        average_ranks(&values);
+
+    let rank_sum_x =
+        combined
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, group))| {
+                *group == 0
+            })
+            .map(|(index, _)| ranks[index])
+            .sum::<f64>();
+
+    let u_x =
+        rank_sum_x
+            - (nx * (nx + 1) / 2) as f64;
+
+    let u_y =
+        (nx * ny) as f64
+            - u_x;
+
+    /*
+     * Use U for the group with the smaller
+     * sample size only for reporting symmetry.
+     */
+    let u =
+        u_x.min(u_y);
+
+    let n_x =
+        nx as f64;
+
+    let n_y =
+        ny as f64;
+
+    let n =
+        (nx + ny) as f64;
+
+    let mean_u =
+        n_x * n_y / 2.0;
+
+    /*
+     * Tie correction:
+     *
+     * Var(U)
+     * =
+     * nx ny / 12 *
+     * [
+     *   N + 1
+     *   - Σ(t^3 - t)/(N(N-1))
+     * ]
+     */
+    let tie_sizes =
+        tie_group_sizes(&values);
+
+    let tie_term =
+        tie_sizes
+            .iter()
+            .map(|size| {
+                let t =
+                    *size as f64;
+
+                t.powi(3) - t
+            })
+            .sum::<f64>();
+
+    let variance_u =
+        n_x * n_y / 12.0
+            * (
+                n + 1.0
+                - tie_term
+                    / (n * (n - 1.0))
+            );
+
+    if variance_u <= 0.0
+        || !variance_u.is_finite()
+    {
+        return Err(
+            "mann_whitney() normal approximation is undefined"
+                .into()
+        );
+    }
+
+    /*
+     * Continuity correction.
+     */
+    let correction =
+        if u < mean_u {
+            0.5
+        } else if u > mean_u {
+            -0.5
+        } else {
+            0.0
+        };
+
+    let z =
+        (u - mean_u - correction)
+            / variance_u.sqrt();
+
+    let p_value =
+        two_sided_normal_p_value(z)?;
+
+    Ok((u, z, p_value))
+}
+
+pub fn mann_whitney(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "mann_whitney() expects exactly 2 Series"
+                .into()
+        );
+    }
+
+    let x =
+        numeric_series_values(&args[0])?;
+
+    let y =
+        numeric_series_values(&args[1])?;
+
+    let (statistic, z, p_value) =
+        mann_whitney_values(&x, &y)?;
+
+    Ok(result_dict(vec![
+        (
+            "statistic",
+            Value::Float(statistic),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "z",
+            Value::Float(z),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(
+                    "Mann-Whitney U test"
+                        .to_string()
+                )
+            ),
+        ),
+    ]))
+}
+
+fn wilcoxon_values(
+    x: &[f64],
+    y: &[f64],
+) -> Result<(f64, f64, f64, usize), String> {
+    if x.len() != y.len() {
+        return Err(
+            "wilcoxon() requires equal-length Series"
+                .into()
+        );
+    }
+
+    let mut differences =
+        Vec::<f64>::new();
+
+    for (x_value, y_value)
+        in x.iter().zip(y.iter())
+    {
+        let difference =
+            *x_value - *y_value;
+
+        if difference != 0.0 {
+            differences.push(
+                difference
+            );
+        }
+    }
+
+    let n =
+        differences.len();
+
+    if n < 2 {
+        return Err(
+            "wilcoxon() requires at least 2 non-zero differences"
+                .into()
+        );
+    }
+
+    let absolute =
+        differences
+            .iter()
+            .map(|value| value.abs())
+            .collect::<Vec<_>>();
+
+    let ranks =
+        average_ranks(&absolute);
+
+    let mut w_plus =
+        0.0;
+
+    let mut w_minus =
+        0.0;
+
+    for (difference, rank)
+        in differences.iter().zip(ranks.iter())
+    {
+        if *difference > 0.0 {
+            w_plus += rank;
+        } else {
+            w_minus += rank;
+        }
+    }
+
+    /*
+     * The Wilcoxon statistic is
+     * conventionally the smaller signed-rank sum.
+     */
+    let statistic =
+        w_plus.min(w_minus);
+
+    let n_f =
+        n as f64;
+
+    let mean =
+        n_f * (n_f + 1.0)
+            / 4.0;
+
+    /*
+     * Base variance:
+     *
+     * n(n+1)(2n+1) / 24
+     */
+    let mut variance =
+        n_f
+            * (n_f + 1.0)
+            * (2.0 * n_f + 1.0)
+            / 24.0;
+
+    /*
+     * Tie correction:
+     *
+     * Σ(t^3 - t) / 48
+     */
+    let tie_sizes =
+        tie_group_sizes(&absolute);
+
+    let tie_term =
+        tie_sizes
+            .iter()
+            .map(|size| {
+                let t =
+                    *size as f64;
+
+                t.powi(3) - t
+            })
+            .sum::<f64>();
+
+    variance -=
+        tie_term / 48.0;
+
+    if variance <= 0.0
+        || !variance.is_finite()
+    {
+        return Err(
+            "wilcoxon() normal approximation is undefined"
+                .into()
+        );
+    }
+
+    /*
+     * Continuity correction.
+     */
+    let correction =
+        if statistic < mean {
+            0.5
+        } else if statistic > mean {
+            -0.5
+        } else {
+            0.0
+        };
+
+    let z =
+        (statistic - mean - correction)
+            / variance.sqrt();
+
+    let p_value =
+        two_sided_normal_p_value(z)?;
+
+    Ok((
+        statistic,
+        z,
+        p_value,
+        n,
+    ))
+}
+
+pub fn wilcoxon(
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err(
+            "wilcoxon() expects exactly 2 Series"
+                .into()
+        );
+    }
+
+    let x =
+        numeric_series_values(&args[0])?;
+
+    let y =
+        numeric_series_values(&args[1])?;
+
+    let (
+        statistic,
+        z,
+        p_value,
+        n,
+    ) = wilcoxon_values(
+        &x,
+        &y,
+    )?;
+
+    Ok(result_dict(vec![
+        (
+            "statistic",
+            Value::Float(statistic),
+        ),
+        (
+            "p_value",
+            Value::Float(p_value),
+        ),
+        (
+            "z",
+            Value::Float(z),
+        ),
+        (
+            "n",
+            Value::Int(n as i64),
+        ),
+        (
+            "method",
+            Value::Str(
+                Rc::new(
+                    "Wilcoxon signed-rank test"
+                        .to_string()
+                )
+            ),
+        ),
+    ]))
+}
+
+
