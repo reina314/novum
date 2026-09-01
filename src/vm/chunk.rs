@@ -1,14 +1,5 @@
-use crate::{
-    runtime::{
-        Value,
-        ModulePath,
-    },
-};
-use super::{
-    OpCode,
-    Instruction,
-    PipelineProgram,
-};
+use super::{Instruction, OpCode, PipelineProgram};
+use crate::runtime::{ModulePath, Value};
 
 #[derive(Debug)]
 pub struct Chunk {
@@ -23,12 +14,8 @@ pub struct Chunk {
 
 impl Chunk {
     #[inline]
-    pub fn add_constant(
-        &mut self,
-        value: Value,
-    ) -> u32 {
-        let index =
-            self.constants.len() as u32;
+    pub fn add_constant(&mut self, value: Value) -> u32 {
+        let index = self.constants.len() as u32;
 
         self.constants.push(value);
 
@@ -36,137 +23,101 @@ impl Chunk {
     }
 
     #[inline]
-    pub fn add_call_site(
+    pub fn add_call_site(&mut self, names: Vec<Option<String>>, method: Option<u32>) -> u32 {
+        let index = self.call_sites.len();
+
+        self.call_sites.push(CallSite {
+            names,
+            method,
+            method_namespaces: Vec::new(),
+        });
+
+        index as u32
+    }
+
+    #[inline]
+    pub fn add_method_call_site(
         &mut self,
         names: Vec<Option<String>>,
         method: Option<u32>,
+        method_namespaces: Vec<ModulePath>,
     ) -> u32 {
-        let index =
-            self.call_sites.len();
+        let index = self.call_sites.len();
 
-        self.call_sites.push(
-            CallSite {
-                names,
-                method,
-            }
-        );
+        self.call_sites.push(CallSite {
+            names,
+            method,
+            method_namespaces,
+        });
 
         index as u32
     }
 
-    pub fn add_pipeline(
-        &mut self,
-        pipeline: PipelineProgram,
-    ) -> u32 {
-        let index =
-            self.pipelines.len();
+    pub fn add_pipeline(&mut self, pipeline: PipelineProgram) -> u32 {
+        let index = self.pipelines.len();
 
-        self.pipelines.push(
-            pipeline
-        );
+        self.pipelines.push(pipeline);
 
         index as u32
     }
 
-    pub fn add_range_loop(
-        &mut self,
-        range: RangeLoop,
-    ) -> u32 {
-        let index =
-            self.range_loops.len();
+    pub fn add_range_loop(&mut self, range: RangeLoop) -> u32 {
+        let index = self.range_loops.len();
 
-        self.range_loops.push(
-            range
-        );
+        self.range_loops.push(range);
 
         index as u32
     }
 
     #[inline]
-    pub fn add_module_ref(
-        &mut self,
-        reference: ModuleRefSpec,
-    ) -> u32 {
-        let index =
-            self.module_refs.len();
+    pub fn add_module_ref(&mut self, reference: ModuleRefSpec) -> u32 {
+        let index = self.module_refs.len();
 
-        self.module_refs.push(
-            reference
-        );
+        self.module_refs.push(reference);
 
         index as u32
     }
 
     #[inline]
-    pub fn emit(
-        &mut self,
-        opcode: OpCode,
-    ) -> usize {
-        let index =
-            self.code.len();
+    pub fn emit(&mut self, opcode: OpCode) -> usize {
+        let index = self.code.len();
 
-        self.code.push(
-            Instruction::simple(
-                opcode
-            )
-        );
+        self.code.push(Instruction::simple(opcode));
 
         index
     }
 
     #[inline]
-    pub fn emit_operand(
-        &mut self,
-        opcode: OpCode,
-        operand: u32,
-    ) -> usize {
-        let index =
-            self.code.len();
+    pub fn emit_operand(&mut self, opcode: OpCode, operand: u32) -> usize {
+        let index = self.code.len();
 
-        self.code.push(
-            Instruction::new(
-                opcode,
-                operand,
-            )
-        );
+        self.code.push(Instruction::new(opcode, operand));
 
         index
     }
 
     #[inline]
-    pub fn patch_operand(
-        &mut self,
-        index: usize,
-        operand: u32,
-    ) {
-        self.code[index].operand =
-            operand;
+    pub fn patch_operand(&mut self, index: usize, operand: u32) {
+        self.code[index].operand = operand;
     }
 }
 
 impl Default for Chunk {
     fn default() -> Self {
         Self {
-            code:
-                Vec::new(),
+            code: Vec::new(),
 
-            constants:
-                Vec::new(),
+            constants: Vec::new(),
 
-            local_count:
-                0,
+            local_count: 0,
 
-            call_sites:
-                Vec::new(),
+            call_sites: Vec::new(),
 
-            pipelines:
-                Vec::new(),
+            pipelines: Vec::new(),
 
-            range_loops:
-                Vec::new(),
+            range_loops: Vec::new(),
 
-            module_refs:
-                Vec::new(),
+            module_refs: Vec::new(),
         }
     }
 }
@@ -181,6 +132,14 @@ pub struct ModuleRefSpec {
 pub struct CallSite {
     pub names: Vec<Option<String>>,
     pub method: Option<u32>,
+
+    /*
+     * Namespaces considered by method lookup after
+     * class / extension lookup fails.
+     *
+     * These are determined at compile time from `use`.
+     */
+    pub method_namespaces: Vec<ModulePath>,
 }
 
 #[derive(Debug, Clone, Copy)]

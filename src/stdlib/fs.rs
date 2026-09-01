@@ -1,548 +1,253 @@
 use crate::{
-    runtime::{
-        Module,
-        ModuleRef,
-        Value,
-        List,
-    },
-    stdlib::{
-        result_err,
-        result_ok,
-    },
+    runtime::{List, Module, ModuleRef, Value},
+    stdlib::{result_err, result_ok},
 };
 
-use std::{
-    rc::Rc,
-    cell::RefCell,
-    path::PathBuf,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 pub fn module() -> ModuleRef {
-    let mut module =
-        Module::new("fs");
+    let mut module = Module::new("fs");
 
-    module.set_exported(
-        "read",
-        Value::Builtin(read),
-    );
+    module.set_exported("read", Value::Builtin(read));
 
-    module.set_exported(
-        "write",
-        Value::Builtin(write),
-    );
+    module.set_exported("write", Value::Builtin(write));
 
-    module.set_exported(
-        "append",
-        Value::Builtin(append),
-    );
+    module.set_exported("append", Value::Builtin(append));
 
-    module.set_exported(
-        "exists",
-        Value::Builtin(exists),
-    );
+    module.set_exported("exists", Value::Builtin(exists));
 
-    module.set_exported(
-        "remove",
-        Value::Builtin(remove),
-    );
+    module.set_exported("remove", Value::Builtin(remove));
 
-    module.set_exported(
-        "mkdir",
-        Value::Builtin(mkdir),
-    );
+    module.set_exported("mkdir", Value::Builtin(mkdir));
 
-    module.set_exported(
-        "rename",
-        Value::Builtin(rename),
-    );
+    module.set_exported("rename", Value::Builtin(rename));
 
-    module.set_exported(
-        "copy",
-        Value::Builtin(copy),
-    );
+    module.set_exported("copy", Value::Builtin(copy));
 
-    module.set_exported(
-        "list_dir",
-        Value::Builtin(list_dir),
-    );
+    module.set_exported("list_dir", Value::Builtin(list_dir));
 
-    Rc::new(
-        RefCell::new(module)
-    )
+    Rc::new(RefCell::new(module))
 }
 
-
-pub fn read(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn read(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(
-            "fs.read() expects exactly 1 argument"
-                .into()
-        );
+        return Err("fs.read() expects exactly 1 argument".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.read()",
-        )?;
+    let path = get_path(&mut args, "fs.read()")?;
 
     match std::fs::read_to_string(&path) {
-        Ok(text) => {
-            Ok(
-                result_ok(
-                    Value::Str(
-                        Rc::new(text)
-                    )
-                )
-            )
-        }
+        Ok(text) => Ok(result_ok(Value::Str(Rc::new(text)))),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to read '{}': {}",
-                        path.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to read '{}': {}",
+            path.display(),
+            error
+        ))),
     }
 }
 
-pub fn write(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn write(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "fs.write() expects exactly 2 arguments"
-                .into()
-        );
+        return Err("fs.write() expects exactly 2 arguments".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.write()",
-        )?;
+    let path = get_path(&mut args, "fs.write()")?;
 
-    let content =
-        get_string(
-            args.remove(0),
-            "fs.write()",
-            "second argument",
-        )?;
+    let content = get_string(args.remove(0), "fs.write()", "second argument")?;
 
-    match std::fs::write(
-        &path,
-        content.as_bytes(),
-    ) {
-        Ok(()) => {
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            )
-        }
+    match std::fs::write(&path, content.as_bytes()) {
+        Ok(()) => Ok(result_ok(Value::Unit)),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to write '{}': {}",
-                        path.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to write '{}': {}",
+            path.display(),
+            error
+        ))),
     }
 }
 
-pub fn append(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn append(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "fs.append() expects exactly 2 arguments"
-                .into()
-        );
+        return Err("fs.append() expects exactly 2 arguments".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.append()",
-        )?;
+    let path = get_path(&mut args, "fs.append()")?;
 
-    let content =
-        get_string(
-            args.remove(0),
-            "fs.append()",
-            "second argument",
-        )?;
+    let content = get_string(args.remove(0), "fs.append()", "second argument")?;
 
     use std::io::Write;
 
-    let result =
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .and_then(|mut file| {
-                file.write_all(
-                    content.as_bytes()
-                )
-            });
+    let result = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(content.as_bytes()));
 
     match result {
-        Ok(()) => {
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            )
-        }
+        Ok(()) => Ok(result_ok(Value::Unit)),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to append to '{}': {}",
-                        path.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to append to '{}': {}",
+            path.display(),
+            error
+        ))),
     }
 }
 
-pub fn exists(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn exists(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(
-            "fs.exists() expects exactly 1 argument"
-                .into()
-        );
+        return Err("fs.exists() expects exactly 1 argument".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.exists()",
-        )?;
+    let path = get_path(&mut args, "fs.exists()")?;
 
-    Ok(
-        Value::Bool(
-            std::path::Path::new(&path)
-                .exists()
-        )
-    )
+    Ok(Value::Bool(std::path::Path::new(&path).exists()))
 }
 
-pub fn remove(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn remove(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(
-            "fs.remove() expects exactly 1 argument"
-                .into()
-        );
+        return Err("fs.remove() expects exactly 1 argument".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.remove()",
-        )?;
+    let path = get_path(&mut args, "fs.remove()")?;
 
     match std::fs::remove_file(&path) {
-        Ok(()) => {
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            )
-        }
+        Ok(()) => Ok(result_ok(Value::Unit)),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to remove '{}': {}",
-                        path.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to remove '{}': {}",
+            path.display(),
+            error
+        ))),
     }
 }
 
-pub fn mkdir(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn mkdir(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(
-            "fs.mkdir() expects exactly 1 argument"
-                .into()
-        );
+        return Err("fs.mkdir() expects exactly 1 argument".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.mkdir()",
-        )?;
+    let path = get_path(&mut args, "fs.mkdir()")?;
 
     match std::fs::create_dir_all(&path) {
-        Ok(()) => {
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            )
-        }
+        Ok(()) => Ok(result_ok(Value::Unit)),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to create directory '{}': {}",
-                        path.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to create directory '{}': {}",
+            path.display(),
+            error
+        ))),
     }
 }
 
-pub fn rename(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn rename(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "fs.rename() expects exactly 2 arguments"
-                .into()
-        );
+        return Err("fs.rename() expects exactly 2 arguments".into());
     }
 
-    let from =
-        get_path(
-            &mut args,
-            "fs.rename()",
-        )?;
+    let from = get_path(&mut args, "fs.rename()")?;
 
-    let to =
-        get_path(
-            &mut args,
-            "fs.rename()",
-        )?;
+    let to = get_path(&mut args, "fs.rename()")?;
 
-    match std::fs::rename(
-        &from,
-        &to,
-    ) {
-        Ok(()) => {
-            Ok(
-                result_ok(
-                    Value::Unit
-                )
-            )
-        }
+    match std::fs::rename(&from, &to) {
+        Ok(()) => Ok(result_ok(Value::Unit)),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to rename '{}' to '{}': {}",
-                        from.display(),
-                        to.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to rename '{}' to '{}': {}",
+            from.display(),
+            to.display(),
+            error
+        ))),
     }
 }
 
-pub fn copy(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn copy(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
-        return Err(
-            "fs.copy() expects exactly 2 arguments"
-                .into()
-        );
+        return Err("fs.copy() expects exactly 2 arguments".into());
     }
 
-    let from =
-        get_path(
-            &mut args,
-            "fs.copy()",
-        )?;
+    let from = get_path(&mut args, "fs.copy()")?;
 
-    let to =
-        get_path(
-            &mut args,
-            "fs.copy()",
-        )?;
+    let to = get_path(&mut args, "fs.copy()")?;
 
-    match std::fs::copy(
-        &from,
-        &to,
-    ) {
-        Ok(bytes) => {
-            Ok(
-                result_ok(
-                    Value::Int(
-                        bytes as i64
-                    )
-                )
-            )
-        }
+    match std::fs::copy(&from, &to) {
+        Ok(bytes) => Ok(result_ok(Value::Int(bytes as i64))),
 
-        Err(error) => {
-            Ok(
-                result_err(
-                    format!(
-                        "failed to copy '{}' to '{}': {}",
-                        from.display(),
-                        to.display(),
-                        error
-                    )
-                )
-            )
-        }
+        Err(error) => Ok(result_err(format!(
+            "failed to copy '{}' to '{}': {}",
+            from.display(),
+            to.display(),
+            error
+        ))),
     }
 }
 
-pub fn list_dir(
-    mut args: Vec<Value>,
-) -> Result<Value, String> {
+pub fn list_dir(mut args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(
-            "fs.list_dir() expects exactly 1 argument"
-                .into()
-        );
+        return Err("fs.list_dir() expects exactly 1 argument".into());
     }
 
-    let path =
-        get_path(
-            &mut args,
-            "fs.list_dir()",
-        )?;
+    let path = get_path(&mut args, "fs.list_dir()")?;
 
-    let entries =
-        match std::fs::read_dir(&path) {
-            Ok(entries) =>
-                entries,
+    let entries = match std::fs::read_dir(&path) {
+        Ok(entries) => entries,
 
-            Err(error) => {
-                return Ok(
-                    result_err(
-                        format!(
-                            "failed to read directory '{}': {}",
-                            path.display(),
-                            error
-                        )
-                    )
-                );
-            }
-        };
+        Err(error) => {
+            return Ok(result_err(format!(
+                "failed to read directory '{}': {}",
+                path.display(),
+                error
+            )));
+        },
+    };
 
-    let mut result =
-        Vec::new();
+    let mut result = Vec::new();
 
     for entry in entries {
-        let entry =
-            match entry {
-                Ok(entry) =>
-                    entry,
+        let entry = match entry {
+            Ok(entry) => entry,
 
-                Err(error) => {
-                    return Ok(
-                        result_err(
-                            format!(
-                                "failed to read directory entry in '{}': {}",
-                                path.display(),
-                                error
-                            )
-                        )
-                    );
-                }
-            };
+            Err(error) => {
+                return Ok(result_err(format!(
+                    "failed to read directory entry in '{}': {}",
+                    path.display(),
+                    error
+                )));
+            },
+        };
 
-        result.push(
-            Value::Str(
-                Rc::new(
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .into_owned()
-                )
-            )
-        );
+        result.push(Value::Str(Rc::new(
+            entry.file_name().to_string_lossy().into_owned(),
+        )));
     }
 
-    Ok(
-        result_ok(
-            Value::List(
-                List::new(result)
-            )
-        )
-    )
+    Ok(result_ok(Value::List(List::new(result))))
 }
 
-fn get_path(
-    args: &mut Vec<Value>,
-    function: &str,
-) -> Result<PathBuf, String> {
+fn get_path(args: &mut Vec<Value>, function: &str) -> Result<PathBuf, String> {
     match args.remove(0) {
-        Value::Str(path) =>
-            Ok(
-                PathBuf::from(
-                    path.as_ref()
-                )
-            ),
+        Value::Str(path) => Ok(PathBuf::from(path.as_ref())),
 
-        Value::Path(path) =>
-            Ok(
-                path.to_path_buf()
-            ),
+        Value::Path(path) => Ok(path.to_path_buf()),
 
-        other =>
-            Err(
-                format!(
-                    "{} expects Str or Path, got {}",
-                    function,
-                    other.type_name()
-                )
-            ),
+        other => Err(format!(
+            "{} expects Str or Path, got {}",
+            function,
+            other.type_name()
+        )),
     }
 }
 
-fn get_string(
-    value: Value,
-    function: &str,
-    position: &str,
-) -> Result<String, String> {
+fn get_string(value: Value, function: &str, position: &str) -> Result<String, String> {
     match value {
-        Value::Str(value) =>
-            Ok(value.as_ref().clone()),
+        Value::Str(value) => Ok(value.as_ref().clone()),
 
-        other =>
-            Err(format!(
-                "{} expects {} as Str, got {}",
-                function,
-                position,
-                other.type_name()
-            )),
+        other => Err(format!(
+            "{} expects {} as Str, got {}",
+            function,
+            position,
+            other.type_name()
+        )),
     }
 }

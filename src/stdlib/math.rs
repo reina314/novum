@@ -1,228 +1,248 @@
-use crate::runtime::{
-    Module,
-    ModuleRef,
-    Value,
-};
+use crate::runtime::{ExtensionRegistry, Module, ModuleRef, ReceiverKind, Value};
 
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
-pub fn module() -> ModuleRef {
-    let mut module =
-        Module::new("math");
-
-    module.set_exported(
-        "abs",
-        Value::Builtin(abs),
-    );
-
-    module.set_exported(
-        "sign",
-        Value::Builtin(sign),
-    );
-
-    module.set_exported(
-        "floor",
-        Value::Builtin(floor),
-    );
-
-    module.set_exported(
-        "ceil",
-        Value::Builtin(ceil),
-    );
-
-    module.set_exported(
-        "round",
-        Value::Builtin(round),
-    );
-
-    module.set_exported(
-        "trunc",
-        Value::Builtin(trunc),
-    );
-
-    module.set_exported(
-        "fract",
-        Value::Builtin(fract),
-    );
-
-    module.set_exported(
-        "sqrt",
-        Value::Builtin(sqrt),
-    );
-
-    module.set_exported(
-        "cbrt",
-        Value::Builtin(cbrt),
-    );
-
-    module.set_exported(
-        "pow",
-        Value::Builtin(pow),
-    );
-
-    module.set_exported(
-        "exp",
-        Value::Builtin(exp),
-    );
-
-    module.set_exported(
-        "exp2",
-        Value::Builtin(exp2),
-    );
-
-    module.set_exported(
-        "ln",
-        Value::Builtin(ln),
-    );
-
-    module.set_exported(
-        "log",
-        Value::Builtin(log),
-    );
-
-    module.set_exported(
-        "log2",
-        Value::Builtin(log2),
-    );
-
-    module.set_exported(
-        "log10",
-        Value::Builtin(log10),
-    );
-
-    module.set_exported(
-        "sin",
-        Value::Builtin(sin),
-    );
-
-    module.set_exported(
-        "cos",
-        Value::Builtin(cos),
-    );
-
-    module.set_exported(
-        "tan",
-        Value::Builtin(tan),
-    );
-
-    module.set_exported(
-        "asin",
-        Value::Builtin(asin),
-    );
-
-    module.set_exported(
-        "acos",
-        Value::Builtin(acos),
-    );
-
-    module.set_exported(
-        "atan",
-        Value::Builtin(atan),
-    );
-
-    module.set_exported(
-        "atan2",
-        Value::Builtin(atan2),
-    );
-
-    module.set_exported(
-        "sinh",
-        Value::Builtin(sinh),
-    );
-
-    module.set_exported(
-        "cosh",
-        Value::Builtin(cosh),
-    );
-
-    module.set_exported(
-        "tanh",
-        Value::Builtin(tanh),
-    );
-
-    module.set_exported(
-        "asinh",
-        Value::Builtin(asinh),
-    );
-
-    module.set_exported(
-        "acosh",
-        Value::Builtin(acosh),
-    );
-
-    module.set_exported(
-        "atanh",
-        Value::Builtin(atanh),
-    );
-
-    module.set_exported(
-        "hypot",
-        Value::Builtin(hypot),
-    );
-
-    module.set_exported(
-        "min",
-        Value::Builtin(min),
-    );
-
-    module.set_exported(
-        "max",
-        Value::Builtin(max),
-    );
-
-    module.set_exported(
-        "clamp",
-        Value::Builtin(clamp),
-    );
-
-    module.set_exported(
-        "pi",
-        Value::Builtin(pi),
-    );
-
-    module.set_exported(
-        "e",
-        Value::Builtin(e),
-    );
-
-    module.set_exported(
-        "tau",
-        Value::Builtin(tau),
-    );
-
-    Rc::new(
-        RefCell::new(module)
-    )
+#[derive(Clone, Copy)]
+enum ReceiverSpec {
+    None,
+    Numeric,
+    Exact(ReceiverKind),
 }
 
+struct FunctionSpec {
+    name: &'static str,
+    function: fn(Vec<Value>) -> Result<Value, String>,
+    receiver: ReceiverSpec,
+}
+
+fn function_specs() -> &'static [FunctionSpec] {
+    &[
+        FunctionSpec {
+            name: "sqrt",
+            function: sqrt,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "cbrt",
+            function: cbrt,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "sin",
+            function: sin,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "cos",
+            function: cos,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "tan",
+            function: tan,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "abs",
+            function: abs,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "floor",
+            function: floor,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "ceil",
+            function: ceil,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "round",
+            function: round,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "trunc",
+            function: trunc,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "fract",
+            function: fract,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "sign",
+            function: sign,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "exp",
+            function: exp,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "exp2",
+            function: exp2,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "ln",
+            function: ln,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "log",
+            function: log,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "log2",
+            function: log2,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "log10",
+            function: log10,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "asin",
+            function: asin,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "acos",
+            function: acos,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "atan",
+            function: atan,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "sinh",
+            function: sinh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "cosh",
+            function: cosh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "tanh",
+            function: tanh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "asinh",
+            function: asinh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "acosh",
+            function: acosh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "atanh",
+            function: atanh,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "pow",
+            function: pow,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "atan2",
+            function: atan2,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "hypot",
+            function: hypot,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "min",
+            function: min,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "max",
+            function: max,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "clamp",
+            function: clamp,
+            receiver: ReceiverSpec::Numeric,
+        },
+        FunctionSpec {
+            name: "pi",
+            function: pi,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "e",
+            function: e,
+            receiver: ReceiverSpec::None,
+        },
+        FunctionSpec {
+            name: "tau",
+            function: tau,
+            receiver: ReceiverSpec::None,
+        },
+    ]
+}
+
+pub fn module() -> ModuleRef {
+    let mut module = Module::new("math");
+
+    for spec in function_specs() {
+        module.set_exported(spec.name, Value::Builtin(spec.function));
+    }
+
+    Rc::new(RefCell::new(module))
+}
+
+pub fn register_extensions(registry: &mut ExtensionRegistry) {
+    for spec in function_specs() {
+        let value = Value::Builtin(spec.function);
+
+        match spec.receiver {
+            ReceiverSpec::None => {},
+
+            ReceiverSpec::Numeric => {
+                registry.register_numeric(spec.name, value);
+            },
+
+            ReceiverSpec::Exact(receiver) => {
+                registry.register(receiver, spec.name, value);
+            },
+        }
+    }
+}
 
 fn number(value: &Value) -> Result<f64, String> {
     match value {
         Value::Int(x) => Ok(*x as f64),
         Value::Float(x) => Ok(*x),
 
-        other => Err(format!(
-            "expected numeric value, got {}",
-            other.type_name()
-        )),
+        other => Err(format!("expected numeric value, got {}", other.type_name())),
     }
 }
 
-fn unary<F>(
-    args: Vec<Value>,
-    name: &str,
-    f: F,
-) -> Result<Value, String>
+fn unary<F>(args: Vec<Value>, name: &str, f: F) -> Result<Value, String>
 where
     F: FnOnce(f64) -> f64,
 {
     if args.len() != 1 {
-        return Err(format!(
-            "{name}() expects exactly 1 argument"
-        ));
+        return Err(format!("{name}() expects exactly 1 argument"));
     }
 
     let x = number(&args[0])?;
@@ -230,18 +250,12 @@ where
     Ok(Value::Float(f(x)))
 }
 
-fn binary<F>(
-    args: Vec<Value>,
-    name: &str,
-    f: F,
-) -> Result<Value, String>
+fn binary<F>(args: Vec<Value>, name: &str, f: F) -> Result<Value, String>
 where
     F: FnOnce(f64, f64) -> f64,
 {
     if args.len() != 2 {
-        return Err(format!(
-            "{name}() expects exactly 2 arguments"
-        ));
+        return Err(format!("{name}() expects exactly 2 arguments"));
     }
 
     let x = number(&args[0])?;
@@ -400,9 +414,7 @@ pub fn max(args: Vec<Value>) -> Result<Value, String> {
 
 pub fn clamp(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 3 {
-        return Err(
-            "clamp() expects exactly 3 arguments".into()
-        );
+        return Err("clamp() expects exactly 3 arguments".into());
     }
 
     let x = number(&args[0])?;
@@ -410,9 +422,7 @@ pub fn clamp(args: Vec<Value>) -> Result<Value, String> {
     let max = number(&args[2])?;
 
     if min > max {
-        return Err(
-            "clamp() requires min <= max".into()
-        );
+        return Err("clamp() requires min <= max".into());
     }
 
     Ok(Value::Float(x.clamp(min, max)))
@@ -424,9 +434,7 @@ pub fn clamp(args: Vec<Value>) -> Result<Value, String> {
 
 pub fn pi(args: Vec<Value>) -> Result<Value, String> {
     if !args.is_empty() {
-        return Err(
-            "pi() expects no arguments".into()
-        );
+        return Err("pi() expects no arguments".into());
     }
 
     Ok(Value::Float(std::f64::consts::PI))
@@ -434,9 +442,7 @@ pub fn pi(args: Vec<Value>) -> Result<Value, String> {
 
 pub fn e(args: Vec<Value>) -> Result<Value, String> {
     if !args.is_empty() {
-        return Err(
-            "e() expects no arguments".into()
-        );
+        return Err("e() expects no arguments".into());
     }
 
     Ok(Value::Float(std::f64::consts::E))
@@ -444,9 +450,7 @@ pub fn e(args: Vec<Value>) -> Result<Value, String> {
 
 pub fn tau(args: Vec<Value>) -> Result<Value, String> {
     if !args.is_empty() {
-        return Err(
-            "tau() expects no arguments".into()
-        );
+        return Err("tau() expects no arguments".into());
     }
 
     Ok(Value::Float(std::f64::consts::TAU))

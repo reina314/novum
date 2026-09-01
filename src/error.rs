@@ -67,7 +67,9 @@ impl Error {
             eprintln!("Call stack:");
             for frame in self.stack.iter().rev() {
                 match frame.span {
-                    Some(span) => eprintln!("  in {} at {}..{}", frame.function, span.start, span.end),
+                    Some(span) => {
+                        eprintln!("  in {} at {}..{}", frame.function, span.start, span.end)
+                    },
                     None => eprintln!("  in {}", frame.function),
                 }
             }
@@ -120,5 +122,9 @@ fn render_span(src: &str, span: Span) {
 
     eprintln!("  --> line {}, column {}", line_no, col + 1);
     eprintln!("  | {}", line);
-    eprintln!("  | {}{}", " ".repeat(col), "^".repeat(width.min(line.len().saturating_sub(col).max(1))));
+    eprintln!(
+        "  | {}{}",
+        " ".repeat(col),
+        "^".repeat(width.min(line.len().saturating_sub(col).max(1)))
+    );
 }

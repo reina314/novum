@@ -1,42 +1,22 @@
 pub mod chunk;
-pub mod pipeline;
 pub mod compiler;
 pub mod instruction;
 pub mod module_loader;
+pub mod native_extensions;
+pub mod pipeline;
 pub mod vm;
 
-pub use chunk::{
-    Chunk,
-    CallSite,
-    RangeLoop,
-    ModuleRefSpec,
-};
+pub use chunk::{CallSite, Chunk, ModuleRefSpec, RangeLoop};
 
 pub use pipeline::{
-    PipelineProgram,
-    PipelineSource,
-    PipelineStage,
-    PipelineState,
-    PipelineExpr,
-    PipelinePlan,
-    IntPipelineExpr,
-    IntPipelinePredicate,
-    IntPipelineStage,
+    IntPipelineExpr, IntPipelinePredicate, IntPipelineStage, PipelineExpr, PipelinePlan,
+    PipelineProgram, PipelineSource, PipelineStage, PipelineState,
 };
 
-pub use compiler::{
-    Compiler,
-};
+pub use compiler::Compiler;
 
-pub use instruction::{
-    Instruction,
-    OpCode,    
-};
+pub use instruction::{Instruction, OpCode};
 
-pub use module_loader::{
-    ModuleLoader,
-};
+pub use module_loader::ModuleLoader;
 
-pub use vm::{
-    Vm,
-};
+pub use vm::Vm;

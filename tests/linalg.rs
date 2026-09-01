@@ -1,17 +1,9 @@
-use novum::{
-    error::ErrorKind,
-};
+use novum::error::ErrorKind;
 
 mod common;
 use common::{
-    assert_int,
-    assert_float,
-    assert_list,
-    assert_vector,
-    assert_matrix,
-    assert_error_kind,
+    assert_error_kind, assert_float, assert_int, assert_list, assert_matrix, assert_vector,
 };
-
 
 #[test]
 fn linalg_matrix() {
@@ -24,10 +16,7 @@ fn linalg_matrix() {
             [3, 4]
         ])
         "#,
-        &[
-            &[1.0, 2.0],
-            &[3.0, 4.0],
-        ],
+        &[&[1.0, 2.0], &[3.0, 4.0]],
     );
 }
 
@@ -43,11 +32,7 @@ fn linalg_vector() {
             3
         ])
         "#,
-        &[
-            1.0,
-            2.0,
-            3.0,
-        ],
+        &[1.0, 2.0, 3.0],
     );
 }
 
@@ -71,10 +56,7 @@ fn linalg_matrix_addition() {
 
         a + b
         "#,
-        &[
-            &[6.0, 8.0],
-            &[10.0, 12.0],
-        ],
+        &[&[6.0, 8.0], &[10.0, 12.0]],
     );
 }
 
@@ -98,10 +80,7 @@ fn linalg_matrix_subtraction() {
 
         a - b
         "#,
-        &[
-            &[4.0, 4.0],
-            &[4.0, 4.0],
-        ],
+        &[&[4.0, 4.0], &[4.0, 4.0]],
     );
 }
 
@@ -125,10 +104,7 @@ fn linalg_matrix_elementwise_multiplication() {
 
         a * b
         "#,
-        &[
-            &[5.0, 12.0],
-            &[21.0, 32.0],
-        ],
+        &[&[5.0, 12.0], &[21.0, 32.0]],
     );
 }
 
@@ -146,10 +122,7 @@ fn linalg_matrix_scalar_multiplication() {
 
         a * 2
         "#,
-        &[
-            &[2.0, 4.0],
-            &[6.0, 8.0],
-        ],
+        &[&[2.0, 4.0], &[6.0, 8.0]],
     );
 }
 
@@ -167,10 +140,7 @@ fn linalg_scalar_matrix_multiplication() {
 
         3 * a
         "#,
-        &[
-            &[3.0, 6.0],
-            &[9.0, 12.0],
-        ],
+        &[&[3.0, 6.0], &[9.0, 12.0]],
     );
 }
 
@@ -194,10 +164,7 @@ fn linalg_matrix_matmul() {
 
         a @ b
         "#,
-        &[
-            &[19.0, 22.0],
-            &[43.0, 50.0],
-        ],
+        &[&[19.0, 22.0], &[43.0, 50.0]],
     );
 }
 
@@ -222,10 +189,7 @@ fn linalg_matrix_matmul_rectangular() {
 
         a @ b
         "#,
-        &[
-            &[58.0, 64.0],
-            &[139.0, 154.0],
-        ],
+        &[&[58.0, 64.0], &[139.0, 154.0]],
     );
 }
 
@@ -243,11 +207,7 @@ fn linalg_matrix_transpose() {
 
         linalg.transpose(a)
         "#,
-        &[
-            &[1.0, 4.0],
-            &[2.0, 5.0],
-            &[3.0, 6.0],
-        ],
+        &[&[1.0, 4.0], &[2.0, 5.0], &[3.0, 6.0]],
     );
 }
 
@@ -302,10 +262,7 @@ fn linalg_matrix_inverse() {
 
         linalg.inverse(a)
         "#,
-        &[
-            &[0.6, -0.7],
-            &[-0.2, 0.4],
-        ],
+        &[&[0.6, -0.7], &[-0.2, 0.4]],
     );
 }
 
@@ -326,10 +283,7 @@ fn linalg_matrix_inverse_round_trip() {
 
         a @ inv
         "#,
-        &[
-            &[1.0, 0.0],
-            &[0.0, 1.0],
-        ],
+        &[&[1.0, 0.0], &[0.0, 1.0]],
     );
 }
 
@@ -409,11 +363,7 @@ fn linalg_vector_addition() {
 
         a + b
         "#,
-        &[
-            5.0,
-            7.0,
-            9.0,
-        ],
+        &[5.0, 7.0, 9.0],
     );
 }
 
@@ -439,11 +389,7 @@ fn linalg_vector_subtraction() {
 
         a - b
         "#,
-        &[
-            4.0,
-            4.0,
-            4.0,
-        ],
+        &[4.0, 4.0, 4.0],
     );
 }
 
@@ -462,11 +408,7 @@ fn linalg_vector_scalar_multiplication() {
 
         a * 2
         "#,
-        &[
-            2.0,
-            4.0,
-            6.0,
-        ],
+        &[2.0, 4.0, 6.0],
     );
 }
 
@@ -516,10 +458,7 @@ fn linalg_matrix_vector_multiplication() {
 
         a @ v
         "#,
-        &[
-            17.0,
-            39.0,
-        ],
+        &[17.0, 39.0],
     );
 }
 
@@ -543,10 +482,7 @@ fn linalg_vector_matrix_multiplication() {
 
         v @ a
         "#,
-        &[
-            13.0,
-            16.0,
-        ],
+        &[13.0, 16.0],
     );
 }
 
@@ -715,10 +651,7 @@ fn linalg_linear_regression() {
 
         linalg.linear_regression(X, y)["coefficients"]
         "#,
-        &[
-            &[0.0],
-            &[2.0],
-        ],
+        &[&[0.0], &[2.0]],
     );
 }
 
@@ -742,10 +675,7 @@ fn linalg_solve_matrix() {
 
         linalg.solve(A, b)
         "#,
-        &[
-            &[2.0],
-            &[3.0],
-        ],
+        &[&[2.0], &[3.0]],
     );
 }
 
@@ -769,10 +699,7 @@ fn linalg_solve_vector() {
 
         linalg.solve(A, b)
         "#,
-        &[
-            2.0,
-            3.0,
-        ],
+        &[2.0, 3.0],
     );
 }
 
@@ -800,10 +727,6 @@ fn linalg_solve_lstsq() {
 
         linalg.solve_lstsq(A, b)
         "#,
-        &[
-            2.0,
-        ],
+        &[2.0],
     );
 }
-
-

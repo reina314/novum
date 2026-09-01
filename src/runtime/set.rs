@@ -1,12 +1,8 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::runtime::Value;
 
-pub type SetRef =
-    Rc<RefCell<Set>>;
+pub type SetRef = Rc<RefCell<Set>>;
 
 #[derive(Clone)]
 pub struct Set {
@@ -15,16 +11,11 @@ pub struct Set {
 
 impl Set {
     pub fn new() -> Self {
-        Self {
-            values: Vec::new(),
-        }
+        Self { values: Vec::new() }
     }
 
-    pub fn from_values(
-        values: Vec<Value>,
-    ) -> Result<Self, String> {
-        let mut set =
-            Self::new();
+    pub fn from_values(values: Vec<Value>) -> Result<Self, String> {
+        let mut set = Self::new();
 
         for value in values {
             set.add(value)?;
@@ -37,15 +28,9 @@ impl Set {
         self.values.len()
     }
 
-    pub fn contains(
-        &self,
-        value: &Value,
-    ) -> Result<bool, String> {
+    pub fn contains(&self, value: &Value) -> Result<bool, String> {
         for existing in &self.values {
-            if Value::eq_values(
-                existing,
-                value,
-            )? {
+            if Value::eq_values(existing, value)? {
                 return Ok(true);
             }
         }
@@ -53,10 +38,7 @@ impl Set {
         Ok(false)
     }
 
-    pub fn add(
-        &mut self,
-        value: Value,
-    ) -> Result<(), String> {
+    pub fn add(&mut self, value: Value) -> Result<(), String> {
         if !self.contains(&value)? {
             self.values.push(value);
         }
@@ -64,29 +46,19 @@ impl Set {
         Ok(())
     }
 
-    pub fn remove(
-        &mut self,
-        value: &Value,
-    ) -> Result<bool, String> {
-        let position =
-            self.values
-                .iter()
-                .position(|existing| {
-                    Value::eq_values(
-                        existing,
-                        value,
-                    )
-                    .unwrap_or(false)
-                });
+    pub fn remove(&mut self, value: &Value) -> Result<bool, String> {
+        let position = self
+            .values
+            .iter()
+            .position(|existing| Value::eq_values(existing, value).unwrap_or(false));
 
         match position {
             Some(index) => {
                 self.values.remove(index);
                 Ok(true)
-            }
+            },
 
-            None =>
-                Ok(false),
+            None => Ok(false),
         }
     }
 
@@ -98,54 +70,34 @@ impl Set {
         &self.values
     }
 
-    pub fn union(
-        &self,
-        other: &Self,
-    ) -> Result<Self, String> {
-        let mut result =
-            Self::from_values(
-                self.values.clone()
-            )?;
+    pub fn union(&self, other: &Self) -> Result<Self, String> {
+        let mut result = Self::from_values(self.values.clone())?;
 
         for value in &other.values {
-            result.add(
-                value.clone()
-            )?;
+            result.add(value.clone())?;
         }
 
         Ok(result)
     }
 
-    pub fn intersection(
-        &self,
-        other: &Self,
-    ) -> Result<Self, String> {
-        let mut result =
-            Self::new();
+    pub fn intersection(&self, other: &Self) -> Result<Self, String> {
+        let mut result = Self::new();
 
         for value in &self.values {
             if other.contains(value)? {
-                result.add(
-                    value.clone()
-                )?;
+                result.add(value.clone())?;
             }
         }
 
         Ok(result)
     }
 
-    pub fn difference(
-        &self,
-        other: &Self,
-    ) -> Result<Self, String> {
-        let mut result =
-            Self::new();
+    pub fn difference(&self, other: &Self) -> Result<Self, String> {
+        let mut result = Self::new();
 
         for value in &self.values {
             if !other.contains(value)? {
-                result.add(
-                    value.clone()
-                )?;
+                result.add(value.clone())?;
             }
         }
 

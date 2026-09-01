@@ -1,5 +1,5 @@
-use crate::error::{Error, Result};
 use super::{Span, Token, TokenKind};
+use crate::error::{Error, Result};
 
 pub struct Lexer<'a> {
     src: &'a str,
@@ -85,17 +85,11 @@ impl<'a> Lexer<'a> {
             };
 
             let kind = match ch {
-                c if c.is_ascii_alphabetic() || c == '_' => {
-                    self.lex_ident(c)
-                }
+                c if c.is_ascii_alphabetic() || c == '_' => self.lex_ident(c),
 
-                c if c.is_ascii_digit() => {
-                    self.lex_number(c)?
-                }
+                c if c.is_ascii_digit() => self.lex_number(c)?,
 
-                '\'' | '"' => {
-                    self.lex_string(ch)?
-                }
+                '\'' | '"' => self.lex_string(ch)?,
 
                 '+' => {
                     if self.consume_if('=') {
@@ -103,7 +97,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Plus
                     }
-                }
+                },
 
                 '-' => {
                     if self.consume_if('=') {
@@ -111,7 +105,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Minus
                     }
-                }
+                },
 
                 '*' => {
                     if self.consume_if('*') {
@@ -121,7 +115,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Star
                     }
-                }
+                },
 
                 '/' => {
                     if self.consume_if('=') {
@@ -129,7 +123,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Slash
                     }
-                }
+                },
 
                 '%' => {
                     if self.consume_if('=') {
@@ -137,7 +131,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Percent
                     }
-                }
+                },
 
                 '@' => TokenKind::At,
 
@@ -151,7 +145,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Equals
                     }
-                }
+                },
 
                 '!' => {
                     if self.consume_if('=') {
@@ -159,7 +153,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Not
                     }
-                }
+                },
 
                 '<' => {
                     if self.consume_if('=') {
@@ -167,7 +161,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Less
                     }
-                }
+                },
 
                 '>' => {
                     if self.consume_if('=') {
@@ -175,7 +169,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Greater
                     }
-                }
+                },
 
                 '.' => {
                     if self.consume_if('.') {
@@ -187,7 +181,7 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Dot
                     }
-                }
+                },
 
                 '(' => TokenKind::LParen,
                 ')' => TokenKind::RParen,
@@ -208,7 +202,7 @@ impl<'a> Lexer<'a> {
                         format!("unexpected character {:?}", ch),
                         Span::new(start, self.pos),
                     ));
-                }
+                },
             };
 
             tokens.push(Token {
@@ -262,6 +256,7 @@ impl<'a> Lexer<'a> {
             "match" => TokenKind::Match,
 
             "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
 
             "struct" => TokenKind::Struct,
             "class" => TokenKind::Class,
@@ -275,48 +270,29 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_number(
-        &mut self,
-        first: char,
-    ) -> Result<TokenKind> {
-        let start =
-            self.pos.saturating_sub(
-                first.len_utf8()
-            );
+    fn lex_number(&mut self, first: char) -> Result<TokenKind> {
+        let start = self.pos.saturating_sub(first.len_utf8());
 
-        let mut digits =
-            String::new();
+        let mut digits = String::new();
 
         digits.push(first);
 
-        let mut previous_was_underscore =
-            false;
+        let mut previous_was_underscore = false;
 
-        while let Some(c) =
-            self.peek()
-        {
+        while let Some(c) = self.peek() {
             if c.is_ascii_digit() {
-                digits.push(
-                    self.consume().unwrap()
-                );
+                digits.push(self.consume().unwrap());
 
-                previous_was_underscore =
-                    false;
+                previous_was_underscore = false;
             } else if c == '_' {
                 if previous_was_underscore {
-                    return Err(
-                        Error::lex(
-                            "consecutive underscores in numeric literal",
-                            Span::new(
-                                start,
-                                self.pos + 1,
-                            ),
-                        )
-                    );
+                    return Err(Error::lex(
+                        "consecutive underscores in numeric literal",
+                        Span::new(start, self.pos + 1),
+                    ));
                 }
 
-                previous_was_underscore =
-                    true;
+                previous_was_underscore = true;
 
                 self.consume();
 
@@ -327,59 +303,37 @@ impl<'a> Lexer<'a> {
         }
 
         if previous_was_underscore {
-            return Err(
-                Error::lex(
-                    "numeric literal cannot end with '_'",
-                    Span::new(
-                        start,
-                        self.pos,
-                    ),
-                )
-            );
+            return Err(Error::lex(
+                "numeric literal cannot end with '_'",
+                Span::new(start, self.pos),
+            ));
         }
 
         // Float
         if self.peek() == Some('.') {
-            let mut look =
-                self.chars.clone();
+            let mut look = self.chars.clone();
 
-            if look
-                .next()
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-            {
+            if look.next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                 self.consume();
 
                 digits.push('.');
 
-                let mut previous_was_underscore =
-                    false;
+                let mut previous_was_underscore = false;
 
-                while let Some(c) =
-                    self.peek()
-                {
+                while let Some(c) = self.peek() {
                     if c.is_ascii_digit() {
-                        digits.push(
-                            self.consume().unwrap()
-                        );
+                        digits.push(self.consume().unwrap());
 
-                        previous_was_underscore =
-                            false;
+                        previous_was_underscore = false;
                     } else if c == '_' {
                         if previous_was_underscore {
-                            return Err(
-                                Error::lex(
-                                    "consecutive underscores in numeric literal",
-                                    Span::new(
-                                        start,
-                                        self.pos + 1,
-                                    ),
-                                )
-                            );
+                            return Err(Error::lex(
+                                "consecutive underscores in numeric literal",
+                                Span::new(start, self.pos + 1),
+                            ));
                         }
 
-                        previous_was_underscore =
-                            true;
+                        previous_was_underscore = true;
 
                         self.consume();
 
@@ -390,64 +344,29 @@ impl<'a> Lexer<'a> {
                 }
 
                 if previous_was_underscore {
-                    return Err(
-                        Error::lex(
-                            "numeric literal cannot end with '_'",
-                            Span::new(
-                                start,
-                                self.pos,
-                            ),
-                        )
-                    );
+                    return Err(Error::lex(
+                        "numeric literal cannot end with '_'",
+                        Span::new(start, self.pos),
+                    ));
                 }
 
-                let normalized =
-                    digits.replace(
-                        '_',
-                        "",
-                    );
+                let normalized = digits.replace('_', "");
 
-                let value =
-                    normalized
-                        .parse::<f64>()
-                        .map_err(|_| {
-                            Error::lex(
-                                "invalid float literal",
-                                Span::new(
-                                    start,
-                                    self.pos,
-                                ),
-                            )
-                        })?;
+                let value = normalized
+                    .parse::<f64>()
+                    .map_err(|_| Error::lex("invalid float literal", Span::new(start, self.pos)))?;
 
-                return Ok(
-                    TokenKind::Float(value)
-                );
+                return Ok(TokenKind::Float(value));
             }
         }
 
-        let normalized =
-            digits.replace(
-                '_',
-                "",
-            );
+        let normalized = digits.replace('_', "");
 
-        let value =
-            normalized
-                .parse::<i64>()
-                .map_err(|_| {
-                    Error::lex(
-                        "integer literal overflow",
-                        Span::new(
-                            start,
-                            self.pos,
-                        ),
-                    )
-                })?;
+        let value = normalized
+            .parse::<i64>()
+            .map_err(|_| Error::lex("integer literal overflow", Span::new(start, self.pos)))?;
 
-        Ok(
-            TokenKind::Int(value)
-        )
+        Ok(TokenKind::Int(value))
     }
 
     fn lex_string(&mut self, quote: char) -> Result<TokenKind> {
@@ -486,7 +405,7 @@ impl<'a> Lexer<'a> {
                     };
 
                     out.push(decoded);
-                }
+                },
 
                 _ => out.push(c),
             }

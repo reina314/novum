@@ -1,8 +1,16 @@
-# Novum v0.17.0
+# Novum v0.17.2
 
-### For quick ideas, quick experiments, and quick results.
+> **Quick ideas. Quick experiments. Quick results.**
 
-Novum is a lightweight programming language for small tasks, quick experiments, and everyday research work. Rather than aiming to be a large, feature-heavy language, Novum focuses on being simple, flexible, and easy to pick up. Its concise syntax and built-in statistical tools make it a convenient companion when you need to test an idea, manipulate some data, or run a quick analysis. This is implemented using bytecode and VM configurations, rather than the legacy Novum interpreter.
+Novum is a small, practical programming language that combines compact syntax, expression-oriented programming, lazy iterators, data-oriented values, and a small standard library for research and scripting tasks.
+
+
+## What is Novum?
+
+Novum is designed for programs where the language should stay out of the way. Its syntax is intentionally compact, while the runtime provides useful building blocks for manipulating collections, working with files, invoking external processes, and performing numerical computation.
+
+Novum is under active development, so the language and standard library may evolve over time. These pages document the behavior of the current implementation.
+
 
 ## Example Usage
 Code (`/samples/data_analysis_example.nv`):

@@ -15,7 +15,7 @@ Novum is a small, practical programming language that combines compact syntax, e
 
 Novum is designed for programs where the language should stay out of the way. Its syntax is intentionally compact, while the runtime provides useful building blocks for manipulating collections, working with files, invoking external processes, and performing numerical computation.
 
-The current `vm` development line is the implementation described by these pages. The language is still evolving, so this documentation follows the behavior that exists in the repository rather than describing a separate or idealized specification.
+Novum is under active development, so the language and standard library may evolve over time. These pages document the behavior of the current implementation.
 
 ## Start here
 
@@ -69,7 +69,3 @@ The standard library includes `fs` for files and directories, `process` for envi
 | [Tutorial](tutorial/index.md) | Learn Novum progressively with runnable examples |
 | [Standard Library](stdlib/index.md) | User-facing API reference for the standard modules |
 | [Reference](reference/index.md) | Operators, types, and compact language reference |
-
-> **Note**
->
-> The documentation intentionally does **not** describe bytecode, compiler internals, VM implementation details, or Rust data structures. It is written from a user perspective.

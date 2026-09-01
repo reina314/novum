@@ -1,37 +1,53 @@
-use novum::{
-    runtime::Value,
-};
+use novum::runtime::Value;
 
 mod common;
-use common::{
-    run,
-    assert_int,
-    assert_float,
-    assert_bool,
-    assert_string,
-};
+use common::{assert_bool, assert_float, assert_int, assert_string, run};
 
 #[test]
 fn builtin_len() {
-    assert_int(
-        "len([1, 2, 3])",
-        3,
-    );
+    assert_int("len([1, 2, 3])", 3);
 }
 
 #[test]
 fn builtin_typeof() {
-    assert_string(
-        "typeof(42)",
-        "Int",
-    );
+    assert_string("typeof(42)", "Int");
 }
 
 #[test]
 fn builtin_str() {
-    assert_string(
-        "str(42)",
-        "42",
+    assert_string("str(42)", "42");
+}
+
+#[test]
+fn math_sqrt_method_on_float() {
+    assert_float(
+        r#"
+        9.0.sqrt()
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn math_min_method() {
+    assert_float(
+        r#"
+        9.min(3)
+        "#,
+        3.0,
+    );
+}
+
+#[test]
+fn math_clamp_method() {
+    assert_float(
+        r#"
+        9.clamp(
+            0,
+            5
+        )
+        "#,
+        5.0,
     );
 }
 
@@ -59,37 +75,31 @@ fn stdlib_math_sin() {
 
 #[test]
 fn stdlib_fs_exists() {
-    match run(
-        r#"
+    match run(r#"
         import fs
         fs.exists("__novum_file_that_does_not_exist__")
-        "#
-    ) {
-        Ok(Value::Bool(false)) => {}
+        "#)
+    {
+        Ok(Value::Bool(false)) => {},
 
         other => {
-            panic!(
-                "unexpected result: {other:?}"
-            );
-        }
+            panic!("unexpected result: {other:?}");
+        },
     }
 }
 
 #[test]
 fn stdlib_process_cwd() {
-    match run(
-        r#"
+    match run(r#"
         import process as p
         p.cwd()?
-        "#
-    ) {
-        Ok(Value::Path(_)) => {}
+        "#)
+    {
+        Ok(Value::Path(_)) => {},
 
         other => {
-            panic!(
-                "expected Str, got {other:?}"
-            );
-        }
+            panic!("expected Str, got {other:?}");
+        },
     }
 }
 
@@ -139,8 +149,6 @@ fn vm_csv_read() {
             "tests/data/experiment.csv"
         ).nrows
         "#,
-        6,
+        122,
     )
 }
-
-

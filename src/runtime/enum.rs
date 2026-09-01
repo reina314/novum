@@ -1,10 +1,6 @@
 use super::Value;
 
-use std::{
-    collections::HashMap,
-    fmt,
-    rc::Rc,
-};
+use std::{collections::HashMap, fmt, rc::Rc};
 
 pub type EnumRef = Rc<EnumDef>;
 
@@ -21,23 +17,13 @@ pub struct EnumVariant {
 }
 
 impl fmt::Debug for EnumVariant {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "{}({} args)",
-            self.name,
-            self.arity
-        )
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}({} args)", self.name, self.arity)
     }
 }
 
 impl EnumDef {
-    pub fn new(
-        name: impl Into<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             variants: HashMap::new(),
@@ -48,45 +34,26 @@ impl EnumDef {
         &self.name
     }
 
-    pub fn add_variant(
-        &mut self,
-        name: impl Into<String>,
-        arity: usize,
-    ) -> Result<(), String> {
-        let name =
-            name.into();
+    pub fn add_variant(&mut self, name: impl Into<String>, arity: usize) -> Result<(), String> {
+        let name = name.into();
 
         if self.variants.contains_key(&name) {
-            return Err(format!(
-                "duplicate enum variant '{}'",
-                name
-            ));
+            return Err(format!("duplicate enum variant '{}'", name));
         }
 
-        self.variants.insert(
-            name.clone(),
-            EnumVariant {
-                name,
-                arity,
-            },
-        );
+        self.variants
+            .insert(name.clone(), EnumVariant { name, arity });
 
         Ok(())
     }
 
-    pub fn variant(
-        &self,
-        name: &str,
-    ) -> Option<&EnumVariant> {
+    pub fn variant(&self, name: &str) -> Option<&EnumVariant> {
         self.variants.get(name)
     }
 
-    pub fn variants(
-        &self,
-    ) -> &HashMap<String, EnumVariant> {
+    pub fn variants(&self) -> &HashMap<String, EnumVariant> {
         &self.variants
     }
-
 }
 
 impl EnumVariant {
@@ -100,28 +67,14 @@ impl EnumVariant {
 }
 
 impl fmt::Debug for EnumDef {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "<enum {}>",
-            self.name
-        )
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<enum {}>", self.name)
     }
 }
 
 impl fmt::Display for EnumDef {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "<enum {}>",
-            self.name
-        )
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<enum {}>", self.name)
     }
 }
 
@@ -159,41 +112,24 @@ impl EnumValue {
         &self.fields
     }
 
-    pub fn field(
-        &self,
-        index: usize,
-    ) -> Option<Value> {
+    pub fn field(&self, index: usize) -> Option<Value> {
         self.fields.get(index).cloned()
     }
 }
 
 impl fmt::Debug for EnumValue {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}",
-            self.enum_name,
-            self.variant,
-        )?;
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.enum_name, self.variant,)?;
 
         if !self.fields.is_empty() {
             write!(f, "(")?;
 
-            for (i, value)
-                in self.fields.iter().enumerate()
-            {
+            for (i, value) in self.fields.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
 
-                write!(
-                    f,
-                    "{:?}",
-                    value
-                )?;
+                write!(f, "{:?}", value)?;
             }
 
             write!(f, ")")?;
@@ -204,32 +140,18 @@ impl fmt::Debug for EnumValue {
 }
 
 impl fmt::Display for EnumValue {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}",
-            self.enum_name,
-            self.variant,
-        )?;
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.enum_name, self.variant,)?;
 
         if !self.fields.is_empty() {
             write!(f, "(")?;
 
-            for (i, value)
-                in self.fields.iter().enumerate()
-            {
+            for (i, value) in self.fields.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
 
-                write!(
-                    f,
-                    "{}",
-                    value
-                )?;
+                write!(f, "{}", value)?;
             }
 
             write!(f, ")")?;
@@ -246,19 +168,14 @@ pub struct EnumConstructor {
 }
 
 impl EnumConstructor {
-    pub fn new(
-        enum_def: EnumRef,
-        variant: impl Into<String>,
-    ) -> Self {
+    pub fn new(enum_def: EnumRef, variant: impl Into<String>) -> Self {
         Self {
             enum_def,
             variant: variant.into(),
         }
     }
 
-    pub fn enum_def(
-        &self,
-    ) -> &EnumRef {
+    pub fn enum_def(&self) -> &EnumRef {
         &self.enum_def
     }
 
@@ -270,21 +187,13 @@ impl EnumConstructor {
         self.enum_def()
             .variant(self.variant())
             .map(|variant| variant.arity())
-            .expect(
-                "EnumConstructor references an unknown variant"
-            )
+            .expect("EnumConstructor references an unknown variant")
     }
-
 }
 
 impl fmt::Debug for EnumConstructor {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        let variant =
-            self.enum_def
-                .variant(&self.variant);
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = self.enum_def.variant(&self.variant);
 
         match variant {
             Some(variant) => {
@@ -295,7 +204,7 @@ impl fmt::Debug for EnumConstructor {
                     self.variant,
                     variant.arity(),
                 )
-            }
+            },
 
             None => {
                 write!(
@@ -304,21 +213,13 @@ impl fmt::Debug for EnumConstructor {
                     self.enum_def.name(),
                     self.variant,
                 )
-            }
+            },
         }
     }
 }
 
 impl fmt::Display for EnumConstructor {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}",
-            self.enum_def.name(),
-            self.variant
-        )
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.enum_def.name(), self.variant)
     }
 }

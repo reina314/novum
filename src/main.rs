@@ -1,39 +1,18 @@
 use novum::{
-    runtime::{Value},
+    runtime::Value,
     syntax::TokenKind,
-    vm::{Vm, Compiler},
+    vm::{Compiler, Vm},
     Lexer, Parser,
 };
 
 use reedline::{
-    default_emacs_keybindings,
-    EditCommand,
-    Emacs,
-    FileBackedHistory,
-    Highlighter,
-    KeyCode,
-    KeyModifiers,
-    Prompt,
-    Reedline,
-    ReedlineEvent,
-    Signal,
-    StyledText,
-    ValidationResult,
-    Validator,
+    default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, Highlighter, KeyCode,
+    KeyModifiers, Prompt, Reedline, ReedlineEvent, Signal, StyledText, ValidationResult, Validator,
 };
 
 use nu_ansi_term::{Color, Style};
 
-use std::{
-    borrow::Cow,
-    rc::Rc,
-    cell::RefCell,
-    env,
-    fs,
-    path::{
-        PathBuf,
-    },
-};
+use std::{borrow::Cow, cell::RefCell, env, fs, path::PathBuf, rc::Rc};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -56,69 +35,48 @@ enum Command {
 
 impl Options {
     fn parse() -> Result<Command, String> {
-        let mut options =
-            Self::default();
+        let mut options = Self::default();
 
-        let args =
-            env::args().skip(1);
+        let args = env::args().skip(1);
 
-        for arg in args
-        {
+        for arg in args {
             match arg.as_str() {
                 "--version" | "-V" => {
-                    return Ok(
-                        Command::Version
-                    );
-                }
+                    return Ok(Command::Version);
+                },
 
                 "-l" | "--lexer" => {
                     options.display_lexer = true;
-                }
+                },
 
                 "-p" | "--parser" => {
                     options.display_parser = true;
-                }
+                },
 
                 "-a" | "--all" => {
                     options.display_lexer = true;
                     options.display_parser = true;
-                }
+                },
 
-                "help"
-                | "--help"
-                | "-h" => {
-                    return Ok(
-                        Command::Help
-                    );
-                }
+                "help" | "--help" | "-h" => {
+                    return Ok(Command::Help);
+                },
 
                 _ if arg.starts_with('-') => {
-                    return Err(
-                        format!(
-                            "unknown option: {arg}"
-                        )
-                    );
-                }
+                    return Err(format!("unknown option: {arg}"));
+                },
 
                 _ => {
                     if options.file.is_some() {
-                        return Err(
-                            "only one input file is allowed"
-                                .into()
-                        );
+                        return Err("only one input file is allowed".into());
                     }
 
-                    options.file =
-                        Some(arg);
-                }
+                    options.file = Some(arg);
+                },
             }
         }
 
-        Ok(
-            Command::Run(
-                options
-            )
-        )
+        Ok(Command::Run(options))
     }
 
     fn print_help() {
@@ -159,53 +117,36 @@ KEYS:
 // ============================================================
 
 fn main() {
-    let command =
-        match Options::parse() {
-            Ok(command) =>
-                command,
+    let command = match Options::parse() {
+        Ok(command) => command,
 
-            Err(message) => {
-                eprintln!(
-                    "error: {message}"
-                );
+        Err(message) => {
+            eprintln!("error: {message}");
 
-                eprintln!(
-                    "try 'novum --help' for usage information"
-                );
+            eprintln!("try 'novum --help' for usage information");
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
     match command {
         Command::Version => {
-            println!(
-                "novum v{VERSION}"
-            );
-        }
+            println!("novum v{VERSION}");
+        },
 
         Command::Help => {
             Options::print_help();
-        }
+        },
 
-        Command::Run(options) => {
-            match options.file {
-                Some(path) => {
-                    run_file(
-                        path,
-                        options.display_lexer,
-                        options.display_parser,
-                    );
-                }
+        Command::Run(options) => match options.file {
+            Some(path) => {
+                run_file(path, options.display_lexer, options.display_parser);
+            },
 
-                None => {
-                    repl(
-                        options.display_lexer,
-                        options.display_parser,
-                    );
-                }
-            }
-        }
+            None => {
+                repl(options.display_lexer, options.display_parser);
+            },
+        },
     }
 }
 
@@ -213,130 +154,82 @@ fn main() {
 // Execution
 // ============================================================
 
-fn run_file(
-    path: String,
-    display_lexer: bool,
-    display_parser: bool,
-) {
-    let source =
-        match fs::read_to_string(
-            &path
-        ) {
-            Ok(source) =>
-                source,
+fn run_file(path: String, display_lexer: bool, display_parser: bool) {
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
 
-            Err(error) => {
-                eprintln!(
-                    "failed to read '{}': {}",
-                    path,
-                    error
-                );
+        Err(error) => {
+            eprintln!("failed to read '{}': {}", path, error);
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
-    let source_path =
-        match fs::canonicalize(&path) {
-            Ok(path) => path,
+    let source_path = match fs::canonicalize(&path) {
+        Ok(path) => path,
 
-            Err(error) => {
-                eprintln!(
-                    "failed to resolve '{}': {}",
-                    path,
-                    error
-                );
+        Err(error) => {
+            eprintln!("failed to resolve '{}': {}", path, error);
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
-    let tokens =
-        match Lexer::new(&source).lex() {
-            Ok(tokens) =>
-                tokens,
+    let tokens = match Lexer::new(&source).lex() {
+        Ok(tokens) => tokens,
 
-            Err(error) => {
-                error.display(
-                    &source
-                );
+        Err(error) => {
+            error.display(&source);
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
     if display_lexer {
-        println!(
-            "\nTokens:\n{tokens:#?}"
-        );
+        println!("\nTokens:\n{tokens:#?}");
     }
 
-    let mut parser =
-        Parser::new(tokens);
+    let mut parser = Parser::new(tokens);
 
-    let program =
-        match parser.parse() {
-            Ok(program) =>
-                program,
+    let program = match parser.parse() {
+        Ok(program) => program,
 
-            Err(error) => {
-                error.display(
-                    &source
-                );
+        Err(error) => {
+            error.display(&source);
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
     if display_parser {
-        println!(
-            "\nAST:\n{program:#?}"
-        );
+        println!("\nAST:\n{program:#?}");
     }
 
-    let chunk =
-        match Compiler::new()
-            .compile(&program)
-        {
-            Ok(chunk) =>
-                Rc::new(chunk),
+    let chunk = match Compiler::new().compile(&program) {
+        Ok(chunk) => Rc::new(chunk),
 
-            Err(error) => {
-                error.display(
-                    &source
-                );
+        Err(error) => {
+            error.display(&source);
 
-                std::process::exit(1);
-            }
-        };
+            std::process::exit(1);
+        },
+    };
 
-    let module =
-        Rc::new(
-            RefCell::new(
-                novum::runtime::Module::new(
-                    "<main>"
-                )
-            )
-        );
+    let module = Rc::new(RefCell::new(novum::runtime::Module::new("<main>")));
 
-    let mut vm =
-        Vm::new();
+    let mut vm = Vm::new();
 
-    match vm.run_with_module_and_path(
-        chunk,
-        module,
-        Some(&source_path),
-    ) {
-        Ok(Value::Unit) => {}
+    match vm.run_with_module_and_path(chunk, module, Some(&source_path)) {
+        Ok(Value::Unit) => {},
 
         Ok(value) => {
             println!("{value}");
-        }
+        },
 
         Err(error) => {
             error.display(&source);
             std::process::exit(1);
-        }
+        },
     }
 }
 
@@ -344,107 +237,61 @@ fn run_file(
 // REPL
 // ============================================================
 
-fn repl(
-    display_lexer: bool,
-    display_parser: bool,
-) {
-    let history =
-        match FileBackedHistory::with_file(
-            1000,
-            history_path(),
-        ) {
-            Ok(history) => {
-                Box::new(history)
-            }
+fn repl(display_lexer: bool, display_parser: bool) {
+    let history = match FileBackedHistory::with_file(1000, history_path()) {
+        Ok(history) => Box::new(history),
 
-            Err(error) => {
-                eprintln!(
-                    "warning: failed to initialize history: {error}"
-                );
+        Err(error) => {
+            eprintln!("warning: failed to initialize history: {error}");
 
-                Box::new(
-                    FileBackedHistory::default()
-                )
-            }
-        };
+            Box::new(FileBackedHistory::default())
+        },
+    };
 
-    let keybindings =
-        configure_keybindings();
+    let keybindings = configure_keybindings();
 
-    let edit_mode =
-        Box::new(
-            Emacs::new(
-                keybindings
-            )
-        );
+    let edit_mode = Box::new(Emacs::new(keybindings));
 
-    let mut editor =
-        Reedline::create()
-            .with_history(history)
-            .with_edit_mode(edit_mode)
-            .with_validator(
-                Box::new(
-                    NovumValidator
-                )
-            )
-            .with_highlighter(
-                Box::new(
-                    NovumHighlighter
-                )
-            )
-            .use_kitty_keyboard_enhancement(
-                true
-            )
-            .with_ansi_colors(
-                true
-            );
+    let mut editor = Reedline::create()
+        .with_history(history)
+        .with_edit_mode(edit_mode)
+        .with_validator(Box::new(NovumValidator))
+        .with_highlighter(Box::new(NovumHighlighter))
+        .use_kitty_keyboard_enhancement(true)
+        .with_ansi_colors(true);
 
-    let mut compiler =
-        Compiler::new();
+    let mut compiler = Compiler::new();
 
-    let mut vm =
-        Vm::new();
+    let mut vm = Vm::new();
 
-    let mut line_index =
-        0usize;
+    let mut line_index = 0usize;
 
     loop {
         println!();
 
-        let prompt =
-            NovumPrompt::new(
-                line_index
-            );
+        let prompt = NovumPrompt::new(line_index);
 
-        match editor.read_line(
-            &prompt
-        ) {
-            Ok(
-                Signal::Success(line)
-            ) => {
-                let command =
-                    line.trim();
+        match editor.read_line(&prompt) {
+            Ok(Signal::Success(line)) => {
+                let command = line.trim();
 
                 if command.is_empty() {
                     continue;
                 }
 
                 match command {
-                    "quit"
-                    | "exit" => {
-                        println!(
-                            "\nBye!"
-                        );
+                    "quit" | "exit" => {
+                        println!("\nBye!");
 
                         break;
-                    }
+                    },
 
                     "help" => {
                         print_repl_help();
                         continue;
-                    }
+                    },
 
-                    _ => {}
+                    _ => {},
                 }
 
                 run_repl_line(
@@ -457,37 +304,27 @@ fn repl(
                 );
 
                 line_index += 1;
-            }
+            },
 
-            Ok(
-                Signal::CtrlC
-            ) => {
+            Ok(Signal::CtrlC) => {
                 println!("^C");
-            }
+            },
 
-            Ok(
-                Signal::CtrlD
-            ) => {
-                println!(
-                    "\nBye!"
-                );
+            Ok(Signal::CtrlD) => {
+                println!("\nBye!");
 
                 break;
-            }
+            },
 
             Ok(signal) => {
-                eprintln!(
-                    "REPL event: {signal:?}"
-                );
-            }
+                eprintln!("REPL event: {signal:?}");
+            },
 
             Err(error) => {
-                eprintln!(
-                    "REPL error: {error}"
-                );
+                eprintln!("REPL error: {error}");
 
                 break;
-            }
+            },
         }
     }
 }
@@ -500,90 +337,79 @@ fn run_repl_line(
     display_parser: bool,
     line_index: usize,
 ) {
-    let mut lexer =
-        Lexer::new(source);
+    let mut lexer = Lexer::new(source);
 
-    let tokens =
-        match lexer.lex() {
-            Ok(tokens) =>
-                tokens,
-
-            Err(error) => {
-                error.display(
-                    source
-                );
-
-                return;
-            }
-        };
-
-    if display_lexer {
-        println!(
-            "\nTokens:\n{tokens:#?}"
-        );
-    }
-
-    let mut parser =
-        Parser::new(tokens);
-
-    let program =
-        match parser.parse() {
-            Ok(program) =>
-                program,
-
-            Err(error) => {
-                error.display(
-                    source
-                );
-
-                return;
-            }
-        };
-
-    if display_parser {
-        println!(
-            "\nAST:\n{program:#?}"
-        );
-    }
-
-    let chunk =
-        match compiler
-            .compile_program(
-                &program
-            )
-        {
-            Ok(chunk) =>
-                Rc::new(chunk),
-
-            Err(error) => {
-                error.display(
-                    source
-                );
-
-                return;
-            }
-        };
-
-    match vm.run_repl(
-        chunk
-    ) {
-        Ok(value)
-            if value != Value::Unit =>
-        {
-            print_result(
-                value,
-                Some(line_index),
-                true,
-            );
-        }
-
-        Ok(_) => {}
+    let tokens = match lexer.lex() {
+        Ok(tokens) => tokens,
 
         Err(error) => {
-            error.display(
-                source
-            );
-        }
+            error.display(source);
+
+            return;
+        },
+    };
+
+    if display_lexer {
+        println!("\nTokens:\n{tokens:#?}");
+    }
+
+    let mut parser = Parser::new(tokens);
+
+    let program = match parser.parse() {
+        Ok(program) => program,
+
+        Err(error) => {
+            error.display(source);
+
+            return;
+        },
+    };
+
+    if display_parser {
+        println!("\nAST:\n{program:#?}");
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * REPL compiler transaction
+     * ------------------------------------------------------------
+     *
+     * Compilation mutates the Compiler's lexical environment.
+     * A later runtime error must therefore be able to restore
+     * that environment.
+     */
+    let checkpoint = compiler.checkpoint();
+
+    let chunk = match compiler.compile_program(&program) {
+        Ok(chunk) => Rc::new(chunk),
+
+        Err(error) => {
+            compiler.rollback(checkpoint);
+
+            error.display(source);
+
+            return;
+        },
+    };
+
+    match vm.run_repl(chunk) {
+        Ok(value) if value != Value::Unit => {
+            print_result(value, Some(line_index), true);
+        },
+
+        Ok(_) => {},
+
+        Err(error) => {
+            /*
+             * Compilation succeeded, but execution failed.
+             *
+             * The runtime environment must not commit the
+             * bindings introduced by this failed REPL line.
+             */
+            compiler.rollback(checkpoint);
+
+            error.display(source);
+        },
     }
 }
 
@@ -599,15 +425,11 @@ impl NovumUi {
     // --------------------------------------------------------
 
     fn prompt_style() -> Style {
-        Style::new()
-            .fg(Color::Blue)
-            .bold()
+        Style::new().fg(Color::Blue).bold()
     }
 
     fn repl_command_style() -> Style {
-        Style::new()
-            .fg(Color::Blue)
-            .bold()
+        Style::new().fg(Color::Blue).bold()
     }
 
     // --------------------------------------------------------
@@ -615,81 +437,57 @@ impl NovumUi {
     // --------------------------------------------------------
 
     fn keyword_style() -> Style {
-        Style::new()
-            .fg(Color::Purple)
-            .bold()
+        Style::new().fg(Color::Purple).bold()
     }
 
     fn literal_style() -> Style {
-        Style::new()
-            .fg(Color::Cyan)
+        Style::new().fg(Color::Cyan)
     }
 
     fn string_style() -> Style {
-        Style::new()
-            .fg(Color::Green)
+        Style::new().fg(Color::Green)
     }
 
     fn bool_style() -> Style {
-        Style::new()
-            .fg(Color::Yellow)
-            .bold()
+        Style::new().fg(Color::Yellow).bold()
     }
 
     fn null_style() -> Style {
-        Style::new()
-            .fg(Color::LightYellow)
-            .bold()
+        Style::new().fg(Color::LightYellow).bold()
     }
 
     fn paren_style() -> Style {
-        Style::new()
-            .fg(Color::Blue)
+        Style::new().fg(Color::Blue)
     }
 
     fn bracket_style() -> Style {
-        Style::new()
-            .fg(Color::Cyan)
+        Style::new().fg(Color::Cyan)
     }
 
     fn brace_style() -> Style {
-        Style::new()
-            .fg(Color::Magenta)
+        Style::new().fg(Color::Magenta)
     }
 
     fn default_style() -> Style {
         Style::default()
     }
 
-    fn style_for_token(
-        kind: &TokenKind,
-    ) -> Style {
+    fn style_for_token(kind: &TokenKind) -> Style {
         match kind {
             // ------------------------------------------------
             // Literals
             // ------------------------------------------------
+            TokenKind::Int(_) | TokenKind::Float(_) => Self::literal_style(),
 
-            TokenKind::Int(_)
-            | TokenKind::Float(_) => {
-                Self::literal_style()
-            }
+            TokenKind::Str(_) => Self::string_style(),
 
-            TokenKind::Str(_) => {
-                Self::string_style()
-            }
+            TokenKind::Bool(_) => Self::bool_style(),
 
-            TokenKind::Bool(_) => {
-                Self::bool_style()
-            }
-
-            TokenKind::Null => {
-                Self::null_style()
-            }
+            TokenKind::Null => Self::null_style(),
 
             // ------------------------------------------------
             // Keywords
             // ------------------------------------------------
-
             TokenKind::If
             | TokenKind::Else
             | TokenKind::For
@@ -705,37 +503,23 @@ impl NovumUi {
             | TokenKind::Class
             | TokenKind::Struct
             | TokenKind::Enum
-            | TokenKind::Import => {
-                Self::keyword_style()
-            }
+            | TokenKind::Import
+            | TokenKind::Use => Self::keyword_style(),
 
             // ------------------------------------------------
             // Brackets
             // ------------------------------------------------
+            TokenKind::LParen | TokenKind::RParen => Self::paren_style(),
 
-            TokenKind::LParen
-            | TokenKind::RParen => {
-                Self::paren_style()
-            }
+            TokenKind::Pipe => Self::paren_style(),
 
-            TokenKind::Pipe => {
-                Self::paren_style()
-            }
+            TokenKind::LBracket | TokenKind::RBracket => Self::bracket_style(),
 
-            TokenKind::LBracket
-            | TokenKind::RBracket => {
-                Self::bracket_style()
-            }
-
-            TokenKind::LBrace
-            | TokenKind::RBrace => {
-                Self::brace_style()
-            }
+            TokenKind::LBrace | TokenKind::RBrace => Self::brace_style(),
 
             // ------------------------------------------------
             // Everything else
             // ------------------------------------------------
-
             _ => Self::default_style(),
         }
     }
@@ -744,34 +528,22 @@ impl NovumUi {
     // Prompt text
     // --------------------------------------------------------
 
-    fn styled_prompt(
-        text: &str,
-    ) -> String {
-        Self::prompt_style()
-            .paint(text)
-            .to_string()
+    fn styled_prompt(text: &str) -> String {
+        Self::prompt_style().paint(text).to_string()
     }
 
     // --------------------------------------------------------
     // Source highlighting
     // --------------------------------------------------------
 
-    fn highlight_source(
-        source: &str,
-    ) -> StyledText {
+    fn highlight_source(source: &str) -> StyledText {
         let mut styled = StyledText::new();
 
         // REPL commands are not Novum syntax.
         let command = source.trim();
 
-        if matches!(
-            command,
-            "quit" | "exit" | "help"
-        ) {
-            styled.push((
-                Self::repl_command_style(),
-                source.to_string(),
-            ));
+        if matches!(command, "quit" | "exit" | "help") {
+            styled.push((Self::repl_command_style(), source.to_string()));
 
             return styled;
         }
@@ -784,22 +556,16 @@ impl NovumUi {
             // Incomplete input is expected while editing.
             // Do not make the highlighter itself fail.
             Err(_) => {
-                styled.push((
-                    Self::default_style(),
-                    source.to_string(),
-                ));
+                styled.push((Self::default_style(), source.to_string()));
 
                 return styled;
-            }
+            },
         };
 
         let mut last = 0usize;
 
         for token in tokens {
-            if matches!(
-                token.kind,
-                TokenKind::Eof
-            ) {
+            if matches!(token.kind, TokenKind::Eof) {
                 break;
             }
 
@@ -807,30 +573,19 @@ impl NovumUi {
             let end = token.span.end;
 
             // Safety against malformed spans.
-            if start > source.len()
-                || end > source.len()
-                || start > end
-            {
-                styled.push((
-                    Self::default_style(),
-                    source.to_string(),
-                ));
+            if start > source.len() || end > source.len() || start > end {
+                styled.push((Self::default_style(), source.to_string()));
 
                 return styled;
             }
 
             // Preserve whitespace / gaps.
             if start > last {
-                styled.push((
-                    Self::default_style(),
-                    source[last..start].to_string(),
-                ));
+                styled.push((Self::default_style(), source[last..start].to_string()));
             }
 
             styled.push((
-                Self::style_for_token(
-                    &token.kind
-                ),
+                Self::style_for_token(&token.kind),
                 source[start..end].to_string(),
             ));
 
@@ -839,10 +594,7 @@ impl NovumUi {
 
         // Preserve trailing text.
         if last < source.len() {
-            styled.push((
-                Self::default_style(),
-                source[last..].to_string(),
-            ));
+            styled.push((Self::default_style(), source[last..].to_string()));
         }
 
         styled
@@ -852,21 +604,15 @@ impl NovumUi {
     // Result rendering
     // --------------------------------------------------------
 
-    fn render_result(
-        value: &Value,
-        line_index: Option<usize>,
-        colorize: bool,
-    ) -> String {
+    fn render_result(value: &Value, line_index: Option<usize>, colorize: bool) -> String {
         let output = value.to_string();
 
         let prefix = match line_index {
             Some(index) => {
                 format!("[{index}] >> ")
-            }
+            },
 
-            None => {
-                ">> ".to_string()
-            }
+            None => ">> ".to_string(),
         };
 
         let indent = " ".repeat(prefix.len());
@@ -881,59 +627,34 @@ impl NovumUi {
 
         // Prefix.
         if colorize {
-            styled.push((
-                Self::prompt_style(),
-                prefix,
-            ));
+            styled.push((Self::prompt_style(), prefix));
         } else {
-            styled.push((
-                Self::default_style(),
-                prefix,
-            ));
+            styled.push((Self::default_style(), prefix));
         }
 
         // First line.
         if colorize {
-            Self::append_highlighted(
-                &mut styled,
-                first,
-            );
+            Self::append_highlighted(&mut styled, first);
         } else {
-            styled.push((
-                Self::default_style(),
-                first.to_string(),
-            ));
+            styled.push((Self::default_style(), first.to_string()));
         }
 
         // Remaining lines.
         for line in lines {
-            styled.push((
-                Self::default_style(),
-                format!("\n{indent}"),
-            ));
+            styled.push((Self::default_style(), format!("\n{indent}")));
 
             if colorize {
-                Self::append_highlighted(
-                    &mut styled,
-                    line,
-                );
+                Self::append_highlighted(&mut styled, line);
             } else {
-                styled.push((
-                    Self::default_style(),
-                    line.to_string(),
-                ));
+                styled.push((Self::default_style(), line.to_string()));
             }
         }
 
         styled.render_simple()
     }
 
-    fn append_highlighted(
-        target: &mut StyledText,
-        source: &str,
-    ) {
-        let highlighted =
-            Self::highlight_source(source);
+    fn append_highlighted(target: &mut StyledText, source: &str) {
+        let highlighted = Self::highlight_source(source);
 
         for segment in highlighted.buffer {
             target.push(segment);
@@ -945,16 +666,8 @@ impl NovumUi {
 // Output
 // ============================================================
 
-fn print_result(
-    value: Value,
-    line_index: Option<usize>,
-    colorize: bool,
-) {
-    let output = NovumUi::render_result(
-        &value,
-        line_index,
-        colorize,
-    );
+fn print_result(value: Value, line_index: Option<usize>, colorize: bool) {
+    let output = NovumUi::render_result(&value, line_index, colorize);
 
     if !output.is_empty() {
         println!("{output}");
@@ -968,11 +681,7 @@ fn print_result(
 struct NovumHighlighter;
 
 impl Highlighter for NovumHighlighter {
-    fn highlight(
-        &self,
-        line: &str,
-        _cursor: usize,
-    ) -> StyledText {
+    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         NovumUi::highlight_source(line)
     }
 }
@@ -1000,50 +709,27 @@ impl NovumPrompt {
 }
 
 impl Prompt for NovumPrompt {
-    fn render_prompt_left(
-        &self,
-    ) -> Cow<'_, str> {
-        Cow::Owned(
-            NovumUi::styled_prompt(
-                &format!("[{}] ", self.index)
-            )
-        )
+    fn render_prompt_left(&self) -> Cow<'_, str> {
+        Cow::Owned(NovumUi::styled_prompt(&format!("[{}] ", self.index)))
     }
 
-    fn render_prompt_right(
-        &self,
-    ) -> Cow<'_, str> {
+    fn render_prompt_right(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }
 
-    fn render_prompt_indicator(
-        &self,
-        _edit_mode: reedline::PromptEditMode,
-    ) -> Cow<'_, str> {
-        Cow::Owned(
-            NovumUi::styled_prompt("<< ")
-        )
+    fn render_prompt_indicator(&self, _edit_mode: reedline::PromptEditMode) -> Cow<'_, str> {
+        Cow::Owned(NovumUi::styled_prompt("<< "))
     }
 
-    fn render_prompt_multiline_indicator(
-        &self,
-    ) -> Cow<'_, str> {
-        Cow::Owned(
-            " ".repeat(
-                self.prefix_width()
-            )
-        )
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+        Cow::Owned(" ".repeat(self.prefix_width()))
     }
 
     fn render_prompt_history_search_indicator(
         &self,
         _history_search: reedline::PromptHistorySearch,
     ) -> Cow<'_, str> {
-        Cow::Owned(
-            NovumUi::styled_prompt(
-                "(reverse-search) "
-            )
-        )
+        Cow::Owned(NovumUi::styled_prompt("(reverse-search) "))
     }
 }
 
@@ -1054,10 +740,7 @@ impl Prompt for NovumPrompt {
 struct NovumValidator;
 
 impl Validator for NovumValidator {
-    fn validate(
-        &self,
-        line: &str,
-    ) -> ValidationResult {
+    fn validate(&self, line: &str) -> ValidationResult {
         if line.trim().is_empty() {
             return ValidationResult::Complete;
         }
@@ -1070,9 +753,7 @@ impl Validator for NovumValidator {
     }
 }
 
-fn has_unclosed_delimiter(
-    source: &str,
-) -> bool {
+fn has_unclosed_delimiter(source: &str) -> bool {
     let mut stack = Vec::new();
 
     let mut in_string = false;
@@ -1088,13 +769,13 @@ fn has_unclosed_delimiter(
             match ch {
                 '\\' => {
                     escaped = true;
-                }
+                },
 
                 '"' => {
                     in_string = false;
-                }
+                },
 
-                _ => {}
+                _ => {},
             }
 
             continue;
@@ -1103,32 +784,25 @@ fn has_unclosed_delimiter(
         match ch {
             '"' => {
                 in_string = true;
-            }
+            },
 
             '(' | '[' | '{' => {
                 stack.push(ch);
-            }
+            },
 
             ')' | ']' | '}' => {
-                let Some(open) =
-                    stack.pop()
-                else {
+                let Some(open) = stack.pop() else {
                     return false;
                 };
 
-                let matched = matches!(
-                    (open, ch),
-                    ('(', ')')
-                        | ('[', ']')
-                        | ('{', '}')
-                );
+                let matched = matches!((open, ch), ('(', ')') | ('[', ']') | ('{', '}'));
 
                 if !matched {
                     return false;
                 }
-            }
+            },
 
-            _ => {}
+            _ => {},
         }
     }
 
@@ -1139,11 +813,8 @@ fn has_unclosed_delimiter(
 // Keybindings
 // ============================================================
 
-fn configure_keybindings()
-    -> reedline::Keybindings
-{
-    let mut keybindings =
-        default_emacs_keybindings();
+fn configure_keybindings() -> reedline::Keybindings {
+    let mut keybindings = default_emacs_keybindings();
 
     // --------------------------------------------------------
     // Single quotes
@@ -1153,12 +824,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('\''),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "''".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("''".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1170,12 +837,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('"'),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "\"\"".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("\"\"".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1187,12 +850,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('('),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "()".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1204,12 +863,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('['),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "[]".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("[]".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1221,12 +876,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('{'),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "{}".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("{}".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1238,12 +889,8 @@ fn configure_keybindings()
         KeyModifiers::NONE,
         KeyCode::Char('|'),
         ReedlineEvent::Edit(vec![
-            EditCommand::InsertString(
-                "||".into()
-            ),
-            EditCommand::MoveLeft {
-                select: false,
-            },
+            EditCommand::InsertString("||".into()),
+            EditCommand::MoveLeft { select: false },
         ]),
     );
 
@@ -1254,17 +901,13 @@ fn configure_keybindings()
     keybindings.add_binding(
         KeyModifiers::SHIFT,
         KeyCode::Enter,
-        ReedlineEvent::Edit(vec![
-            EditCommand::InsertNewline,
-        ]),
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
 
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Enter,
-        ReedlineEvent::Edit(vec![
-            EditCommand::InsertNewline,
-        ]),
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
 
     // --------------------------------------------------------
@@ -1273,9 +916,7 @@ fn configure_keybindings()
     keybindings.add_binding(
         KeyModifiers::NONE,
         KeyCode::Tab,
-        ReedlineEvent::Edit(vec![
-            EditCommand::InsertString("    ".into()),
-        ]),
+        ReedlineEvent::Edit(vec![EditCommand::InsertString("    ".into())]),
     );
 
     keybindings
@@ -1286,18 +927,12 @@ fn configure_keybindings()
 // ============================================================
 
 fn history_path() -> PathBuf {
-    if let Some(home) =
-        env::var_os("HOME")
-    {
-        return PathBuf::from(home)
-            .join(".novum_history");
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".novum_history");
     }
 
-    if let Some(home) =
-        env::var_os("USERPROFILE")
-    {
-        return PathBuf::from(home)
-            .join(".novum_history");
+    if let Some(home) = env::var_os("USERPROFILE") {
+        return PathBuf::from(home).join(".novum_history");
     }
 
     PathBuf::from(".novum_history")

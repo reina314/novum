@@ -40,7 +40,7 @@ This allows functions that consume fallible operations to avoid manually unpacki
 
 ## Control-flow errors
 
-`return`, `break`, and `continue` are represented internally as `ControlFlow` values. The evaluator prevents invalid propagation, such as `break` escaping a loop or `return` escaping a module scope.
+Control-flow constructs are only valid in their corresponding contexts. For example, `break` and `continue` can only be used inside loops, while `return` can only be used inside a function.
 
 ## Typical errors
 

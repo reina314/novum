@@ -1,0 +1,140 @@
+# ============================================================
+# Novum rustfmt.toml
+# ============================================================
+#
+# Philosophy:
+#   - Stable, conservative formatting
+#   - Readable function calls and signatures
+#   - Prefer vertical layout for long expressions
+#   - Keep blocks easy to fold in editors
+#   - Avoid aggressive formatting that obscures structure
+#
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Edition
+# ------------------------------------------------------------
+
+edition = "2021"
+
+
+# ------------------------------------------------------------
+# Imports
+# ------------------------------------------------------------
+
+# Keep imports grouped and deterministic.
+reorder_imports = true
+
+# Reorder modules inside use statements where possible.
+reorder_modules = true
+
+
+# ------------------------------------------------------------
+# General layout
+# ------------------------------------------------------------
+
+# 4 spaces is the conventional Rust indentation.
+tab_spaces = 4
+
+# Use spaces rather than tabs.
+hard_tabs = false
+
+# Keep lines reasonably short.
+# 100 is a good compromise for systems/compiler code.
+max_width = 100
+
+
+# ------------------------------------------------------------
+# Functions
+# ------------------------------------------------------------
+
+# Keep function signatures readable and allow rustfmt to split
+# long signatures vertically.
+fn_call_width = 60
+fn_args_layout = "Tall"
+
+# Prefer vertical formatting when function arguments become long.
+# This is particularly useful for VM/compiler code where calls
+# often contain nested expressions.
+use_small_heuristics = "Default"
+
+
+# ------------------------------------------------------------
+# Structs / enums
+# ------------------------------------------------------------
+
+# Keep struct fields vertically aligned and readable.
+struct_field_align_threshold = 0
+
+# Keep enum variants in a vertically readable form.
+enum_discrim_align_threshold = 0
+
+
+# ------------------------------------------------------------
+# Expressions
+# ------------------------------------------------------------
+
+# Keep chains of method calls readable.
+chain_width = 60
+
+# Format arrays/lists conservatively.
+array_width = 60
+
+# Keep single-line literals when reasonably short.
+single_line_if_else_max_width = 60
+
+
+# ------------------------------------------------------------
+# Blocks
+# ------------------------------------------------------------
+
+# Prefer readable block structure.
+indent_style = "Block"
+
+
+# ------------------------------------------------------------
+# Match expressions
+# ------------------------------------------------------------
+
+# Long match arms should naturally expand vertically.
+match_arm_blocks = true
+
+# Keep match arms readable instead of compressing them.
+match_block_trailing_comma = true
+
+
+# ------------------------------------------------------------
+# Trailing commas
+# ------------------------------------------------------------
+
+# Always prefer trailing commas in multiline constructs.
+# This makes future diffs smaller and reduces accidental
+# formatting churn.
+trailing_comma = "Vertical"
+
+
+# ------------------------------------------------------------
+# Comments
+# ------------------------------------------------------------
+
+# Preserve comment placement as much as rustfmt reasonably can.
+normalize_comments = true
+wrap_comments = false
+
+
+# ------------------------------------------------------------
+# Strings
+# ------------------------------------------------------------
+
+# Do not aggressively normalize string literals.
+normalize_doc_attributes = true
+
+
+# ------------------------------------------------------------
+# Version / stability
+# ------------------------------------------------------------
+
+# Stable Rust formatting behavior.
+# Avoid nightly-only formatting features.
+unstable_features = false
