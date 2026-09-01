@@ -1075,6 +1075,7 @@ dependencies = [
  "serde",
  "serde_json",
  "statrs",
+ "tukey_test",
 ]
 
 [[package]]
@@ -1957,6 +1958,12 @@ dependencies = [
  "tracing-core",
  "tracing-log",
 ]
+
+[[package]]
+name = "tukey_test"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8cac7ba53e397dc6dcbcc42d582b18bcd203f722de3716f9c18ef77b15bb1b"
 
 [[package]]
 name = "typenum"

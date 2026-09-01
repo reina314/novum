@@ -6,6 +6,7 @@ use crate::runtime::{
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use statrs::distribution::{ChiSquared, ContinuousCDF, FisherSnedecor, Normal, StudentsT};
+use tukey_test::tukey_hsd;
 
 struct FunctionSpec {
     name: &'static str,
@@ -126,6 +127,16 @@ fn function_specs() -> &'static [FunctionSpec] {
             receiver: None,
         },
         FunctionSpec {
+            name: "tukey",
+            function: tukey,
+            receiver: None,
+        },
+        FunctionSpec {
+            name: "post_hoc",
+            function: post_hoc,
+            receiver: None,
+        },
+        FunctionSpec {
             name: "chi_square",
             function: chi_square,
             receiver: None,
@@ -153,36 +164,11 @@ pub fn register_extensions(registry: &mut ExtensionRegistry) {
     }
 }
 
-//=========================
+// =========================
 // general helpers
-//=========================
-fn numeric_series_values(value: &Value) -> Result<Vec<f64>, String> {
-    match value {
-        Value::Series(series) => series.numeric_values(),
-
-        other => Err(format!(
-            "stats function expects Series, got {}",
-            other.type_name()
-        )),
-    }
-}
+// =========================
 
 fn numeric_series(value: &Value) -> Result<Vec<f64>, String> {
-    match value {
-        Value::Series(series) => series.numeric_values(),
-
-        other => Err(format!(
-            "stats function expects Series, got {}",
-            other.type_name()
-        )),
-    }
-}
-
-fn numeric_values_from_series(series: &SeriesRef) -> Result<Vec<f64>, String> {
-    series.numeric_values()
-}
-
-fn series_values(value: &Value) -> Result<Vec<f64>, String> {
     match value {
         Value::Series(series) => series.numeric_values(),
 
@@ -223,9 +209,103 @@ fn confidence_interval_dict(lower: f64, upper: f64, level: f64) -> Value {
     ])
 }
 
-//=========================
+fn confidence_level_from_args(args: &[Value], index: usize, function: &str) -> Result<f64, String> {
+    let value = match args.get(index) {
+        Some(Value::Int(value)) => *value as f64,
+
+        Some(Value::Float(value)) => *value,
+
+        Some(other) => {
+            return Err(format!(
+                "{}() confidence level must be numeric, got {}",
+                function,
+                other.type_name()
+            ));
+        },
+
+        None => {
+            return Ok(0.95);
+        },
+    };
+
+    if !value.is_finite() || !(0.0 < value && value < 1.0) {
+        return Err(format!("{}() confidence level must be in (0, 1)", function));
+    }
+
+    Ok(value)
+}
+
+fn validate_finite(values: &[f64], function: &str) -> Result<(), String> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(format!("{}() data contains non-finite value", function));
+    }
+
+    Ok(())
+}
+
+fn numeric_argument(value: &Value, function: &str, name: &str) -> Result<f64, String> {
+    let value = match value {
+        Value::Int(value) => *value as f64,
+        Value::Float(value) => *value,
+
+        other => {
+            return Err(format!(
+                "{}() {} must be numeric, got {}",
+                function,
+                name,
+                other.type_name()
+            ));
+        },
+    };
+
+    if !value.is_finite() {
+        return Err(format!("{}() {} must be finite", function, name));
+    }
+
+    Ok(value)
+}
+
+// =========================
 // descriptive statistics
-//=========================
+// =========================
+
+fn sample_variance(values: &[f64]) -> Option<f64> {
+    if values.len() < 2 {
+        return None;
+    }
+
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+
+    let sum_squared = values
+        .iter()
+        .map(|value| {
+            let diff = *value - mean;
+            diff * diff
+        })
+        .sum::<f64>();
+
+    Some(sum_squared / (values.len() - 1) as f64)
+}
+
+fn quantile_sorted(sorted: &[f64], q: f64) -> f64 {
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+
+    let position = q * (sorted.len() - 1) as f64;
+
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+
+    if lower == upper {
+        return sorted[lower];
+    }
+
+    let weight = position - lower as f64;
+
+    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+}
+
 fn describe_series(
     series: &SeriesRef,
 ) -> Result<
@@ -239,28 +319,23 @@ fn describe_series(
     ),
     String,
 > {
-    let values = numeric_values_from_series(series)?;
+    let values = numeric_series(&Value::Series(series.clone()))?;
 
     if values.is_empty() {
         return Ok((0, None, None, None, None, None));
     }
 
     let count = values.len();
-
     let mean = values.iter().sum::<f64>() / count as f64;
 
     let variance = sample_variance(&values);
+    let std = variance.map(f64::sqrt);
 
-    let std = variance.map(|value| value.sqrt());
-
-    let mut sorted = values.clone();
-
+    let mut sorted = values;
     sorted.sort_by(|a, b| a.total_cmp(b));
 
     let min = sorted[0];
-
     let median = quantile_sorted(&sorted, 0.5);
-
     let max = sorted[sorted.len() - 1];
 
     Ok((count, Some(mean), std, Some(min), Some(median), Some(max)))
@@ -289,34 +364,22 @@ pub fn describe(args: Vec<Value>) -> Result<Value, String> {
     }
 
     let mut column_names = Vec::with_capacity(columns.len());
-
     let mut counts = Vec::with_capacity(columns.len());
-
     let mut means = Vec::with_capacity(columns.len());
-
     let mut stds = Vec::with_capacity(columns.len());
-
     let mut mins = Vec::with_capacity(columns.len());
-
     let mut medians = Vec::with_capacity(columns.len());
-
     let mut maxs = Vec::with_capacity(columns.len());
 
     for column in &columns {
         let (count, mean, std, min, median, max) = describe_series(column)?;
 
         column_names.push(Value::Str(Rc::new(column.name().to_owned())));
-
         counts.push(Value::Int(count as i64));
-
         means.push(mean.map(Value::Float).unwrap_or(Value::Null));
-
         stds.push(std.map(Value::Float).unwrap_or(Value::Null));
-
         mins.push(min.map(Value::Float).unwrap_or(Value::Null));
-
         medians.push(median.map(Value::Float).unwrap_or(Value::Null));
-
         maxs.push(max.map(Value::Float).unwrap_or(Value::Null));
     }
 
@@ -357,9 +420,9 @@ pub fn min(args: Vec<Value>) -> Result<Value, String> {
         return Ok(Value::Null);
     }
 
-    let result = values.iter().copied().reduce(f64::min).unwrap();
-
-    Ok(Value::Float(result))
+    Ok(Value::Float(
+        values.iter().copied().reduce(f64::min).unwrap(),
+    ))
 }
 
 pub fn max(args: Vec<Value>) -> Result<Value, String> {
@@ -373,9 +436,9 @@ pub fn max(args: Vec<Value>) -> Result<Value, String> {
         return Ok(Value::Null);
     }
 
-    let result = values.iter().copied().reduce(f64::max).unwrap();
-
-    Ok(Value::Float(result))
+    Ok(Value::Float(
+        values.iter().copied().reduce(f64::max).unwrap(),
+    ))
 }
 
 pub fn mean(args: Vec<Value>) -> Result<Value, String> {
@@ -389,9 +452,9 @@ pub fn mean(args: Vec<Value>) -> Result<Value, String> {
         return Ok(Value::Null);
     }
 
-    let sum = values.iter().sum::<f64>();
-
-    Ok(Value::Float(sum / values.len() as f64))
+    Ok(Value::Float(
+        values.iter().sum::<f64>() / values.len() as f64,
+    ))
 }
 
 pub fn range(args: Vec<Value>) -> Result<Value, String> {
@@ -399,14 +462,13 @@ pub fn range(args: Vec<Value>) -> Result<Value, String> {
         return Err("range() expects exactly 1 argument".into());
     }
 
-    let values = numeric_series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
 
     if values.is_empty() {
         return Ok(Value::Null);
     }
 
     let min = values.iter().copied().fold(f64::INFINITY, f64::min);
-
     let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
     Ok(Value::Float(max - min))
@@ -425,10 +487,9 @@ fn sample_skewness(values: &[f64]) -> Option<f64> {
     let mut m3 = 0.0;
 
     for &value in values {
-        let d = value - mean;
-
-        m2 += d * d;
-        m3 += d * d * d;
+        let difference = value - mean;
+        m2 += difference * difference;
+        m3 += difference * difference * difference;
     }
 
     let s2 = m2 / (n - 1) as f64;
@@ -439,7 +500,7 @@ fn sample_skewness(values: &[f64]) -> Option<f64> {
 
     let s = s2.sqrt();
 
-    let g1 = (n as f64) / ((n - 1) as f64 * (n - 2) as f64) * (m3 / s.powi(3));
+    let g1 = n as f64 / ((n - 1) as f64 * (n - 2) as f64) * (m3 / s.powi(3));
 
     Some(g1)
 }
@@ -449,7 +510,7 @@ pub fn skewness(args: Vec<Value>) -> Result<Value, String> {
         return Err("skewness() expects exactly 1 argument".into());
     }
 
-    let values = numeric_series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
 
     Ok(match sample_skewness(&values) {
         Some(value) => Value::Float(value),
@@ -470,12 +531,11 @@ fn sample_excess_kurtosis(values: &[f64]) -> Option<f64> {
     let mut m4 = 0.0;
 
     for &value in values {
-        let d = value - mean;
+        let difference = value - mean;
+        let difference_squared = difference * difference;
 
-        let d2 = d * d;
-
-        m2 += d2;
-        m4 += d2 * d2;
+        m2 += difference_squared;
+        m4 += difference_squared * difference_squared;
     }
 
     if m2 == 0.0 {
@@ -496,7 +556,7 @@ pub fn kurtosis(args: Vec<Value>) -> Result<Value, String> {
         return Err("kurtosis() expects exactly 1 argument".into());
     }
 
-    let values = numeric_series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
 
     Ok(match sample_excess_kurtosis(&values) {
         Some(value) => Value::Float(value),
@@ -504,32 +564,12 @@ pub fn kurtosis(args: Vec<Value>) -> Result<Value, String> {
     })
 }
 
-fn quantile_sorted(sorted: &[f64], q: f64) -> f64 {
-    if sorted.len() == 1 {
-        return sorted[0];
-    }
-
-    let position = q * (sorted.len() - 1) as f64;
-
-    let lower = position.floor() as usize;
-
-    let upper = position.ceil() as usize;
-
-    if lower == upper {
-        return sorted[lower];
-    }
-
-    let weight = position - lower as f64;
-
-    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
-}
-
 pub fn median(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err("median() expects exactly 1 argument".into());
     }
 
-    let mut values = series_values(&args[0])?;
+    let mut values = numeric_series(&args[0])?;
 
     if values.is_empty() {
         return Ok(Value::Null);
@@ -545,22 +585,10 @@ pub fn quantile(args: Vec<Value>) -> Result<Value, String> {
         return Err("quantile() expects Series and q".into());
     }
 
-    let values = series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
+    let q = numeric_argument(&args[1], "quantile", "q")?;
 
-    let q = match &args[1] {
-        Value::Int(value) => *value as f64,
-
-        Value::Float(value) => *value,
-
-        other => {
-            return Err(format!(
-                "quantile() q must be numeric, got {}",
-                other.type_name()
-            ));
-        },
-    };
-
-    if !q.is_finite() || !(0.0..=1.0).contains(&q) {
+    if !(0.0..=1.0).contains(&q) {
         return Err("quantile() q must be in [0, 1]".into());
     }
 
@@ -569,29 +597,9 @@ pub fn quantile(args: Vec<Value>) -> Result<Value, String> {
     }
 
     let mut sorted = values;
-
     sorted.sort_by(|a, b| a.total_cmp(b));
 
     Ok(Value::Float(quantile_sorted(&sorted, q)))
-}
-
-fn sample_variance(values: &[f64]) -> Option<f64> {
-    if values.len() < 2 {
-        return None;
-    }
-
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-
-    let sum_squared = values
-        .iter()
-        .map(|value| {
-            let diff = *value - mean;
-
-            diff * diff
-        })
-        .sum::<f64>();
-
-    Some(sum_squared / (values.len() - 1) as f64)
 }
 
 pub fn variance(args: Vec<Value>) -> Result<Value, String> {
@@ -599,7 +607,7 @@ pub fn variance(args: Vec<Value>) -> Result<Value, String> {
         return Err("variance() expects exactly 1 argument".into());
     }
 
-    let values = series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
 
     let Some(variance) = sample_variance(&values) else {
         return Ok(Value::Null);
@@ -613,7 +621,7 @@ pub fn std(args: Vec<Value>) -> Result<Value, String> {
         return Err("std() expects exactly 1 argument".into());
     }
 
-    let values = series_values(&args[0])?;
+    let values = numeric_series(&args[0])?;
 
     let Some(variance) = sample_variance(&values) else {
         return Ok(Value::Null);
@@ -632,12 +640,11 @@ fn covariance_value(x: &[f64], y: &[f64]) -> Result<f64, String> {
     }
 
     let mean_x = x.iter().sum::<f64>() / x.len() as f64;
-
     let mean_y = y.iter().sum::<f64>() / y.len() as f64;
 
     let covariance = x
         .iter()
-        .zip(y.iter())
+        .zip(y)
         .map(|(x, y)| (*x - mean_x) * (*y - mean_y))
         .sum::<f64>()
         / (x.len() - 1) as f64;
@@ -650,9 +657,8 @@ pub fn covariance(args: Vec<Value>) -> Result<Value, String> {
         return Err("covariance() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     Ok(Value::Float(covariance_value(&x, &y)?))
 }
@@ -668,29 +674,8 @@ fn pearson_correlation(x: &[f64], y: &[f64]) -> Result<f64, String> {
 
     let covariance = covariance_value(x, y)?;
 
-    let mean_x = x.iter().sum::<f64>() / x.len() as f64;
-
-    let mean_y = y.iter().sum::<f64>() / y.len() as f64;
-
-    let variance_x = x
-        .iter()
-        .map(|value| {
-            let diff = *value - mean_x;
-
-            diff * diff
-        })
-        .sum::<f64>()
-        / (x.len() - 1) as f64;
-
-    let variance_y = y
-        .iter()
-        .map(|value| {
-            let diff = *value - mean_y;
-
-            diff * diff
-        })
-        .sum::<f64>()
-        / (y.len() - 1) as f64;
+    let variance_x = sample_variance(x).unwrap();
+    let variance_y = sample_variance(y).unwrap();
 
     if variance_x == 0.0 || variance_y == 0.0 {
         return Ok(f64::NAN);
@@ -704,171 +689,20 @@ pub fn correlation(args: Vec<Value>) -> Result<Value, String> {
         return Err("correlation() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     Ok(Value::Float(pearson_correlation(&x, &y)?))
 }
 
-//=========================
+// =========================
 // t-tests
-//=========================
+// =========================
+
 fn t_distribution_p_value(t: f64, df: f64) -> Result<f64, String> {
     let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
 
     Ok(2.0 * distribution.sf(t.abs()))
-}
-
-fn one_sample_ttest_values(
-    values: &[f64],
-    mu0: f64,
-    method: &str,
-    confidence: f64,
-) -> Result<Value, String> {
-    if !mu0.is_finite() {
-        return Err("t-test null hypothesis mean must be finite".into());
-    }
-
-    if values.len() < 2 {
-        return Err("t-test requires at least 2 observations".into());
-    }
-
-    if values.iter().any(|value| !value.is_finite()) {
-        return Err("t-test data contains non-finite value".into());
-    }
-
-    let n = values.len();
-
-    let n_f = n as f64;
-
-    let mean = values.iter().sum::<f64>() / n_f;
-
-    let variance = values
-        .iter()
-        .map(|value| {
-            let difference = *value - mean;
-
-            difference * difference
-        })
-        .sum::<f64>()
-        / (n - 1) as f64;
-
-    if !variance.is_finite() {
-        return Err("t-test variance is not finite".into());
-    }
-
-    let std = variance.sqrt();
-
-    if std == 0.0 {
-        return Err("t-test sample standard deviation is zero".into());
-    }
-
-    let estimate = mean - mu0;
-
-    let standard_error = std / n_f.sqrt();
-
-    let t = estimate / standard_error;
-
-    let df = (n - 1) as f64;
-
-    let p_value = t_distribution_p_value(t, df)?;
-
-    let (ci_lower, ci_upper) = t_confidence_interval(estimate, standard_error, df, confidence)?;
-
-    let effect_size = estimate / std;
-
-    Ok(result_dict(vec![
-        ("statistic", Value::Float(t)),
-        ("p_value", Value::Float(p_value)),
-        ("df", Value::Float(df)),
-        ("estimate", Value::Float(estimate)),
-        ("effect_size", Value::Float(effect_size)),
-        (
-            "effect_size_name",
-            Value::Str(Rc::new("Cohen's d".to_string())),
-        ),
-        (
-            "confidence_interval",
-            confidence_interval_dict(ci_lower, ci_upper, confidence),
-        ),
-        ("method", Value::Str(Rc::new(method.to_owned()))),
-    ]))
-}
-
-fn paired_numeric_values(
-    first: &SeriesRef,
-    second: &SeriesRef,
-) -> Result<(Vec<f64>, Vec<f64>), String> {
-    if first.len() != second.len() {
-        return Err("paired test requires equal-length Series".into());
-    }
-
-    let mut first_values = Vec::with_capacity(first.len());
-
-    let mut second_values = Vec::with_capacity(second.len());
-
-    for index in 0..first.len() {
-        let first_value = first
-            .get(index)
-            .ok_or_else(|| format!("first Series index out of bounds: {}", index))?;
-
-        let second_value = second
-            .get(index)
-            .ok_or_else(|| format!("second Series index out of bounds: {}", index))?;
-
-        match (&first_value, &second_value) {
-            (Value::Null, _) | (_, Value::Null) => {
-                continue;
-            },
-
-            (Value::Int(first), Value::Int(second)) => {
-                first_values.push(*first as f64);
-
-                second_values.push(*second as f64);
-            },
-
-            (Value::Int(first), Value::Float(second)) => {
-                if !second.is_finite() {
-                    return Err("paired test contains non-finite value".into());
-                }
-
-                first_values.push(*first as f64);
-
-                second_values.push(*second);
-            },
-
-            (Value::Float(first), Value::Int(second)) => {
-                if !first.is_finite() {
-                    return Err("paired test contains non-finite value".into());
-                }
-
-                first_values.push(*first);
-
-                second_values.push(*second as f64);
-            },
-
-            (Value::Float(first), Value::Float(second)) => {
-                if !first.is_finite() || !second.is_finite() {
-                    return Err("paired test contains non-finite value".into());
-                }
-
-                first_values.push(*first);
-
-                second_values.push(*second);
-            },
-
-            (first, second) => {
-                return Err(format!(
-                    "paired test requires numeric Series; found {} and {}",
-                    first.type_name(),
-                    second.type_name()
-                ));
-            },
-        }
-    }
-
-    Ok((first_values, second_values))
 }
 
 fn t_confidence_interval(
@@ -893,38 +727,152 @@ fn t_confidence_interval(
     let distribution = StudentsT::new(0.0, 1.0, df).map_err(|error| error.to_string())?;
 
     let alpha = 1.0 - confidence;
-
     let critical = distribution.inverse_cdf(1.0 - alpha / 2.0);
-
     let margin = critical * standard_error;
 
     Ok((estimate - margin, estimate + margin))
 }
 
-fn confidence_level_from_args(args: &[Value], index: usize, function: &str) -> Result<f64, String> {
-    let value = match args.get(index) {
-        Some(Value::Int(value)) => *value as f64,
-
-        Some(Value::Float(value)) => *value,
-
-        Some(other) => {
-            return Err(format!(
-                "{}() confidence level must be numeric, got {}",
-                function,
-                other.type_name()
-            ));
-        },
-
-        None => {
-            return Ok(0.95);
-        },
-    };
-
-    if !value.is_finite() || !(0.0 < value && value < 1.0) {
-        return Err(format!("{}() confidence level must be in (0, 1)", function));
+fn one_sample_ttest_values(
+    values: &[f64],
+    mu0: f64,
+    method: &str,
+    confidence: f64,
+) -> Result<Value, String> {
+    if !mu0.is_finite() {
+        return Err("t-test null hypothesis mean must be finite".into());
     }
 
-    Ok(value)
+    if values.len() < 2 {
+        return Err("t-test requires at least 2 observations".into());
+    }
+
+    validate_finite(values, "t-test")?;
+
+    let n = values.len();
+    let n_f = n as f64;
+
+    let mean = values.iter().sum::<f64>() / n_f;
+
+    let variance = sample_variance(values).unwrap();
+
+    if !variance.is_finite() {
+        return Err("t-test variance is not finite".into());
+    }
+
+    let std = variance.sqrt();
+
+    if std == 0.0 {
+        return Err("t-test sample standard deviation is zero".into());
+    }
+
+    let estimate = mean - mu0;
+    let standard_error = std / n_f.sqrt();
+    let statistic = estimate / standard_error;
+    let df = (n - 1) as f64;
+    let p_value = t_distribution_p_value(statistic, df)?;
+
+    let (ci_lower, ci_upper) = t_confidence_interval(estimate, standard_error, df, confidence)?;
+
+    let effect_size = estimate / std;
+
+    let effect_se = (1.0 / n_f + effect_size.powi(2) / (2.0 * n_f)).sqrt();
+    let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
+    let critical = normal.inverse_cdf(1.0 - (1.0 - confidence) / 2.0);
+    let effect_margin = critical * effect_se;
+
+    Ok(result_dict(vec![
+        ("statistic", Value::Float(statistic)),
+        ("p_value", Value::Float(p_value)),
+        ("df", Value::Float(df)),
+        ("estimate", Value::Float(estimate)),
+        ("effect_size", Value::Float(effect_size)),
+        (
+            "effect_size_name",
+            Value::Str(Rc::new("Cohen's d".to_string())),
+        ),
+        (
+            "effect_size_ci",
+            confidence_interval_dict(
+                effect_size - effect_margin,
+                effect_size + effect_margin,
+                confidence,
+            ),
+        ),
+        (
+            "confidence_interval",
+            confidence_interval_dict(ci_lower, ci_upper, confidence),
+        ),
+        ("method", Value::Str(Rc::new(method.to_owned()))),
+    ]))
+}
+
+fn paired_numeric_values(
+    first: &SeriesRef,
+    second: &SeriesRef,
+) -> Result<(Vec<f64>, Vec<f64>), String> {
+    if first.len() != second.len() {
+        return Err("paired test requires equal-length Series".into());
+    }
+
+    let mut first_values = Vec::with_capacity(first.len());
+    let mut second_values = Vec::with_capacity(second.len());
+
+    for index in 0..first.len() {
+        let first_value = first
+            .get(index)
+            .ok_or_else(|| format!("first Series index out of bounds: {}", index))?;
+
+        let second_value = second
+            .get(index)
+            .ok_or_else(|| format!("second Series index out of bounds: {}", index))?;
+
+        match (&first_value, &second_value) {
+            (Value::Null, _) | (_, Value::Null) => continue,
+
+            (Value::Int(first), Value::Int(second)) => {
+                first_values.push(*first as f64);
+                second_values.push(*second as f64);
+            },
+
+            (Value::Int(first), Value::Float(second)) => {
+                if !second.is_finite() {
+                    return Err("paired test contains non-finite value".into());
+                }
+
+                first_values.push(*first as f64);
+                second_values.push(*second);
+            },
+
+            (Value::Float(first), Value::Int(second)) => {
+                if !first.is_finite() {
+                    return Err("paired test contains non-finite value".into());
+                }
+
+                first_values.push(*first);
+                second_values.push(*second as f64);
+            },
+
+            (Value::Float(first), Value::Float(second)) => {
+                if !first.is_finite() || !second.is_finite() {
+                    return Err("paired test contains non-finite value".into());
+                }
+
+                first_values.push(*first);
+                second_values.push(*second);
+            },
+
+            (first, second) => {
+                return Err(format!(
+                    "paired test requires numeric Series; found {} and {}",
+                    first.type_name(),
+                    second.type_name()
+                ));
+            },
+        }
+    }
+
+    Ok((first_values, second_values))
 }
 
 fn paired_effect_size(differences: &[f64]) -> Result<f64, String> {
@@ -947,7 +895,7 @@ fn paired_effect_size(differences: &[f64]) -> Result<f64, String> {
 }
 
 fn paired_effect_size_confidence_interval(
-    d: f64,
+    effect_size: f64,
     n: usize,
     confidence: f64,
 ) -> Result<(f64, f64), String> {
@@ -955,17 +903,75 @@ fn paired_effect_size_confidence_interval(
         return Err("paired effect size confidence interval requires at least 2 pairs".into());
     }
 
-    let se = (1.0 / n as f64 + d.powi(2) / (2.0 * n as f64)).sqrt();
+    let standard_error = (1.0 / n as f64 + effect_size.powi(2) / (2.0 * n as f64)).sqrt();
 
     let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
+    let critical = normal.inverse_cdf(1.0 - (1.0 - confidence) / 2.0);
 
-    let alpha = 1.0 - confidence;
+    let margin = critical * standard_error;
 
-    let critical = normal.inverse_cdf(1.0 - alpha / 2.0);
+    Ok((effect_size - margin, effect_size + margin))
+}
 
-    let margin = critical * se;
+pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
+    if !(2..=3).contains(&args.len()) {
+        return Err("ttest() expects Series, mu0, and optional confidence level".into());
+    }
 
-    Ok((d - margin, d + margin))
+    let values = numeric_series(&args[0])?;
+    let mu0 = numeric_argument(&args[1], "ttest", "mu0")?;
+    let confidence = confidence_level_from_args(&args, 2, "ttest")?;
+
+    one_sample_ttest_values(&values, mu0, "One-sample t-test", confidence)
+}
+
+pub fn paired_ttest(args: Vec<Value>) -> Result<Value, String> {
+    if !(2..=3).contains(&args.len()) {
+        return Err("paired_ttest() expects 2 Series and optional confidence level".into());
+    }
+
+    let first = expect_series_value(&args[0], "paired_ttest", 0)?;
+    let second = expect_series_value(&args[1], "paired_ttest", 1)?;
+
+    let (first_values, second_values) = paired_numeric_values(&first, &second)?;
+
+    if first_values.len() < 2 {
+        return Err("paired_ttest() requires at least 2 complete pairs".into());
+    }
+
+    let differences = first_values
+        .iter()
+        .zip(second_values.iter())
+        .map(|(first, second)| first - second)
+        .collect::<Vec<_>>();
+
+    let confidence = confidence_level_from_args(&args, 2, "paired_ttest")?;
+
+    let result = one_sample_ttest_values(&differences, 0.0, "Paired t-test", confidence)?;
+
+    let effect_size = paired_effect_size(&differences)?;
+
+    let (effect_lower, effect_upper) =
+        paired_effect_size_confidence_interval(effect_size, differences.len(), confidence)?;
+
+    let Value::Dict(dict) = result else {
+        unreachable!();
+    };
+
+    dict.borrow_mut()
+        .insert("effect_size".into(), Value::Float(effect_size));
+
+    dict.borrow_mut().insert(
+        "effect_size_name".into(),
+        Value::Str(Rc::new("Cohen's dz".to_string())),
+    );
+
+    dict.borrow_mut().insert(
+        "effect_size_ci".into(),
+        confidence_interval_dict(effect_lower, effect_upper, confidence),
+    );
+
+    Ok(Value::Dict(dict))
 }
 
 fn cohens_d_independent(
@@ -990,19 +996,14 @@ fn cohens_d_independent(
         return Err("Cohen's d received invalid statistics".into());
     }
 
-    let numerator = ((nx - 1) as f64) * variance_x + ((ny - 1) as f64) * variance_y;
-
-    let denominator = (nx + ny - 2) as f64;
-
-    let pooled_variance = numerator / denominator;
+    let pooled_variance =
+        (((nx - 1) as f64) * variance_x + ((ny - 1) as f64) * variance_y) / (nx + ny - 2) as f64;
 
     if pooled_variance <= 0.0 || !pooled_variance.is_finite() {
         return Err("Cohen's d pooled standard deviation is zero or non-finite".into());
     }
 
-    let pooled_std = pooled_variance.sqrt();
-
-    Ok((mean_x - mean_y) / pooled_std)
+    Ok((mean_x - mean_y) / pooled_variance.sqrt())
 }
 
 fn hedges_g_from_d(d: f64, df: f64) -> Result<f64, String> {
@@ -1027,7 +1028,6 @@ fn cohens_d_se(d: f64, nx: usize, ny: usize) -> Result<f64, String> {
     let total = (nx + ny) as f64;
 
     let sample_term = (nx + ny) as f64 / (nx as f64 * ny as f64);
-
     let effect_term = d.powi(2) / (2.0 * total);
 
     Ok((sample_term + effect_term).sqrt())
@@ -1038,16 +1038,8 @@ fn cohens_d_confidence_interval(d: f64, se: f64, confidence: f64) -> Result<(f64
         return Err("invalid Cohen's d confidence interval parameters".into());
     }
 
-    if !confidence.is_finite() || !(0.0 < confidence && confidence < 1.0) {
-        return Err("confidence level must be in (0, 1)".into());
-    }
-
     let normal = Normal::new(0.0, 1.0).map_err(|error| error.to_string())?;
-
-    let alpha = 1.0 - confidence;
-
-    let critical = normal.inverse_cdf(1.0 - alpha / 2.0);
-
+    let critical = normal.inverse_cdf(1.0 - (1.0 - confidence) / 2.0);
     let margin = critical * se;
 
     Ok((d - margin, d + margin))
@@ -1060,15 +1052,14 @@ fn standardized_mean_difference_result(
     ny: usize,
 ) -> Result<(Value, Value), String> {
     let se = cohens_d_se(d, nx, ny)?;
-
     let (lower, upper) = cohens_d_confidence_interval(d, se, confidence)?;
 
     let df = (nx + ny - 2) as f64;
+    let g = hedges_g_from_d(d, df);
 
-    let g = hedges_g_from_d(d, df)?;
+    let g = g?;
 
     let correction = if d == 0.0 { 1.0 } else { g / d };
-
     let g_se = se * correction.abs();
 
     let (g_lower, g_upper) = cohens_d_confidence_interval(g, g_se, confidence)?;
@@ -1096,110 +1087,27 @@ fn welch_confidence_interval(
     t_confidence_interval(estimate, standard_error, df, confidence)
 }
 
-pub fn ttest(args: Vec<Value>) -> Result<Value, String> {
-    if !(2..=3).contains(&args.len()) {
-        return Err("ttest() expects Series, mu0, and optional confidence level".into());
-    }
-
-    let values = numeric_series_values(&args[0])?;
-
-    let mu0 = match &args[1] {
-        Value::Int(value) => *value as f64,
-
-        Value::Float(value) => *value,
-
-        other => {
-            return Err(format!(
-                "ttest() mu0 must be numeric, got {}",
-                other.type_name()
-            ));
-        },
-    };
-
-    let confidence = confidence_level_from_args(&args, 2, "ttest")?;
-
-    one_sample_ttest_values(&values, mu0, "One-sample t-test", confidence)
-}
-
-pub fn paired_ttest(args: Vec<Value>) -> Result<Value, String> {
-    if !(2..=3).contains(&args.len()) {
-        return Err("paired_ttest() expects 2 Series and optional confidence level".into());
-    }
-
-    let first = expect_series_value(&args[0], "paired_ttest", 0)?;
-
-    let second = expect_series_value(&args[1], "paired_ttest", 1)?;
-
-    let (first_values, second_values) = paired_numeric_values(&first, &second)?;
-
-    if first_values.len() < 2 {
-        return Err("paired_ttest() requires at least 2 complete pairs".into());
-    }
-
-    let differences = first_values
-        .iter()
-        .zip(second_values.iter())
-        .map(|(first, second)| first - second)
-        .collect::<Vec<_>>();
-
-    let confidence = confidence_level_from_args(&args, 2, "paired_ttest")?;
-
-    let result = one_sample_ttest_values(&differences, 0.0, "Paired t-test", confidence)?;
-
-    /*
-     * Replace the generic one-sample Cohen's d
-     * with the paired-samples effect size d_z.
-     */
-    let effect_size = paired_effect_size(&differences)?;
-
-    let (effect_lower, effect_upper) =
-        paired_effect_size_confidence_interval(effect_size, differences.len(), confidence)?;
-
-    let Value::Dict(dict) = result else {
-        unreachable!();
-    };
-
-    dict.borrow_mut()
-        .insert("effect_size".into(), Value::Float(effect_size));
-
-    dict.borrow_mut().insert(
-        "effect_size_name".into(),
-        Value::Str(Rc::new("Cohen's dz".to_string())),
-    );
-
-    dict.borrow_mut().insert(
-        "effect_size_ci".into(),
-        confidence_interval_dict(effect_lower, effect_upper, confidence),
-    );
-
-    Ok(Value::Dict(dict))
-}
-
 pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     if !(2..=3).contains(&args.len()) {
         return Err("welch() expects 2 Series and optional confidence level".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     if x.len() < 2 || y.len() < 2 {
         return Err("welch() requires at least 2 observations per group".into());
     }
 
-    if x.iter().any(|value| !value.is_finite()) || y.iter().any(|value| !value.is_finite()) {
-        return Err("welch() data contains non-finite value".into());
-    }
+    validate_finite(&x, "welch")?;
+    validate_finite(&y, "welch")?;
 
     let confidence = confidence_level_from_args(&args, 2, "welch")?;
 
     let nx = x.len() as f64;
-
     let ny = y.len() as f64;
 
     let mean_x = x.iter().sum::<f64>() / nx;
-
     let mean_y = y.iter().sum::<f64>() / ny;
 
     let var_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
@@ -1213,10 +1121,8 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     }
 
     let standard_error = se2.sqrt();
-
     let estimate = mean_x - mean_y;
-
-    let t = estimate / standard_error;
+    let statistic = estimate / standard_error;
 
     let numerator = se2.powi(2);
 
@@ -1228,8 +1134,7 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     }
 
     let df = numerator / denominator;
-
-    let p_value = t_distribution_p_value(t, df)?;
+    let p_value = t_distribution_p_value(statistic, df)?;
 
     let (ci_lower, ci_upper) = welch_confidence_interval(
         mean_x,
@@ -1250,7 +1155,7 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     let hedges_g = hedges_g_from_d(effect_size, (x.len() + y.len() - 2) as f64)?;
 
     Ok(result_dict(vec![
-        ("statistic", Value::Float(t)),
+        ("statistic", Value::Float(statistic)),
         ("p_value", Value::Float(p_value)),
         ("df", Value::Float(df)),
         ("estimate", Value::Float(estimate)),
@@ -1270,33 +1175,33 @@ pub fn welch(args: Vec<Value>) -> Result<Value, String> {
     ]))
 }
 
-//=========================
-// effect size
-//=========================
+// =========================
+// effect sizes
+// =========================
+
 pub fn cohens_d(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
         return Err("cohens_d() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     if x.len() < 2 || y.len() < 2 {
         return Err("cohens_d() requires at least 2 observations per group".into());
     }
 
-    let nx = x.len() as f64;
+    validate_finite(&x, "cohens_d")?;
+    validate_finite(&y, "cohens_d")?;
 
+    let nx = x.len() as f64;
     let ny = y.len() as f64;
 
     let mean_x = x.iter().sum::<f64>() / nx;
-
     let mean_y = y.iter().sum::<f64>() / ny;
 
-    let variance_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
-
-    let variance_y = y.iter().map(|value| (*value - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
+    let variance_x = sample_variance(&x).unwrap();
+    let variance_y = sample_variance(&y).unwrap();
 
     let d = cohens_d_independent(mean_x, mean_y, variance_x, variance_y, x.len(), y.len())?;
 
@@ -1308,34 +1213,34 @@ pub fn hedges_g(args: Vec<Value>) -> Result<Value, String> {
         return Err("hedges_g() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     if x.len() < 2 || y.len() < 2 {
         return Err("hedges_g() requires at least 2 observations per group".into());
     }
 
-    let nx = x.len() as f64;
+    validate_finite(&x, "hedges_g")?;
+    validate_finite(&y, "hedges_g")?;
 
+    let nx = x.len() as f64;
     let ny = y.len() as f64;
 
     let mean_x = x.iter().sum::<f64>() / nx;
-
     let mean_y = y.iter().sum::<f64>() / ny;
 
-    let variance_x = x.iter().map(|value| (*value - mean_x).powi(2)).sum::<f64>() / (nx - 1.0);
-
-    let variance_y = y.iter().map(|value| (*value - mean_y).powi(2)).sum::<f64>() / (ny - 1.0);
+    let variance_x = sample_variance(&x).unwrap();
+    let variance_y = sample_variance(&y).unwrap();
 
     let d = cohens_d_independent(mean_x, mean_y, variance_x, variance_y, x.len(), y.len())?;
 
     hedges_g_from_d(d, (x.len() + y.len() - 2) as f64).map(Value::Float)
 }
 
-//=========================
+// =========================
 // non-parametric tests
-//=========================
+// =========================
+
 fn continuity_corrected_z(
     statistic: f64,
     mean: f64,
@@ -1385,12 +1290,10 @@ fn average_ranks(values: &[f64]) -> Vec<f64> {
     indexed.sort_by(|(_, left), (_, right)| left.total_cmp(right));
 
     let mut ranks = vec![0.0; values.len()];
-
     let mut index = 0usize;
 
     while index < indexed.len() {
         let start = index;
-
         let value = indexed[index].1;
 
         while index < indexed.len() && indexed[index].1 == value {
@@ -1398,17 +1301,10 @@ fn average_ranks(values: &[f64]) -> Vec<f64> {
         }
 
         let end = index;
-
-        let rank_start = start as f64 + 1.0;
-
-        let rank_end = end as f64;
-
-        let average = (rank_start + rank_end) / 2.0;
+        let average = (start as f64 + 1.0 + end as f64) / 2.0;
 
         for position in start..end {
-            let original_index = indexed[position].0;
-
-            ranks[original_index] = average;
+            ranks[indexed[position].0] = average;
         }
     }
 
@@ -1421,12 +1317,10 @@ fn tie_group_sizes(values: &[f64]) -> Vec<usize> {
     sorted.sort_by(|left, right| left.total_cmp(right));
 
     let mut sizes = Vec::new();
-
     let mut index = 0usize;
 
     while index < sorted.len() {
         let start = index;
-
         let value = sorted[index];
 
         while index < sorted.len() && sorted[index] == value {
@@ -1444,13 +1338,15 @@ fn mann_whitney_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64), String> 
         return Err("mann_whitney() requires non-empty Series".into());
     }
 
+    validate_finite(x, "mann_whitney")?;
+    validate_finite(y, "mann_whitney")?;
+
     let nx = x.len();
     let ny = y.len();
 
     let mut combined = Vec::with_capacity(nx + ny);
 
     combined.extend(x.iter().copied().map(|value| (value, 0usize)));
-
     combined.extend(y.iter().copied().map(|value| (value, 1usize)));
 
     let values = combined.iter().map(|(value, _)| *value).collect::<Vec<_>>();
@@ -1465,9 +1361,7 @@ fn mann_whitney_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64), String> 
         .sum::<f64>();
 
     let u_x = rank_sum_x - (nx * (nx + 1) / 2) as f64;
-
     let u_y = (nx * ny) as f64 - u_x;
-
     let u = u_x.min(u_y);
 
     let nx_f = nx as f64;
@@ -1476,13 +1370,10 @@ fn mann_whitney_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64), String> 
 
     let mean_u = nx_f * ny_f / 2.0;
 
-    let tie_sizes = tie_group_sizes(&values);
-
-    let tie_term = tie_sizes
+    let tie_term = tie_group_sizes(&values)
         .iter()
         .map(|size| {
             let t = *size as f64;
-
             t.powi(3) - t
         })
         .sum::<f64>();
@@ -1494,7 +1385,6 @@ fn mann_whitney_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64), String> 
     }
 
     let z = continuity_corrected_z(u, mean_u, variance_u.sqrt())?;
-
     let p_value = two_sided_normal_p_value(z)?;
 
     Ok((u, z, p_value))
@@ -1505,9 +1395,8 @@ pub fn mann_whitney(args: Vec<Value>) -> Result<Value, String> {
         return Err("mann_whitney() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     let (statistic, z, p_value) = mann_whitney_values(&x, &y)?;
 
@@ -1531,7 +1420,6 @@ fn wilcoxon_variance(n: usize, tie_sizes: &[usize]) -> f64 {
         .iter()
         .map(|size| {
             let t = *size as f64;
-
             t * (t + 1.0) * (2.0 * t + 1.0) / 48.0
         })
         .sum::<f64>();
@@ -1544,15 +1432,15 @@ fn wilcoxon_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, usize), Strin
         return Err("wilcoxon() requires equal-length Series".into());
     }
 
-    let mut differences = Vec::<f64>::new();
+    validate_finite(x, "wilcoxon")?;
+    validate_finite(y, "wilcoxon")?;
 
-    for (x_value, y_value) in x.iter().zip(y.iter()) {
-        let difference = *x_value - *y_value;
-
-        if difference != 0.0 {
-            differences.push(difference);
-        }
-    }
+    let differences = x
+        .iter()
+        .zip(y)
+        .map(|(x, y)| *x - *y)
+        .filter(|difference| *difference != 0.0)
+        .collect::<Vec<_>>();
 
     let n = differences.len();
 
@@ -1581,19 +1469,15 @@ fn wilcoxon_values(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, usize), Strin
     let statistic = w_plus.min(w_minus);
 
     let n_f = n as f64;
-
     let mean = n_f * (n_f + 1.0) / 4.0;
 
-    let tie_sizes = tie_group_sizes(&absolute);
-
-    let variance = wilcoxon_variance(n, &tie_sizes);
+    let variance = wilcoxon_variance(n, &tie_group_sizes(&absolute));
 
     if variance <= 0.0 || !variance.is_finite() {
         return Err("wilcoxon() normal approximation is undefined".into());
     }
 
     let z = continuity_corrected_z(statistic, mean, variance.sqrt())?;
-
     let p_value = two_sided_normal_p_value(z)?;
 
     Ok((statistic, z, p_value, n))
@@ -1604,9 +1488,8 @@ pub fn wilcoxon(args: Vec<Value>) -> Result<Value, String> {
         return Err("wilcoxon() expects exactly 2 Series".into());
     }
 
-    let x = numeric_series_values(&args[0])?;
-
-    let y = numeric_series_values(&args[1])?;
+    let x = numeric_series(&args[0])?;
+    let y = numeric_series(&args[1])?;
 
     let (statistic, z, p_value, n) = wilcoxon_values(&x, &y)?;
 
@@ -1622,9 +1505,10 @@ pub fn wilcoxon(args: Vec<Value>) -> Result<Value, String> {
     ]))
 }
 
-//=========================
-// anova
-//=========================
+// =========================
+// ANOVA
+// =========================
+
 #[derive(Hash, Eq, PartialEq, Clone)]
 enum CategoryKey {
     Int(i64),
@@ -1644,7 +1528,9 @@ fn category_key(value: &Value) -> Result<Option<CategoryKey>, String> {
                 return Err("categorical factor contains non-finite Float".into());
             }
 
-            Ok(Some(CategoryKey::Float(value.to_bits())))
+            let canonical = if *value == 0.0 { 0.0 } else { *value };
+
+            Ok(Some(CategoryKey::Float(canonical.to_bits())))
         },
 
         Value::Bool(value) => Ok(Some(CategoryKey::Bool(*value))),
@@ -1658,17 +1544,37 @@ fn category_key(value: &Value) -> Result<Option<CategoryKey>, String> {
     }
 }
 
-fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>>, String> {
+struct AnovaGroup {
+    key: CategoryKey,
+    label: Value,
+    values: Vec<f64>,
+}
+
+struct AnovaSummary {
+    statistic: f64,
+    p_value: f64,
+    df_between: f64,
+    df_within: f64,
+    ss_between: f64,
+    ss_within: f64,
+    ss_total: f64,
+}
+
+fn collect_anova_groups(
+    response: &SeriesRef,
+    factor: &SeriesRef,
+) -> Result<Vec<AnovaGroup>, String> {
     if response.len() != factor.len() {
         return Err("anova() requires response and factor with equal lengths".into());
     }
 
-    let mut groups = HashMap::<CategoryKey, Vec<f64>>::new();
+    let mut groups = Vec::<AnovaGroup>::new();
+    let mut positions = HashMap::<CategoryKey, usize>::new();
 
     for index in 0..response.len() {
         let factor_value = factor
             .get(index)
-            .ok_or_else(|| "factor index out of bounds".to_string())?;
+            .ok_or_else(|| format!("factor index out of bounds: {}", index))?;
 
         let Some(key) = category_key(&factor_value)? else {
             continue;
@@ -1676,7 +1582,7 @@ fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>
 
         let response_value = response
             .get(index)
-            .ok_or_else(|| "response index out of bounds".to_string())?;
+            .ok_or_else(|| format!("response index out of bounds: {}", index))?;
 
         let value = match response_value {
             Value::Int(value) => value as f64,
@@ -1689,9 +1595,7 @@ fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>
                 value
             },
 
-            Value::Null => {
-                continue;
-            },
+            Value::Null => continue,
 
             other => {
                 return Err(format!(
@@ -1701,15 +1605,32 @@ fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>
             },
         };
 
-        groups.entry(key).or_default().push(value);
+        if let Some(&group_index) = positions.get(&key) {
+            groups[group_index].values.push(value);
+        } else {
+            let group_index = groups.len();
+
+            positions.insert(key.clone(), group_index);
+
+            groups.push(AnovaGroup {
+                key,
+                label: factor_value,
+                values: vec![value],
+            });
+        }
     }
 
-    Ok(groups.into_values().collect())
+    Ok(groups)
 }
 
-fn one_way_anova_values(
-    groups: &[Vec<f64>],
-) -> Result<(f64, f64, f64, f64, f64, f64, f64), String> {
+fn anova_groups(response: &SeriesRef, factor: &SeriesRef) -> Result<Vec<Vec<f64>>, String> {
+    Ok(collect_anova_groups(response, factor)?
+        .into_iter()
+        .map(|group| group.values)
+        .collect())
+}
+
+fn one_way_anova_values(groups: &[Vec<f64>]) -> Result<AnovaSummary, String> {
     if groups.len() < 2 {
         return Err("anova() requires at least 2 groups".into());
     }
@@ -1725,7 +1646,6 @@ fn one_way_anova_values(
     }
 
     let grand_sum = groups.iter().flat_map(|group| group.iter()).sum::<f64>();
-
     let grand_mean = grand_sum / total_n as f64;
 
     let mut ss_between = 0.0;
@@ -1733,28 +1653,22 @@ fn one_way_anova_values(
 
     for group in groups {
         let n = group.len() as f64;
-
         let mean = group.iter().sum::<f64>() / n;
 
         let difference = mean - grand_mean;
-
         ss_between += n * difference * difference;
 
         for value in group {
             let difference = *value - mean;
-
             ss_within += difference * difference;
         }
     }
 
     let ss_total = ss_between + ss_within;
-
     let df_between = (groups.len() - 1) as f64;
-
     let df_within = (total_n - groups.len()) as f64;
 
     let ms_between = ss_between / df_between;
-
     let ms_within = ss_within / df_within;
 
     let statistic = if ms_within == 0.0 {
@@ -1776,9 +1690,15 @@ fn one_way_anova_values(
         distribution.sf(statistic)
     };
 
-    Ok((
-        statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total,
-    ))
+    Ok(AnovaSummary {
+        statistic,
+        p_value,
+        df_between,
+        df_within,
+        ss_between,
+        ss_within,
+        ss_total,
+    })
 }
 
 fn eta_squared(ss_between: f64, ss_total: f64) -> Result<f64, String> {
@@ -1810,26 +1730,23 @@ fn omega_squared(
     Ok(numerator / denominator)
 }
 
-fn anova_result(
-    statistic: f64,
-    p_value: f64,
-    df_between: f64,
-    df_within: f64,
-    ss_between: f64,
-    ss_within: f64,
-    ss_total: f64,
-) -> Result<Value, String> {
-    let eta2 = eta_squared(ss_between, ss_total)?;
+fn anova_result(summary: &AnovaSummary) -> Result<Value, String> {
+    let eta2 = eta_squared(summary.ss_between, summary.ss_total)?;
 
-    let ms_within = ss_within / df_within;
+    let ms_within = summary.ss_within / summary.df_within;
 
-    let omega2 = omega_squared(ss_between, ms_within, df_between, ss_total)?;
+    let omega2 = omega_squared(
+        summary.ss_between,
+        ms_within,
+        summary.df_between,
+        summary.ss_total,
+    )?;
 
     Ok(result_dict(vec![
-        ("statistic", Value::Float(statistic)),
-        ("p_value", Value::Float(p_value)),
-        ("df_between", Value::Float(df_between)),
-        ("df_within", Value::Float(df_within)),
+        ("statistic", Value::Float(summary.statistic)),
+        ("p_value", Value::Float(summary.p_value)),
+        ("df_between", Value::Float(summary.df_between)),
+        ("df_within", Value::Float(summary.df_within)),
         ("effect_size", Value::Float(eta2)),
         (
             "effect_size_name",
@@ -1841,6 +1758,7 @@ fn anova_result(
             Value::Str(Rc::new("Omega squared".to_string())),
         ),
         ("confidence_interval", Value::Null),
+        ("effect_size_ci", Value::Null),
         ("method", Value::Str(Rc::new("One-way ANOVA".to_string()))),
     ]))
 }
@@ -1892,18 +1810,230 @@ pub fn anova(args: Vec<Value>) -> Result<Value, String> {
         .ok_or_else(|| format!("anova() unknown factor column '{}'", factor_name))?;
 
     let groups = anova_groups(&response, &factor)?;
+    let summary = one_way_anova_values(&groups)?;
 
-    let (statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total) =
-        one_way_anova_values(&groups)?;
-
-    anova_result(
-        statistic, p_value, df_between, df_within, ss_between, ss_within, ss_total,
-    )
+    anova_result(&summary)
 }
 
-//=========================
-// chi-squared test
-//=========================
+// =========================
+// Tukey / post-hoc
+// =========================
+
+fn tukey_alpha_from_confidence(confidence: f64) -> Result<f64, String> {
+    const EPSILON: f64 = 1e-12;
+
+    if (confidence - 0.95).abs() < EPSILON {
+        return Ok(0.05);
+    }
+
+    if (confidence - 0.99).abs() < EPSILON {
+        return Ok(0.01);
+    }
+
+    Err("Tukey HSD currently supports confidence levels 0.95 and 0.99".into())
+}
+
+fn string_value(value: &Value, function: &str, name: &str) -> Result<String, String> {
+    match value {
+        Value::Str(value) => Ok(value.as_ref().clone()),
+
+        other => Err(format!(
+            "{}() {} must be Str, got {}",
+            function,
+            name,
+            other.type_name()
+        )),
+    }
+}
+
+fn tukey_values(groups: &[AnovaGroup], confidence: f64) -> Result<Value, String> {
+    if groups.len() < 2 {
+        return Err("tukey() requires at least 2 groups".into());
+    }
+
+    if groups.len() > 10 {
+        return Err("tukey() supports at most 10 groups".into());
+    }
+
+    if groups.iter().any(|group| group.values.len() < 2) {
+        return Err("tukey() requires at least 2 observations per group".into());
+    }
+
+    validate_finite(
+        &groups
+            .iter()
+            .flat_map(|group| group.values.iter().copied())
+            .collect::<Vec<_>>(),
+        "tukey",
+    )?;
+
+    let alpha = tukey_alpha_from_confidence(confidence)?;
+
+    let group_values = groups
+        .iter()
+        .map(|group| group.values.clone())
+        .collect::<Vec<_>>();
+
+    let result = tukey_hsd(&group_values, alpha).map_err(|error| error.to_string())?;
+
+    let mut group1 = Vec::with_capacity(result.comparisons.len());
+    let mut group2 = Vec::with_capacity(result.comparisons.len());
+    let mut mean_differences = Vec::with_capacity(result.comparisons.len());
+    let mut q_statistics = Vec::with_capacity(result.comparisons.len());
+    let mut p_values = Vec::with_capacity(result.comparisons.len());
+    let mut ci_lowers = Vec::with_capacity(result.comparisons.len());
+    let mut ci_uppers = Vec::with_capacity(result.comparisons.len());
+    let mut significant = Vec::with_capacity(result.comparisons.len());
+
+    for comparison in &result.comparisons {
+        let first = groups
+            .get(comparison.group_i)
+            .ok_or_else(|| "tukey() group index out of bounds".to_string())?;
+
+        let second = groups
+            .get(comparison.group_j)
+            .ok_or_else(|| "tukey() group index out of bounds".to_string())?;
+
+        let mean_i = first.values.iter().sum::<f64>() / first.values.len() as f64;
+
+        let mean_j = second.values.iter().sum::<f64>() / second.values.len() as f64;
+
+        let mean_difference = mean_i - mean_j;
+
+        let standard_error = (result.mse / 2.0
+            * (1.0 / first.values.len() as f64 + 1.0 / second.values.len() as f64))
+            .sqrt();
+
+        let margin = result.q_critical * standard_error;
+
+        let lower = mean_difference - margin;
+        let upper = mean_difference + margin;
+
+        group1.push(first.label.clone());
+        group2.push(second.label.clone());
+        mean_differences.push(Value::Float(mean_difference));
+        q_statistics.push(Value::Float(comparison.q_statistic));
+        p_values.push(Value::Float(comparison.p_value));
+        ci_lowers.push(Value::Float(lower));
+        ci_uppers.push(Value::Float(upper));
+        significant.push(Value::Bool(comparison.significant));
+    }
+
+    DataFrame::from_series(vec![
+        Rc::new(Series::new("group1", group1)),
+        Rc::new(Series::new("group2", group2)),
+        Rc::new(Series::new("mean_diff", mean_differences)),
+        Rc::new(Series::new("q", q_statistics)),
+        Rc::new(Series::new("p_value", p_values)),
+        Rc::new(Series::new("ci_lower", ci_lowers)),
+        Rc::new(Series::new("ci_upper", ci_uppers)),
+        Rc::new(Series::new("significant", significant)),
+    ])
+    .map(|df| Value::DataFrame(Rc::new(df)))
+}
+
+fn tukey_from_dataframe(
+    df: &DataFrame,
+    response_name: &str,
+    factor_name: &str,
+    confidence: f64,
+) -> Result<Value, String> {
+    let response = df
+        .column(response_name)
+        .ok_or_else(|| format!("tukey() unknown response column '{}'", response_name))?;
+
+    let factor = df
+        .column(factor_name)
+        .ok_or_else(|| format!("tukey() unknown factor column '{}'", factor_name))?;
+
+    let groups = collect_anova_groups(&response, &factor)?;
+
+    tukey_values(&groups, confidence)
+}
+
+pub fn tukey(args: Vec<Value>) -> Result<Value, String> {
+    if !(3..=4).contains(&args.len()) {
+        return Err(
+            "tukey() expects DataFrame, response column, factor column, and optional confidence level"
+                .into(),
+        );
+    }
+
+    let df = match &args[0] {
+        Value::DataFrame(df) => df.clone(),
+
+        other => {
+            return Err(format!(
+                "tukey() first argument must be DataFrame, got {}",
+                other.type_name()
+            ));
+        },
+    };
+
+    let response_name = string_value(&args[1], "tukey", "response column")?;
+    let factor_name = string_value(&args[2], "tukey", "factor column")?;
+    let confidence = confidence_level_from_args(&args, 3, "tukey")?;
+
+    tukey_from_dataframe(&df, &response_name, &factor_name, confidence)
+}
+
+pub fn post_hoc(args: Vec<Value>) -> Result<Value, String> {
+    if !(3..=5).contains(&args.len()) {
+        return Err(
+            "post_hoc() expects DataFrame, response column, factor column, optional method, and optional confidence level"
+                .into(),
+        );
+    }
+
+    let df = match &args[0] {
+        Value::DataFrame(df) => df.clone(),
+
+        other => {
+            return Err(format!(
+                "post_hoc() first argument must be DataFrame, got {}",
+                other.type_name()
+            ));
+        },
+    };
+
+    let response_name = string_value(&args[1], "post_hoc", "response column")?;
+    let factor_name = string_value(&args[2], "post_hoc", "factor column")?;
+
+    let method = match args.get(3) {
+        None => "tukey".to_string(),
+
+        Some(Value::Str(value)) => value.as_ref().clone(),
+
+        Some(other) => {
+            return Err(format!(
+                "post_hoc() method must be Str, got {}",
+                other.type_name()
+            ));
+        },
+    };
+
+    let confidence = match args.len() {
+        3 => 0.95,
+        4 => 0.95,
+        _ => confidence_level_from_args(&args, 4, "post_hoc")?,
+    };
+
+    match method.as_str() {
+        "tukey" | "tukey_hsd" => {
+            tukey_from_dataframe(&df, &response_name, &factor_name, confidence)
+        },
+
+        other => Err(format!(
+            "post_hoc() unknown method '{}'; supported methods: tukey",
+            other
+        )),
+    }
+}
+
+// =========================
+// chi-squared
+// =========================
+
 fn chi_square_independence_values(
     table: &[Vec<usize>],
 ) -> Result<(f64, f64, usize, usize), String> {
@@ -1924,9 +2054,7 @@ fn chi_square_independence_values(
     }
 
     let mut row_totals = vec![0usize; rows];
-
     let mut column_totals = vec![0usize; columns];
-
     let mut total = 0usize;
 
     for row in 0..rows {
@@ -1944,7 +2072,6 @@ fn chi_square_independence_values(
     }
 
     let total_f = total as f64;
-
     let mut statistic = 0.0;
 
     for row in 0..rows {
@@ -1956,7 +2083,6 @@ fn chi_square_independence_values(
             }
 
             let observed = table[row][column] as f64;
-
             let difference = observed - expected;
 
             statistic += difference * difference / expected;
@@ -1978,11 +2104,9 @@ fn chi_square_table(first: &SeriesRef, second: &SeriesRef) -> Result<Vec<Vec<usi
     }
 
     let mut row_keys = Vec::<CategoryKey>::new();
-
     let mut column_keys = Vec::<CategoryKey>::new();
 
     let mut row_index = HashMap::<CategoryKey, usize>::new();
-
     let mut column_index = HashMap::<CategoryKey, usize>::new();
 
     let mut observations = Vec::<(usize, usize)>::new();
@@ -2010,7 +2134,6 @@ fn chi_square_table(first: &SeriesRef, second: &SeriesRef) -> Result<Vec<Vec<usi
             let position = row_keys.len();
 
             row_index.insert(first_key.clone(), position);
-
             row_keys.push(first_key);
 
             position
@@ -2022,7 +2145,6 @@ fn chi_square_table(first: &SeriesRef, second: &SeriesRef) -> Result<Vec<Vec<usi
             let position = column_keys.len();
 
             column_index.insert(second_key.clone(), position);
-
             column_keys.push(second_key);
 
             position
@@ -2074,34 +2196,15 @@ pub fn chi_square(args: Vec<Value>) -> Result<Value, String> {
         },
     };
 
-    let first_name = match &args[1] {
-        Value::Str(value) => value.as_str(),
-
-        other => {
-            return Err(format!(
-                "chi_square() first column name must be Str, got {}",
-                other.type_name()
-            ));
-        },
-    };
-
-    let second_name = match &args[2] {
-        Value::Str(value) => value.as_str(),
-
-        other => {
-            return Err(format!(
-                "chi_square() second column name must be Str, got {}",
-                other.type_name()
-            ));
-        },
-    };
+    let first_name = string_value(&args[1], "chi_square", "first column name")?;
+    let second_name = string_value(&args[2], "chi_square", "second column name")?;
 
     let first = df
-        .column(first_name)
+        .column(&first_name)
         .ok_or_else(|| format!("chi_square() unknown column '{}'", first_name))?;
 
     let second = df
-        .column(second_name)
+        .column(&second_name)
         .ok_or_else(|| format!("chi_square() unknown column '{}'", second_name))?;
 
     let table = chi_square_table(&first, &second)?;
@@ -2109,7 +2212,6 @@ pub fn chi_square(args: Vec<Value>) -> Result<Value, String> {
     let (statistic, p_value, df_value, total_n) = chi_square_independence_values(&table)?;
 
     let rows = table.len();
-
     let columns = table[0].len();
 
     let effect_size = cramers_v(statistic, total_n, rows, columns)?;
@@ -2124,6 +2226,7 @@ pub fn chi_square(args: Vec<Value>) -> Result<Value, String> {
             Value::Str(Rc::new("Cramer's V".to_string())),
         ),
         ("confidence_interval", Value::Null),
+        ("effect_size_ci", Value::Null),
         (
             "method",
             Value::Str(Rc::new("Chi-square test of independence".to_string())),
