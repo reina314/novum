@@ -870,6 +870,20 @@ impl Vm {
                             self.push(value);
                         },
 
+                        (Value::List(list), Value::Range(start, end, inclusive)) => {
+                            let range =
+                                Value::normalize_index_range(start, end, inclusive, list.len())
+                                    .map_err(|message| {
+                                        Error::new(ErrorKind::Index, message, None)
+                                    })?;
+
+                            let sliced = list
+                                .slice(range)
+                                .map_err(|message| Error::new(ErrorKind::Index, message, None))?;
+
+                            self.push(Value::List(sliced));
+                        },
+
                         (Value::Tuple(tuple), Value::Int(index)) => {
                             if index < 0 {
                                 return Err(Error::new(
@@ -886,6 +900,18 @@ impl Vm {
                             self.push(value);
                         },
 
+                        (Value::Tuple(tuple), Value::Range(start, end, inclusive)) => {
+                            let range =
+                                Value::normalize_index_range(start, end, inclusive, tuple.len())
+                                    .map_err(|message| {
+                                        Error::new(ErrorKind::Index, message, None)
+                                    })?;
+
+                            let sliced = tuple[range].to_vec();
+
+                            self.push(Value::Tuple(Rc::new(sliced)));
+                        },
+
                         (Value::Series(series), Value::Int(index)) => {
                             if index < 0 {
                                 return Err(Error::new(
@@ -900,6 +926,22 @@ impl Vm {
                             })?;
 
                             self.push(value);
+                        },
+
+                        (Value::Series(series), Value::Range(start, end, inclusive)) => {
+                            let range = Value::normalize_index_range(
+                                start,
+                                end,
+                                inclusive,
+                                series.len(),
+                            )
+                            .map_err(|message| Error::new(ErrorKind::Index, message, None))?;
+
+                            let sliced = series
+                                .slice(range)
+                                .map_err(|message| Error::new(ErrorKind::Index, message, None))?;
+
+                            self.push(Value::Series(Rc::new(sliced)));
                         },
 
                         (Value::DataFrame(df), Value::Str(name)) => {

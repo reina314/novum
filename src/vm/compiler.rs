@@ -1895,12 +1895,8 @@ impl Compiler {
                     .emit_operand(OpCode::NewRange, if *inclusive { 1 } else { 0 });
             },
 
-            ExprKind::Index(object, IndexExpr::Single(index)) => {
-                self.compile_expr(object)?;
-
-                self.compile_expr(index)?;
-
-                self.chunk.emit(OpCode::IndexGet);
+            ExprKind::Index(object, index) => {
+                self.compile_index(object, index)?;
             },
 
             ExprKind::Field { object, name } => {
@@ -3223,6 +3219,56 @@ impl Compiler {
         let resolution = self.resolve_name(name)?;
 
         self.emit_name_resolution(resolution)
+    }
+
+    fn compile_index(&mut self, object: &Expr, index: &IndexExpr) -> Result<()> {
+        self.compile_expr(object)?;
+
+        match index {
+            IndexExpr::Single(index) => {
+                self.compile_expr(index)?;
+            },
+
+            IndexExpr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let Some(start) = start else {
+                    return Err(Error::new(
+                        ErrorKind::Runtime,
+                        "open-ended index ranges are not supported yet",
+                        None,
+                    ));
+                };
+
+                let Some(end) = end else {
+                    return Err(Error::new(
+                        ErrorKind::Runtime,
+                        "open-ended index ranges are not supported yet",
+                        None,
+                    ));
+                };
+
+                self.compile_expr(start)?;
+                self.compile_expr(end)?;
+
+                self.chunk
+                    .emit_operand(OpCode::NewRange, if *inclusive { 1 } else { 0 });
+            },
+
+            IndexExpr::Tuple(_) => {
+                return Err(Error::new(
+                    ErrorKind::Runtime,
+                    "tuple indexing is not supported yet",
+                    None,
+                ));
+            },
+        }
+
+        self.chunk.emit(OpCode::IndexGet);
+
+        Ok(())
     }
 
     fn compile_call(&mut self, callee: &Expr, args: &[CallArg]) -> Result<()> {
