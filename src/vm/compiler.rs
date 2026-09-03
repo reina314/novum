@@ -5,7 +5,9 @@ use crate::{
         UpvalueSpec, Value,
     },
     stdlib::{encode_class_counts, is_self_pattern},
-    syntax::{BinOp, CallArg, Expr, ExprKind, IndexExpr, ListItem, Pattern, Program, Visibility},
+    syntax::{
+        BinOp, CallArg, Expr, ExprKind, IndexExpr, ListItem, Pattern, Program, Span, Visibility,
+    },
 };
 
 use super::{
@@ -278,6 +280,22 @@ impl Compiler {
         self.next_local_slot += 1;
 
         slot
+    }
+
+    fn fresh_internal_name(&self, prefix: &str) -> String {
+        let scope = self.scope.borrow();
+
+        let mut index = self.next_local_slot;
+
+        loop {
+            let name = format!("{prefix}{index}");
+
+            if !scope.locals.contains_key(&name) && !scope.upvalues.contains_key(&name) {
+                return name;
+            }
+
+            index += 1;
+        }
     }
 
     fn emit_load_lvalue(&mut self, lvalue: &LValue) -> Result<()> {
@@ -1521,6 +1539,10 @@ impl Compiler {
 
                 BinOp::Or => {
                     self.compile_logical_or(left, right)?;
+                },
+
+                BinOp::Compose => {
+                    self.compile_function_composition(left, right)?;
                 },
 
                 _ => {
@@ -2977,6 +2999,70 @@ impl Compiler {
                 None,
             )),
         }
+    }
+
+    fn compile_function_composition(&mut self, left: &Expr, right: &Expr) -> Result<()> {
+        /*
+         * Evaluate both operands exactly once.
+         *
+         *     f >> g
+         *
+         * becomes conceptually:
+         *
+         *     let __left = f
+         *     let __right = g
+         *     |x| __right(__left(x))
+         *
+         * The hidden locals are captured by the generated closure.
+         */
+
+        let left_name = self.fresh_internal_name("__novum_compose_left_");
+        let left_slot = self.declare_local(left_name.clone())?;
+
+        self.compile_expr(left)?;
+
+        self.chunk
+            .emit_operand(OpCode::StoreLocal, left_slot as u32);
+
+        self.chunk.emit(OpCode::Pop);
+
+        let right_name = self.fresh_internal_name("__novum_compose_right_");
+        let right_slot = self.declare_local(right_name.clone())?;
+
+        self.compile_expr(right)?;
+
+        self.chunk
+            .emit_operand(OpCode::StoreLocal, right_slot as u32);
+
+        self.chunk.emit(OpCode::Pop);
+
+        let argument_name = self.fresh_internal_name("__novum_compose_arg_");
+
+        let argument = Expr::new(ExprKind::Ident(argument_name.clone()), Span::EMPTY);
+
+        let left_ident = Expr::new(ExprKind::Ident(left_name), Span::EMPTY);
+
+        let right_ident = Expr::new(ExprKind::Ident(right_name), Span::EMPTY);
+
+        let left_call = Expr::new(
+            ExprKind::Call(Box::new(left_ident), vec![CallArg::positional(argument)]),
+            Span::EMPTY,
+        );
+
+        let body = Expr::new(
+            ExprKind::Call(Box::new(right_ident), vec![CallArg::positional(left_call)]),
+            Span::EMPTY,
+        );
+
+        let params = vec![Pattern::Ident(argument_name)];
+
+        let function = self.compile_lambda_proto(&params, &body)?;
+
+        let constant = self.chunk.add_constant(Value::FunctionProto(function));
+
+        self.chunk.emit_operand(OpCode::Closure, constant);
+
+        Ok(())
     }
 
     fn compile_lambda_proto(&self, params: &[Pattern], body: &Expr) -> Result<FunctionRef> {

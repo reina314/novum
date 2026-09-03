@@ -229,6 +229,8 @@ pub enum BinOp {
 
     And,
     Or,
+
+    Compose,
 }
 
 impl fmt::Display for BinOp {
@@ -252,6 +254,8 @@ impl fmt::Display for BinOp {
 
             Self::And => "and",
             Self::Or => "or",
+
+            Self::Compose => ">>",
         };
         write!(f, "{s}")
     }

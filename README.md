@@ -1,4 +1,4 @@
-# Novum v0.17.3
+# Novum v0.17.4
 
 > **Quick ideas. Quick experiments. Quick results.**
 
@@ -9,7 +9,7 @@ Novum is a small, practical programming language that combines compact syntax, e
 
 Novum is designed for programs where the language should stay out of the way. Its syntax is intentionally compact, while the runtime provides useful building blocks for manipulating collections, working with files, invoking external processes, and performing numerical computation.
 
-Novum is under active development, so the language and standard library may evolve over time. These pages document the behavior of the current implementation.
+Novum is under active development, so the language and standard library may evolve over time.
 
 
 ## Example Usage

@@ -164,7 +164,9 @@ impl<'a> Lexer<'a> {
                 },
 
                 '>' => {
-                    if self.consume_if('=') {
+                    if self.consume_if('>') {
+                        TokenKind::DoubleGreater
+                    } else if self.consume_if('=') {
                         TokenKind::GreaterEq
                     } else {
                         TokenKind::Greater
