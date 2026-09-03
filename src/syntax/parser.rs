@@ -154,7 +154,7 @@ impl Parser {
     }
 
     fn parse_assignment(&mut self) -> Result<Expr> {
-        let lhs = self.parse_range()?;
+        let lhs = self.parse_composition()?;
 
         if self.eat_if(TokenKind::Equals) {
             let rhs = self.parse_assignment()?;
@@ -192,6 +192,23 @@ impl Parser {
         }
 
         Ok(lhs)
+    }
+
+    fn parse_composition(&mut self) -> Result<Expr> {
+        let left = self.parse_range()?;
+
+        if !self.eat_if(TokenKind::DoubleGreater) {
+            return Ok(left);
+        }
+
+        let right = self.parse_composition()?;
+
+        let span = left.span.join(right.span);
+
+        Ok(Expr::new(
+            ExprKind::Binary(BinOp::Compose, Box::new(left), Box::new(right)),
+            span,
+        ))
     }
 
     fn validate_assignment_target(&self, expr: &Expr) -> Result<()> {

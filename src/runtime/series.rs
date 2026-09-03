@@ -42,6 +42,22 @@ impl Series {
         self.data
     }
 
+    pub fn slice(&self, range: std::ops::Range<usize>) -> Result<Self, String> {
+        if range.start > range.end {
+            return Err("slice start must not exceed end".into());
+        }
+
+        if range.end > self.data.len() {
+            return Err(format!(
+                "slice end {} out of bounds for length {}",
+                range.end,
+                self.data.len()
+            ));
+        }
+
+        Ok(Self::new(self.name.clone(), self.data[range].to_vec()))
+    }
+
     fn ensure_numeric(&self) -> Result<Vec<f64>, String> {
         self.numeric_values()
     }

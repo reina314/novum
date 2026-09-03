@@ -1,10 +1,14 @@
 use crate::runtime::{
-    BuiltinFn, DataFrame, ExtensionRegistry, Module, ModuleRef, ReceiverKind, Series, SeriesRef,
-    Value,
+    BuiltinFn, DataFrame, ExtensionRegistry, Matrix, Module, ModuleRef, ReceiverKind, Series,
+    SeriesRef, Value,
 };
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use faer::{
+    linalg::solvers::{DenseSolveCore, SolveLstsq},
+    Mat,
+};
 use statrs::distribution::{ChiSquared, ContinuousCDF, FisherSnedecor, Normal, StudentsT};
 use tukey_test::tukey_hsd;
 
@@ -141,6 +145,11 @@ fn function_specs() -> &'static [FunctionSpec] {
             function: chi_square,
             receiver: None,
         },
+        FunctionSpec {
+            name: "regression",
+            function: regression,
+            receiver: None,
+        },
     ]
 }
 
@@ -263,6 +272,45 @@ fn numeric_argument(value: &Value, function: &str, name: &str) -> Result<f64, St
     }
 
     Ok(value)
+}
+
+fn expect_regression_predictors(value: &Value, function: &str) -> Result<Vec<SeriesRef>, String> {
+    match value {
+        Value::Series(series) => Ok(vec![series.clone()]),
+
+        Value::List(list) => {
+            let values = list.iter_cloned();
+
+            if values.is_empty() {
+                return Err(format!("{}() requires at least one predictor", function));
+            }
+
+            let mut predictors = Vec::with_capacity(values.len());
+
+            for (index, value) in values.into_iter().enumerate() {
+                match value {
+                    Value::Series(series) => predictors.push(series),
+
+                    other => {
+                        return Err(format!(
+                            "{}() predictor {} must be Series, got {}",
+                            function,
+                            index,
+                            other.type_name()
+                        ));
+                    },
+                }
+            }
+
+            Ok(predictors)
+        },
+
+        other => Err(format!(
+            "{}() predictors must be Series or List of Series, got {}",
+            function,
+            other.type_name()
+        )),
+    }
 }
 
 // =========================
@@ -2230,6 +2278,614 @@ pub fn chi_square(args: Vec<Value>) -> Result<Value, String> {
         (
             "method",
             Value::Str(Rc::new("Chi-square test of independence".to_string())),
+        ),
+    ]))
+}
+
+// =========================
+// regression
+// =========================
+struct RegressionFit {
+    coefficients: Vec<f64>,
+    fitted: Vec<f64>,
+    residuals: Vec<f64>,
+    residual_sum_of_squares: f64,
+    total_sum_of_squares: f64,
+    df_model: usize,
+    df_residual: usize,
+}
+
+fn collect_regression_data(
+    response: &SeriesRef,
+    predictors: &[SeriesRef],
+) -> Result<(Vec<Vec<f64>>, Vec<f64>), String> {
+    if predictors.is_empty() {
+        return Err("regression() requires at least one predictor".into());
+    }
+
+    let n = response.len();
+
+    for (index, predictor) in predictors.iter().enumerate() {
+        if predictor.len() != n {
+            return Err(format!(
+                "regression() predictor {} has length {}, expected {}",
+                index,
+                predictor.len(),
+                n
+            ));
+        }
+    }
+
+    let mut x_rows = Vec::with_capacity(n);
+    let mut y_values = Vec::with_capacity(n);
+
+    for row in 0..n {
+        let response_value = response
+            .get(row)
+            .ok_or_else(|| format!("response index out of bounds: {}", row))?;
+
+        let response = match response_value {
+            Value::Null => continue,
+
+            Value::Int(value) => value as f64,
+
+            Value::Float(value) => {
+                if !value.is_finite() {
+                    return Err(format!(
+                        "regression() response contains non-finite value at row {}",
+                        row
+                    ));
+                }
+
+                value
+            },
+
+            other => {
+                return Err(format!(
+                    "regression() response must be numeric; row {} contains {}",
+                    row,
+                    other.type_name()
+                ));
+            },
+        };
+
+        let mut x_row = Vec::with_capacity(predictors.len());
+        let mut complete = true;
+
+        for predictor in predictors {
+            let value = predictor
+                .get(row)
+                .ok_or_else(|| format!("predictor index out of bounds: {}", row))?;
+
+            match value {
+                Value::Null => {
+                    complete = false;
+                    break;
+                },
+
+                Value::Int(value) => x_row.push(value as f64),
+
+                Value::Float(value) => {
+                    if !value.is_finite() {
+                        return Err(format!(
+                            "regression() predictor '{}' contains non-finite value at row {}",
+                            predictor.name(),
+                            row
+                        ));
+                    }
+
+                    x_row.push(value);
+                },
+
+                other => {
+                    return Err(format!(
+                        "regression() predictor '{}' must be numeric; row {} contains {}",
+                        predictor.name(),
+                        row,
+                        other.type_name()
+                    ));
+                },
+            }
+        }
+
+        if !complete {
+            continue;
+        }
+
+        x_rows.push(x_row);
+        y_values.push(response);
+    }
+
+    Ok((x_rows, y_values))
+}
+
+fn build_regression_design(predictor_rows: &[Vec<f64>]) -> Result<Matrix, String> {
+    if predictor_rows.is_empty() {
+        return Err("regression() requires at least one complete observation".into());
+    }
+
+    let predictor_count = predictor_rows[0].len();
+
+    if predictor_count == 0 {
+        return Err("regression() requires at least one predictor".into());
+    }
+
+    if predictor_rows
+        .iter()
+        .any(|row| row.len() != predictor_count)
+    {
+        return Err("regression() predictor rows have inconsistent lengths".into());
+    }
+
+    let rows = predictor_rows.len();
+    let cols = predictor_count + 1;
+
+    let mut data = Vec::with_capacity(rows * cols);
+
+    for row in predictor_rows {
+        data.push(1.0);
+
+        data.extend(row.iter().copied());
+    }
+
+    Matrix::new(rows, cols, data)
+}
+
+fn fit_regression(x: &Matrix, y: &[f64]) -> Result<RegressionFit, String> {
+    let n = x.rows();
+    let parameter_count = x.cols();
+
+    if n != y.len() {
+        return Err(format!(
+            "regression() X and y have incompatible row counts: {} vs {}",
+            n,
+            y.len()
+        ));
+    }
+
+    if parameter_count < 2 {
+        return Err("regression() requires at least one predictor".into());
+    }
+
+    if n == 0 {
+        return Err("regression() requires at least one observation".into());
+    }
+
+    let df_model = parameter_count - 1;
+
+    if n <= parameter_count {
+        return Err(format!(
+            "regression() requires more observations than parameters: {} observations, {} parameters",
+            n, parameter_count
+        ));
+    }
+
+    validate_regression_rank(x)?;
+
+    let y_matrix = Mat::from_fn(n, 1, |row, _| y[row]);
+
+    let qr = x.as_faer().qr();
+
+    let coefficients_matrix = qr.solve_lstsq(y_matrix.as_ref());
+
+    if coefficients_matrix.nrows() != parameter_count || coefficients_matrix.ncols() != 1 {
+        return Err("regression() failed to compute coefficient vector".into());
+    }
+
+    let mut coefficients = Vec::with_capacity(parameter_count);
+
+    for row in 0..parameter_count {
+        let value = coefficients_matrix[(row, 0)];
+
+        if !value.is_finite() {
+            return Err("regression() coefficient is non-finite".into());
+        }
+
+        coefficients.push(value);
+    }
+
+    let mut fitted = Vec::with_capacity(n);
+    let mut residuals = Vec::with_capacity(n);
+
+    for row in 0..n {
+        let mut fitted_value = 0.0;
+
+        for column in 0..parameter_count {
+            let x_value = x
+                .get(row, column)
+                .ok_or_else(|| format!("regression() failed to access X[{}, {}]", row, column))?;
+
+            fitted_value += x_value * coefficients[column];
+        }
+
+        let residual = y[row] - fitted_value;
+
+        if !fitted_value.is_finite() || !residual.is_finite() {
+            return Err("regression() produced a non-finite fitted value".into());
+        }
+
+        fitted.push(fitted_value);
+        residuals.push(residual);
+    }
+
+    let mean = y.iter().sum::<f64>() / n as f64;
+
+    let residual_sum_of_squares = residuals.iter().map(|value| value * value).sum::<f64>();
+
+    let total_sum_of_squares = y
+        .iter()
+        .map(|value| {
+            let difference = *value - mean;
+            difference * difference
+        })
+        .sum::<f64>();
+
+    let df_residual = n - parameter_count;
+
+    Ok(RegressionFit {
+        coefficients,
+        fitted,
+        residuals,
+        residual_sum_of_squares,
+        total_sum_of_squares,
+        df_model,
+        df_residual,
+    })
+}
+
+fn validate_regression_rank(x: &Matrix) -> Result<(), String> {
+    let qr = x.as_faer().qr();
+    let r = qr.thin_R();
+
+    let dimension = x.cols();
+
+    if r.nrows() != dimension || r.ncols() != dimension {
+        return Err("regression() failed to inspect QR factor".into());
+    }
+
+    let mut max_diagonal: f64 = 0.0;
+
+    for index in 0..dimension {
+        let value = r[(index, index)].abs();
+
+        if !value.is_finite() {
+            return Err("regression() design matrix contains non-finite values".into());
+        }
+
+        max_diagonal = max_diagonal.max(value);
+    }
+
+    if max_diagonal == 0.0 {
+        return Err("regression() design matrix is rank deficient".into());
+    }
+
+    let tolerance = max_diagonal * (x.rows().max(x.cols()) as f64) * f64::EPSILON * 100.0;
+
+    for index in 0..dimension {
+        if r[(index, index)].abs() <= tolerance {
+            return Err("regression() design matrix is rank deficient".into());
+        }
+    }
+
+    Ok(())
+}
+
+fn regression_covariance(
+    x: &Matrix,
+    residual_sum_of_squares: f64,
+    df_residual: usize,
+) -> Result<Mat<f64>, String> {
+    if df_residual == 0 {
+        return Err("regression() residual degrees of freedom must be positive".into());
+    }
+
+    if !residual_sum_of_squares.is_finite() || residual_sum_of_squares < 0.0 {
+        return Err("regression() residual sum of squares is invalid".into());
+    }
+
+    let qr = x.as_faer().qr();
+    let r = qr.thin_R().to_owned();
+
+    let r_inverse = r.partial_piv_lu().inverse();
+
+    let mse = residual_sum_of_squares / df_residual as f64;
+
+    if !mse.is_finite() || mse < 0.0 {
+        return Err("regression() residual mean square is invalid".into());
+    }
+
+    let covariance = (&r_inverse * r_inverse.transpose()) * mse;
+
+    for row in 0..covariance.nrows() {
+        for column in 0..covariance.ncols() {
+            if !covariance[(row, column)].is_finite() {
+                return Err("regression() covariance matrix is non-finite".into());
+            }
+        }
+    }
+
+    Ok(covariance)
+}
+
+fn regression_standard_errors(covariance: &Mat<f64>) -> Result<Vec<f64>, String> {
+    if covariance.nrows() != covariance.ncols() {
+        return Err("regression() covariance matrix must be square".into());
+    }
+
+    let mut standard_errors = Vec::with_capacity(covariance.nrows());
+
+    for index in 0..covariance.nrows() {
+        let variance = covariance[(index, index)];
+
+        if !variance.is_finite() || variance < 0.0 {
+            return Err(format!(
+                "regression() invalid coefficient variance at index {}",
+                index
+            ));
+        }
+
+        standard_errors.push(variance.sqrt());
+    }
+
+    Ok(standard_errors)
+}
+
+fn regression_model_statistics(
+    fit: &RegressionFit,
+) -> Result<
+    (
+        f64, // r_squared
+        f64, // adjusted_r_squared
+        f64, // mse
+        f64, // residual_standard_error
+        f64, // f_statistic
+        f64, // f_p_value
+    ),
+    String,
+> {
+    let n = fit.fitted.len();
+
+    if n == 0 {
+        return Err("regression() has no observations".into());
+    }
+
+    if fit.total_sum_of_squares == 0.0 {
+        return Err("regression() response has zero total variance".into());
+    }
+
+    if fit.df_residual == 0 {
+        return Err("regression() residual degrees of freedom must be positive".into());
+    }
+
+    let r_squared = 1.0 - fit.residual_sum_of_squares / fit.total_sum_of_squares;
+
+    let adjusted_r_squared =
+        1.0 - (1.0 - r_squared) * (n.saturating_sub(1) as f64) / fit.df_residual as f64;
+
+    let mse = fit.residual_sum_of_squares / fit.df_residual as f64;
+
+    let residual_standard_error = mse.sqrt();
+
+    let regression_sum_of_squares = fit.total_sum_of_squares - fit.residual_sum_of_squares;
+
+    let f_statistic = if fit.df_model == 0 {
+        return Err("regression() requires at least one predictor".into());
+    } else {
+        let mean_regression_square = regression_sum_of_squares / fit.df_model as f64;
+
+        if mse == 0.0 {
+            if mean_regression_square == 0.0 {
+                return Err("regression() has zero residual and regression variance".into());
+            }
+
+            f64::INFINITY
+        } else {
+            mean_regression_square / mse
+        }
+    };
+
+    let f_p_value = if f_statistic.is_infinite() {
+        0.0
+    } else {
+        let distribution = FisherSnedecor::new(fit.df_model as f64, fit.df_residual as f64)
+            .map_err(|error| error.to_string())?;
+
+        distribution.sf(f_statistic)
+    };
+
+    Ok((
+        r_squared,
+        adjusted_r_squared,
+        mse,
+        residual_standard_error,
+        f_statistic,
+        f_p_value,
+    ))
+}
+
+fn regression_coefficient_table(
+    predictor_names: &[String],
+    coefficients: &[f64],
+    standard_errors: &[f64],
+    df_residual: usize,
+    confidence: f64,
+) -> Result<Value, String> {
+    if coefficients.len() != standard_errors.len() {
+        return Err("regression() coefficient and standard-error lengths differ".into());
+    }
+
+    if coefficients.len() != predictor_names.len() + 1 {
+        return Err("regression() coefficient count does not match predictors".into());
+    }
+
+    let mut terms = Vec::with_capacity(coefficients.len());
+    let mut estimates = Vec::with_capacity(coefficients.len());
+    let mut errors = Vec::with_capacity(coefficients.len());
+    let mut statistics = Vec::with_capacity(coefficients.len());
+    let mut p_values = Vec::with_capacity(coefficients.len());
+    let mut ci_lowers = Vec::with_capacity(coefficients.len());
+    let mut ci_uppers = Vec::with_capacity(coefficients.len());
+
+    for index in 0..coefficients.len() {
+        let term = if index == 0 {
+            "Intercept".to_string()
+        } else {
+            predictor_names[index - 1].clone()
+        };
+
+        let estimate = coefficients[index];
+        let standard_error = standard_errors[index];
+
+        if standard_error == 0.0 {
+            if estimate == 0.0 {
+                return Err(format!(
+                    "regression() coefficient '{}' has undefined statistic",
+                    term
+                ));
+            }
+
+            let statistic = if estimate > 0.0 {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            };
+
+            let p_value = 0.0;
+
+            terms.push(Value::Str(Rc::new(term)));
+            estimates.push(Value::Float(estimate));
+            errors.push(Value::Float(standard_error));
+            statistics.push(Value::Float(statistic));
+            p_values.push(Value::Float(p_value));
+
+            ci_lowers.push(Value::Float(estimate));
+            ci_uppers.push(Value::Float(estimate));
+
+            continue;
+        }
+
+        let statistic = estimate / standard_error;
+        let p_value = t_distribution_p_value(statistic, df_residual as f64)?;
+
+        let (ci_lower, ci_upper) =
+            t_confidence_interval(estimate, standard_error, df_residual as f64, confidence)?;
+
+        terms.push(Value::Str(Rc::new(term)));
+        estimates.push(Value::Float(estimate));
+        errors.push(Value::Float(standard_error));
+        statistics.push(Value::Float(statistic));
+        p_values.push(Value::Float(p_value));
+        ci_lowers.push(Value::Float(ci_lower));
+        ci_uppers.push(Value::Float(ci_upper));
+    }
+
+    let dataframe = DataFrame::from_series(vec![
+        Rc::new(Series::new("term", terms)),
+        Rc::new(Series::new("estimate", estimates)),
+        Rc::new(Series::new("std_error", errors)),
+        Rc::new(Series::new("statistic", statistics)),
+        Rc::new(Series::new("p_value", p_values)),
+        Rc::new(Series::new("ci_lower", ci_lowers)),
+        Rc::new(Series::new("ci_upper", ci_uppers)),
+    ])?;
+
+    Ok(Value::DataFrame(Rc::new(dataframe)))
+}
+
+fn regression_numeric_series(name: &str, values: &[f64]) -> SeriesRef {
+    Rc::new(Series::new(
+        name.to_string(),
+        values.iter().copied().map(Value::Float).collect(),
+    ))
+}
+
+pub fn regression(args: Vec<Value>) -> Result<Value, String> {
+    if !(2..=3).contains(&args.len()) {
+        return Err(
+            "regression() expects response, predictors, and optional confidence level".into(),
+        );
+    }
+
+    let response = match &args[0] {
+        Value::Series(series) => series.clone(),
+
+        other => {
+            return Err(format!(
+                "regression() response must be Series, got {}",
+                other.type_name()
+            ));
+        },
+    };
+
+    let predictors = expect_regression_predictors(&args[1], "regression")?;
+
+    let confidence = confidence_level_from_args(&args, 2, "regression")?;
+
+    let predictor_names = predictors
+        .iter()
+        .map(|predictor| predictor.name().to_owned())
+        .collect::<Vec<_>>();
+
+    let (predictor_rows, y) = collect_regression_data(&response, &predictors)?;
+
+    if y.len() < 2 {
+        return Err("regression() requires at least 2 complete observations".into());
+    }
+
+    let x = build_regression_design(&predictor_rows)?;
+
+    validate_regression_rank(&x)?;
+
+    let fit = fit_regression(&x, &y)?;
+
+    let covariance = regression_covariance(&x, fit.residual_sum_of_squares, fit.df_residual)?;
+
+    let standard_errors = regression_standard_errors(&covariance)?;
+
+    let (r_squared, adjusted_r_squared, _mse, residual_standard_error, f_statistic, f_p_value) =
+        regression_model_statistics(&fit)?;
+
+    let coefficients = regression_coefficient_table(
+        &predictor_names,
+        &fit.coefficients,
+        &standard_errors,
+        fit.df_residual,
+        confidence,
+    )?;
+
+    Ok(result_dict(vec![
+        ("coefficients", coefficients),
+        (
+            "fitted",
+            Value::Series(regression_numeric_series("fitted", &fit.fitted)),
+        ),
+        (
+            "residuals",
+            Value::Series(regression_numeric_series("residual", &fit.residuals)),
+        ),
+        ("r_squared", Value::Float(r_squared)),
+        ("adjusted_r_squared", Value::Float(adjusted_r_squared)),
+        ("f_statistic", Value::Float(f_statistic)),
+        ("f_p_value", Value::Float(f_p_value)),
+        ("df_model", Value::Int(fit.df_model as i64)),
+        ("df_residual", Value::Int(fit.df_residual as i64)),
+        (
+            "residual_standard_error",
+            Value::Float(residual_standard_error),
+        ),
+        (
+            "residual_sum_of_squares",
+            Value::Float(fit.residual_sum_of_squares),
+        ),
+        (
+            "total_sum_of_squares",
+            Value::Float(fit.total_sum_of_squares),
+        ),
+        ("n", Value::Int(y.len() as i64)),
+        ("confidence_level", Value::Float(confidence)),
+        (
+            "method",
+            Value::Str(Rc::new("Ordinary least squares".to_string())),
         ),
     ]))
 }

@@ -5,7 +5,9 @@ use crate::{
         UpvalueSpec, Value,
     },
     stdlib::{encode_class_counts, is_self_pattern},
-    syntax::{BinOp, CallArg, Expr, ExprKind, IndexExpr, ListItem, Pattern, Program, Visibility},
+    syntax::{
+        BinOp, CallArg, Expr, ExprKind, IndexExpr, ListItem, Pattern, Program, Span, Visibility,
+    },
 };
 
 use super::{
@@ -78,6 +80,10 @@ impl Scope {
 
             function_boundary,
         }))
+    }
+
+    fn remove_local(scope: &ScopeRef, name: &str) -> Option<u16> {
+        scope.borrow_mut().locals.remove(name)
     }
 }
 
@@ -278,6 +284,22 @@ impl Compiler {
         self.next_local_slot += 1;
 
         slot
+    }
+
+    fn fresh_internal_name(&self, prefix: &str) -> String {
+        let scope = self.scope.borrow();
+
+        let mut index = self.next_local_slot;
+
+        loop {
+            let name = format!("{prefix}{index}");
+
+            if !scope.locals.contains_key(&name) && !scope.upvalues.contains_key(&name) {
+                return name;
+            }
+
+            index += 1;
+        }
     }
 
     fn emit_load_lvalue(&mut self, lvalue: &LValue) -> Result<()> {
@@ -1523,6 +1545,10 @@ impl Compiler {
                     self.compile_logical_or(left, right)?;
                 },
 
+                BinOp::Compose => {
+                    self.compile_function_composition(left, right)?;
+                },
+
                 _ => {
                     self.compile_expr(left)?;
                     self.compile_expr(right)?;
@@ -1895,12 +1921,8 @@ impl Compiler {
                     .emit_operand(OpCode::NewRange, if *inclusive { 1 } else { 0 });
             },
 
-            ExprKind::Index(object, IndexExpr::Single(index)) => {
-                self.compile_expr(object)?;
-
-                self.compile_expr(index)?;
-
-                self.chunk.emit(OpCode::IndexGet);
+            ExprKind::Index(object, index) => {
+                self.compile_index(object, index)?;
             },
 
             ExprKind::Field { object, name } => {
@@ -2267,6 +2289,10 @@ impl Compiler {
 
                     self.chunk.emit(OpCode::Return);
                 },
+            },
+
+            ExprKind::Drop(name) => {
+                self.compile_drop(name)?;
             },
 
             ExprKind::Try(inner) => {
@@ -2774,6 +2800,22 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_drop(&mut self, name: &str) -> Result<()> {
+        let slot = Scope::remove_local(&self.scope, name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Name,
+                format!("{} is not defined in the current scope", name),
+                None,
+            )
+        })?;
+
+        self.chunk.emit_operand(OpCode::ResetLocal, slot as u32);
+
+        self.chunk.emit(OpCode::Unit);
+
+        Ok(())
+    }
+
     fn compile_binop(&mut self, op: BinOp) -> Result<()> {
         let opcode = match op {
             BinOp::Add => OpCode::Add,
@@ -2981,6 +3023,70 @@ impl Compiler {
                 None,
             )),
         }
+    }
+
+    fn compile_function_composition(&mut self, left: &Expr, right: &Expr) -> Result<()> {
+        /*
+         * Evaluate both operands exactly once.
+         *
+         *     f >> g
+         *
+         * becomes conceptually:
+         *
+         *     let __left = f
+         *     let __right = g
+         *     |x| __right(__left(x))
+         *
+         * The hidden locals are captured by the generated closure.
+         */
+
+        let left_name = self.fresh_internal_name("__novum_compose_left_");
+        let left_slot = self.declare_local(left_name.clone())?;
+
+        self.compile_expr(left)?;
+
+        self.chunk
+            .emit_operand(OpCode::StoreLocal, left_slot as u32);
+
+        self.chunk.emit(OpCode::Pop);
+
+        let right_name = self.fresh_internal_name("__novum_compose_right_");
+        let right_slot = self.declare_local(right_name.clone())?;
+
+        self.compile_expr(right)?;
+
+        self.chunk
+            .emit_operand(OpCode::StoreLocal, right_slot as u32);
+
+        self.chunk.emit(OpCode::Pop);
+
+        let argument_name = self.fresh_internal_name("__novum_compose_arg_");
+
+        let argument = Expr::new(ExprKind::Ident(argument_name.clone()), Span::EMPTY);
+
+        let left_ident = Expr::new(ExprKind::Ident(left_name), Span::EMPTY);
+
+        let right_ident = Expr::new(ExprKind::Ident(right_name), Span::EMPTY);
+
+        let left_call = Expr::new(
+            ExprKind::Call(Box::new(left_ident), vec![CallArg::positional(argument)]),
+            Span::EMPTY,
+        );
+
+        let body = Expr::new(
+            ExprKind::Call(Box::new(right_ident), vec![CallArg::positional(left_call)]),
+            Span::EMPTY,
+        );
+
+        let params = vec![Pattern::Ident(argument_name)];
+
+        let function = self.compile_lambda_proto(&params, &body)?;
+
+        let constant = self.chunk.add_constant(Value::FunctionProto(function));
+
+        self.chunk.emit_operand(OpCode::Closure, constant);
+
+        Ok(())
     }
 
     fn compile_lambda_proto(&self, params: &[Pattern], body: &Expr) -> Result<FunctionRef> {
@@ -3223,6 +3329,56 @@ impl Compiler {
         let resolution = self.resolve_name(name)?;
 
         self.emit_name_resolution(resolution)
+    }
+
+    fn compile_index(&mut self, object: &Expr, index: &IndexExpr) -> Result<()> {
+        self.compile_expr(object)?;
+
+        match index {
+            IndexExpr::Single(index) => {
+                self.compile_expr(index)?;
+            },
+
+            IndexExpr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let Some(start) = start else {
+                    return Err(Error::new(
+                        ErrorKind::Runtime,
+                        "open-ended index ranges are not supported yet",
+                        None,
+                    ));
+                };
+
+                let Some(end) = end else {
+                    return Err(Error::new(
+                        ErrorKind::Runtime,
+                        "open-ended index ranges are not supported yet",
+                        None,
+                    ));
+                };
+
+                self.compile_expr(start)?;
+                self.compile_expr(end)?;
+
+                self.chunk
+                    .emit_operand(OpCode::NewRange, if *inclusive { 1 } else { 0 });
+            },
+
+            IndexExpr::Tuple(_) => {
+                return Err(Error::new(
+                    ErrorKind::Runtime,
+                    "tuple indexing is not supported yet",
+                    None,
+                ));
+            },
+        }
+
+        self.chunk.emit(OpCode::IndexGet);
+
+        Ok(())
     }
 
     fn compile_call(&mut self, callee: &Expr, args: &[CallArg]) -> Result<()> {
