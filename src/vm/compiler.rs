@@ -81,6 +81,10 @@ impl Scope {
             function_boundary,
         }))
     }
+
+    fn remove_local(scope: &ScopeRef, name: &str) -> Option<u16> {
+        scope.borrow_mut().locals.remove(name)
+    }
 }
 
 #[derive(Clone)]
@@ -2287,6 +2291,10 @@ impl Compiler {
                 },
             },
 
+            ExprKind::Drop(name) => {
+                self.compile_drop(name)?;
+            },
+
             ExprKind::Try(inner) => {
                 self.compile_expr(inner)?;
 
@@ -2788,6 +2796,22 @@ impl Compiler {
          */
         self.chunk
             .emit_operand(OpCode::LoadLocal, result_slot as u32);
+
+        Ok(())
+    }
+
+    fn compile_drop(&mut self, name: &str) -> Result<()> {
+        let slot = Scope::remove_local(&self.scope, name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Name,
+                format!("{} is not defined in the current scope", name),
+                None,
+            )
+        })?;
+
+        self.chunk.emit_operand(OpCode::ResetLocal, slot as u32);
+
+        self.chunk.emit(OpCode::Unit);
 
         Ok(())
     }
