@@ -34,6 +34,7 @@ pub enum TokenKind {
     LessEq,
     Greater,
     GreaterEq,
+    DoubleGreater,
 
     If,
     Else,

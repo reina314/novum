@@ -508,6 +508,14 @@ impl NovumUi {
             | TokenKind::Import
             | TokenKind::Use => Self::keyword_style(),
 
+            TokenKind::Ident(str) => {
+                if str == "drop" {
+                    Self::keyword_style()
+                } else {
+                    Self::default_style()
+                }
+            },
+
             // ------------------------------------------------
             // Brackets
             // ------------------------------------------------

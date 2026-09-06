@@ -25,6 +25,8 @@ fn apply_scalar_binop(op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String
         Lt | Leq | Gt | Geq => compare(op, lhs, rhs),
 
         And | Or => bool_binary(op, lhs, rhs),
+
+        Compose => Err("compose operator '>>' is not supported in this context".into()),
     }
 }
 

@@ -3041,3 +3041,13 @@ fn vm_logical_not() {
         true,
     );
 }
+
+#[test]
+fn basic_slice() {
+    assert_list(r#"[0, 1, 2, 3, 4, 5, 6][3..5]"#, &[3, 4]);
+}
+
+#[test]
+fn basic_slice_inclusive() {
+    assert_list(r#"[0, 1, 2, 3, 4, 5, 6][1..=6]"#, &[1, 2, 3, 4, 5, 6]);
+}

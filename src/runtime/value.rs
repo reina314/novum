@@ -114,6 +114,24 @@ impl List {
 
         Ok(Self::new(result))
     }
+
+    pub fn slice(&self, range: std::ops::Range<usize>) -> Result<Self, String> {
+        let elements = self.elements.borrow();
+
+        if range.start > range.end {
+            return Err("slice start must not exceed end".into());
+        }
+
+        if range.end > elements.len() {
+            return Err(format!(
+                "slice end {} out of bounds for length {}",
+                range.end,
+                elements.len()
+            ));
+        }
+
+        Ok(Self::new(elements[range].to_vec()))
+    }
 }
 
 #[derive(Clone)]
@@ -438,6 +456,51 @@ impl Value {
         }
 
         Ok(true)
+    }
+
+    pub fn normalize_index_range(
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        len: usize,
+    ) -> Result<std::ops::Range<usize>, String> {
+        if start < 0 {
+            return Err("range start must be non-negative".into());
+        }
+
+        if end < 0 {
+            return Err("range end must be non-negative".into());
+        }
+
+        if start > end {
+            return Err("range start must not exceed range end".into());
+        }
+
+        let start = start as usize;
+
+        let end = if inclusive {
+            (end as usize)
+                .checked_add(1)
+                .ok_or_else(|| "inclusive range end overflow".to_string())?
+        } else {
+            end as usize
+        };
+
+        if start > len {
+            return Err(format!(
+                "range start {} out of bounds for length {}",
+                start, len
+            ));
+        }
+
+        if end > len {
+            return Err(format!(
+                "range end {} out of bounds for length {}",
+                end, len
+            ));
+        }
+
+        Ok(start..end)
     }
 }
 
